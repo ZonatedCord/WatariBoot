@@ -22,8 +22,8 @@
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
 ## Da decidere (non bloccanti)
-- **Nome del progetto:** in discussione. Sconsigliati nomi con "Asahi" o "Windows" (progetto di terzi e marchio Microsoft).
-- **Organizzazione GitHub:** da creare dopo aver scelto il nome, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.
+- **Nome del progetto:** ✅ deciso **Watari** (渡, "attraversare"). Sono ancora da rinominare la repo, la cartella e i documenti.
+- **Organizzazione GitHub:** il nome è da scegliere (`watari` è occupato; liberi tra gli altri `wataribune`, `watari-project`). Va creata dal browser, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.
 
 ## Da dove si riparte
 Vedi `docs/sessions/2026-10-12-01.md`.
