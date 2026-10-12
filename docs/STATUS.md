@@ -16,6 +16,7 @@
 - [ ] Fase 6: tutti gli Apple Silicon
 
 ## Blocchi e necessità
+- ⚠️ **BACKUP COMPLETO (Time Machine) OBBLIGATORIO prima di qualsiasi download o installazione sul Mac.** Stato: non ancora confermato dall'utente.
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
 ## Da dove si riparte

@@ -2,6 +2,9 @@
 
 Obiettivo: dual boot **nativo** di Windows ARM64 su Apple Silicon. Si parte da un MacBook Pro 13" M1 (t8103, j293) e poi si generalizza a tutti gli Apple Silicon. Il piano completo è in `docs/PLAN.md`.
 
+## ⚠️ BACKUP OBBLIGATORIO (regola assoluta dell'utente)
+**Prima di scaricare o installare QUALSIASI cosa sul Mac** (toolchain, test, ISO, pacchetti brew, repo grandi, qualunque cosa), fermarsi e **ricordare all'utente di fare il backup completo** (Time Machine). Si procede solo dopo che l'utente ha **confermato esplicitamente** che il backup è fatto. Nessuna eccezione, anche per download piccoli.
+
 ## Workflow (obbligatorio)
 - **Opus = capo.**
   - Ragiona, progetta, scompone il lavoro, verifica i risultati e parla con l'utente.
