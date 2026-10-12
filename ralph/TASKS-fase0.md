@@ -31,7 +31,7 @@ Strumenti ammessi: lettura web (WebSearch e WebFetch), `gh api` in sola lettura,
   - Dati t8103 (cluster, MPIDR) presi dal DTS di Asahi via `gh api` e citati.
   - Header SPDX su ogni file.
   Criterio di completamento: `make -C tools/acpigen test` verde.
-- [ ] *(issue #10)* **A7. Verdetto preliminare.** **Prerequisito:** `re/f0-halext-doc-pubblica.md`, `re/f0-acpi-requisiti-windows.md` e `re/f0-rpi3-precedente.md` devono essere su `main` (le PR di A1, A2 e A4). Se mancano, segna `[!]` con il motivo "in attesa di A1/A2/A4" e non scrivere niente.
+- [ ] *(issue #10)* **A7. Verdetto preliminare.** **Prerequisito:** `re/f0-halext-doc-pubblica.md`, `re/f0-acpi-requisiti-windows.md` e `re/f0-rpi3-precedente.md` devono esistere nel branch corrente (dopo A1, A2 e A4). Se mancano, segna `[!]` con il motivo "in attesa di A1/A2/A4" e non scrivere niente.
   Sintesi di A1–A4 in `re/f0-verdetto-preliminare.md`: cosa si può già concludere, cosa resta da dimostrare solo con l'esperimento A5, con quali probabilità. Proposta di ADR in `docs/adr/bozza-esito-fase0-preliminare.md`.
 
 ## Gate A, secondo giro: le piste sul timer FIQ (dopo A3)
