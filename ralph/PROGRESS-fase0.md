@@ -3,8 +3,6 @@
 Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verificato Opus, dubbi aperti.
 
 ## Voci
-### IN CORSO
-- A7: aspetta i file di Ciani (A1, A2, A4).
 
 ### 2026-10-12: A3 completato (issue #6)
 - File: `re/f0-m1-fiq-irq.md` (Asahi linux@asahi 77cb8f24c2, m1n1 main fbec52a81f).
@@ -33,3 +31,15 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
   - lo spazio stimato per il Gate B è di 75–115 GiB (oggi ne sono liberi circa 53–56);
   - QEMU dà un verdetto negativo forte ma solo un positivo debole: non prova niente su AIC, FIQ o risveglio reale del M1.
 - **Ipotesi aperte:** sintassi `-serial`/`-chardev`/`-netdev`, e se `e1000e` di QEMU sia compatibile con KDNET.
+
+### 2026-10-12: A7 bloccato (issue #10)
+- Motivo: **in attesa di Ciani**. `re/f0-halext-doc-pubblica.md`, `re/f0-acpi-requisiti-windows.md` e `re/f0-rpi3-precedente.md` non sono ancora su `main` (controllato su `origin/main`).
+- Si riprende in una nuova sessione o con un nuovo loop, dopo il merge delle PR di Ciani.
+
+## Riepilogo finale del Gate A (questo giro di Ralph)
+- Completati: **A3** (#6), **A5** (#8), **A6** (#9).
+- Bloccato: **A7** (#10), in attesa di A1, A2 e A4 (Ciani: #4, #5, #7).
+- **Scoperte principali:**
+  1. Il timer architetturale del M1 è solo FIQ. È un rischio critico per ADR-0004 e va verificato con V5 in QEMU e con A1 (le estensioni HAL timer).
+  2. In QEMU il GIC non si può rimuovere: gli esperimenti danno solo un "no" affidabile, non un "sì".
+  3. Per il Gate B servono 75–115 GiB e le estensioni ad `acpigen` (modello qemu-virt, FADT/SSDT, `--no-gicd`, `--parking`).
