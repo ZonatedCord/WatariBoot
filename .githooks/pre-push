@@ -1,0 +1,9 @@
+#!/bin/sh
+# Watari Boot: impedisce il push diretto su main. Si lavora su un branch e si apre una PR.
+while read local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ] && [ "$WATARI_ALLOW_MAIN" != "1" ]; then
+    echo "✋ Push diretto su main bloccato. Usa un branch e apri una PR (vedi docs/CONTRIBUTING.md)." >&2
+    exit 1
+  fi
+done
+exit 0

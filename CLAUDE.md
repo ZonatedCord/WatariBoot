@@ -17,10 +17,14 @@ Obiettivo: dual boot **nativo** di Windows ARM64 su Apple Silicon. Si parte da u
 - Per un nuovo sottosistema serve prima una sessione di progettazione con `morasca-agent` (`model: "sonnet"`), con output in `docs/design/`.
 
 ## Documentazione (a ogni fine sessione, senza eccezioni)
-1. Scrivere `docs/sessions/AAAA-MM-GG-NN.md`: obiettivo, cosa è stato fatto, decisioni (con link agli ADR), risultati verificati, problemi aperti, prossimi passi.
+1. Scrivere `docs/sessions/AAAA-MM-GG-<autore>-NN.md` (un file per autore, per evitare conflitti): obiettivo, cosa è stato fatto, decisioni (con link agli ADR), risultati verificati, problemi aperti, prossimi passi.
 2. Aggiornare `docs/STATUS.md`: fase corrente, traguardi raggiunti, blocchi, da dove si riparte.
-3. Ogni decisione architetturale va in un nuovo `docs/adr/NNNN-titolo.md`.
-4. Commit e push sulla repo privata `ZonatedCord/WatariBoot`.
+3. Ogni decisione architetturale va in una bozza `docs/adr/bozza-<titolo>.md`; il numero si assegna al merge.
+4. Commit e push **su un branch**, poi PR verso `main`. Mai push diretto su `main` (vedi `docs/CONTRIBUTING.md`).
+
+## Collaborazione
+- Lavorano in due (Marco + il socio) più Ralph. Le regole su branch, PR, issue e file "caldi" sono in `docs/CONTRIBUTING.md` e vanno rispettate sempre.
+- Ralph loop: solo sul proprio branch `ralph/...`, una sola istanza per volta, istruzioni in `ralph/README.md`.
 
 ## Vincoli
 - **Nativo**: niente hypervisor, emulatore o VM come soluzione finale, salvo decisione esplicita dell'utente (vedi il piano B in `docs/PLAN.md`). QEMU si usa solo come banco di prova.

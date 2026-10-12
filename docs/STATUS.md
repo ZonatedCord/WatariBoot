@@ -18,7 +18,8 @@
 - [ ] Fase 6: tutti gli Apple Silicon
 
 ## Blocchi e necessità
-- ⚠️ **BACKUP COMPLETO (Time Machine) OBBLIGATORIO prima di qualsiasi download o installazione sul Mac.** Stato: non ancora confermato dall'utente.
+- ⚠️ **BACKUP COMPLETO (Time Machine) OBBLIGATORIO prima di qualsiasi download o installazione sul Mac.** Stato: **non fatto** (l'utente al momento non può farlo).
+- ⚠️ **Disco quasi pieno: 5,9 GB liberi su 228 (98%).** Per il Gate B servono almeno 100 GB liberi; l'utente libererà spazio.
 - Fase 0: il task sui binari Windows è stato fermato da un filtro di sicurezza. Serve decidere come procedere.
 - Restore DFU: ✅ risolto. Il socio dell'utente ha un Mac (servono Apple Configurator e un cavo USB-C). Prima va tentato il **revive**, che non cancella i dati; il **restore** cancella tutto.
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
@@ -27,4 +28,4 @@
 - **Organizzazione GitHub:** facoltativa e rimandabile. Il nome è da scegliere (`watari` è occupato, `watariboot` è libero). Va creata dal browser, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.
 
 ## Da dove si riparte
-Vedi `docs/sessions/2026-10-12-01.md`.
+Vedi `docs/sessions/2026-10-12-marco-01.md`. **Prossima azione:** lanciare Ralph sul Gate A della Fase 0 (`ralph/README.md`): niente download, si può fare subito.
