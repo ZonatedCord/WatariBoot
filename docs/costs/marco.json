@@ -1,14 +1,32 @@
 {
   "autore": "marco",
   "sessions": {
+    "28f3339a-d470-4c91-a96e-c22517277cc7": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 24178516,
+          "cache_write_1h": 1445844,
+          "cache_write_5m": 0,
+          "input": 278,
+          "output": 122310
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 3571124,
+          "cache_write_1h": 0,
+          "cache_write_5m": 357283,
+          "input": 90,
+          "output": 407
+        }
+      }
+    },
     "4df3d681-bd44-4979-973b-f533c681f3b1": {
       "models": {
         "claude-opus-5-5": {
-          "cache_read": 14853965,
-          "cache_write_1h": 230669,
+          "cache_read": 15653470,
+          "cache_write_1h": 232133,
           "cache_write_5m": 0,
-          "input": 212,
-          "output": 104180
+          "input": 218,
+          "output": 105588
         },
         "claude-sonnet-5-5": {
           "cache_read": 3571124,
