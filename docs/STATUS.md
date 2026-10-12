@@ -6,7 +6,7 @@
 ## Traguardi
 - [x] Piano approvato (`docs/PLAN.md`)
 - [x] Repository creato
-- [ ] Sessione di progettazione (morasca-agent)
+- [x] Sessione di progettazione (`docs/design/provaimpossibile/`, ADR da 0001 a 0005)
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
 - [ ] Fase 2: EDK2 sul MacBook
@@ -17,7 +17,9 @@
 
 ## Blocchi e necessità
 - ⚠️ **BACKUP COMPLETO (Time Machine) OBBLIGATORIO prima di qualsiasi download o installazione sul Mac.** Stato: non ancora confermato dall'utente.
+- Fase 0: il task sui binari Windows è stato fermato da un filtro di sicurezza. Serve decidere come procedere.
+- Restore DFU: serve l'accesso a un altro Mac (l'utente non ne ha).
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
 ## Da dove si riparte
-Vedi l'ultima voce in `docs/sessions/`.
+Vedi `docs/sessions/2026-10-12-01.md`.
