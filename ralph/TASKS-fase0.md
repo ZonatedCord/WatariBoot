@@ -1,23 +1,23 @@
 # Fase 0: task per Ralph
 
-Questa lista la modifica solo Ralph, sul branch `ralph/f0-gate-a`. Si procede in ordine: si prende il primo task non spuntato.
+Questa lista la modifica solo Ralph, sul branch `ralph/f0-gate-a`. Si procede in ordine: si prende il primo task non spuntato. Terzo giro: A1, A2 e A4 in parallelo, poi A11 e infine A7 (che dipendono da loro).
 Formato: `- [ ]` da fare, `- [x]` fatto e verificato da Opus, `- [!]` bloccato (motivo in `ralph/PROGRESS-fase0.md`), `- [→]` assegnato a Ciani: **Ralph non lo tocca**.
 
 ## Gate A: niente download, niente installazioni (si possono fare SUBITO)
 Strumenti ammessi: lettura web (WebSearch e WebFetch), `gh api` in sola lettura, scrittura di file nella repo, e gli strumenti già installati (`clang`, `make`, `python3 -I`, `git`).
 
-- [→] *(Ciani, issue #4: Ralph NON lo fa)* **A1. Estensioni HAL: documentazione pubblica Microsoft.**
+- [x] *(issue #4, riassegnata a Ralph)* **A1. Estensioni HAL: documentazione pubblica Microsoft.**
   Cosa sono, come vengono caricate (tabella CSRT, ID delle risorse), quali interfacce esistono (timer, DMA, *interrupt controller?*), requisiti di firma e test-signing.
   Fonti ammesse: Microsoft Learn, specifica CSRT, WDK docs, HLK.
   Output: `re/f0-halext-doc-pubblica.md`.
   Criterio di completamento: ogni affermazione ha una fonte. La domanda *"un'estensione HAL può fornire un controller di interrupt?"* ha una risposta [verificato] oppure è dichiarata non risolta da documentazione pubblica.
-- [→] *(Ciani, issue #5: Ralph NON lo fa)* **A2. Requisiti ACPI di Windows ARM64.**
+- [x] *(issue #5, riassegnata a Ralph)* **A2. Requisiti ACPI di Windows ARM64.**
   Tabelle obbligatorie e campi minimi: MADT/GICC, GTDT, FADT, DBG2, SPCR, PPTT. Requisiti BSA/SBSA che Windows impone. Specifica Microsoft del *Multiprocessor Parking Protocol* (versione, layout della mailbox, come si sveglia un core).
   Output: `re/f0-acpi-requisiti-windows.md`.
 - [x] *(issue #6)* **A3. M1: sorgenti FIQ e alternative in IRQ.**
   Dal codice Asahi (`irq-apple-aic.c`, m1n1 `aic.c`/`hv_*`, `arch_timer`): elenco di tutte le sorgenti FIQ del t8103 (timer fisico e virtuale, Fast IPI, PMU, uncore). Per ognuna: si può disabilitare o instradare in IRQ? Esistono timer in MMIO alternativi sul SoC? Come funzionano le IPI AIC in IRQ?
   Output: `re/f0-m1-fiq-irq.md`, con file e righe Asahi citati.
-- [→] *(Ciani, issue #7: Ralph NON lo fa)* **A4. Il precedente Raspberry Pi 3 (senza GIC).**
+- [x] *(issue #7, riassegnata a Ralph)* **A4. Il precedente Raspberry Pi 3 (senza GIC).**
   Come girava Windows (IoT Core / ARM64) sul BCM2836/7 senza GIC, ricostruito da fonti pubbliche: `ms-iot/rpi-iotcore`, `raspberrypi/windows-drivers`, `pftf/RPi3`, `worproject`, forum, ACPI pubblicate (MADT/CSRT del Pi 3).
   Output: `re/f0-rpi3-precedente.md`.
   Criterio di completamento: è chiaro, con fonti, se esisteva un'estensione HAL per il controller di interrupt, oppure è dichiarato non determinabile.
@@ -31,7 +31,7 @@ Strumenti ammessi: lettura web (WebSearch e WebFetch), `gh api` in sola lettura,
   - Dati t8103 (cluster, MPIDR) presi dal DTS di Asahi via `gh api` e citati.
   - Header SPDX su ogni file.
   Criterio di completamento: `make -C tools/acpigen test` verde.
-- [!] *(issue #10)* **A7. Verdetto preliminare.** **Prerequisito:** `re/f0-halext-doc-pubblica.md`, `re/f0-acpi-requisiti-windows.md` e `re/f0-rpi3-precedente.md` devono essere su `main` (le PR di Ciani). Se mancano, segna `[!]` con il motivo "in attesa di Ciani" e non scrivere niente.
+- [x] *(issue #10)* **A7. Verdetto preliminare.** **Prerequisito:** `re/f0-halext-doc-pubblica.md`, `re/f0-acpi-requisiti-windows.md` e `re/f0-rpi3-precedente.md` devono esistere nel branch corrente (dopo A1, A2 e A4). Se mancano, segna `[!]` con il motivo "in attesa di A1/A2/A4" e non scrivere niente.
   Sintesi di A1–A4 in `re/f0-verdetto-preliminare.md`: cosa si può già concludere, cosa resta da dimostrare solo con l'esperimento A5, con quali probabilità. Proposta di ADR in `docs/adr/bozza-esito-fase0-preliminare.md`.
 
 ## Gate A, secondo giro: le piste sul timer FIQ (dopo A3)
@@ -47,6 +47,10 @@ Stesse regole del Gate A: niente download e niente installazioni.
 - [x] *(issue #18)* **A10. Esperimento V6: Windows con il timer consegnato come FIQ.**
   Aggiungi a `docs/design/watariboot/ESPERIMENTO-F0.md` la variante V6. In QEMU `virt`, come si configura il PPI del timer come Group 0 / FIQ (GICv3 con security, oppure il bit nel GTDT o nell'emulazione), con le fonti dalla documentazione QEMU, Arm e Linux. Cosa osservare: Windows gestisce la FIQ, va in bugcheck o si blocca. Cosa concludere per ogni esito.
   Modifica SOLO la sezione nuova V6 e la tabella della matrice.
+
+- [x] *(issue #19, riassegnata a Ralph)* **A11. Progetto dell'estensione HAL timer basata sul watchdog.**
+  Dipende da A1. Il watchdog `23d2b0000` (AIC IRQ 338, 24 MHz, contatore a 32 bit; vedi `re/f0-m1-fiq-irq.md`) come clock di sistema per Windows tramite un'estensione HAL timer, con distribuzione agli altri core via IPI.
+  Output: `docs/design/watariboot/HALEXT-TIMER-WDT.md`.
 
 ## Gate B: richiede backup confermato + almeno 100 GB liberi + l'ok umano (Ralph NON li esegue)
 - [ ] B1. Installare qemu, acpica-tools e le dipendenze di EDK2. [UMANO conferma]

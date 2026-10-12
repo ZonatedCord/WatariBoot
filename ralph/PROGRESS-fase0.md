@@ -80,3 +80,43 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
   2. **Windows che gestisce la FIQ (V6): la pista più importante**, testabile in QEMU con una patch piccola.
   3. Watchdog + estensione HAL timer: concreta, ma dipende da A1/A11 (Ciani).
   4. Banco di prova senza GIC: modello AICv1 in QEMU, da scrivere da zero (circa 8–9 giorni).
+
+## Terzo giro (branch `ralph/f0-gate-a3`, 2026-10-13)
+- Marco ha riassegnato a Ralph i task di Ciani (A1, A2, A4, A11) per non bloccare la Fase 0. Ordine: A1, A2 e A4 in parallelo → A11 → A7.
+
+### 2026-10-13: A1 completato (#4), estensioni HAL
+- File: `re/f0-halext-doc-pubblica.md`.
+- **Verdetto: "non determinabile dalle fonti pubbliche"** (circa 30% sì / 20% no / 50% incerto).
+- **Verificato da Opus:** l'unico esempio pubblico di estensioni HAL (`ms-iot/imx-iotcore@public_preview hals/halext`) contiene solo `HalExtiMX6Timers`, `HalExtiMX7Timers` e `HalExtiMXDma`, cioè timer e DMA, nessun controller di interrupt.
+- La specifica CSRT prevede il sottotipo "Interrupt Controller", ma non c'è nessun esempio pubblico che lo usi.
+- **Nota positiva:** esistono estensioni HAL per i **timer** (i.MX), una base concreta per A11.
+
+### 2026-10-13: A2 completato (#5), requisiti ACPI e parking protocol
+- File: `re/f0-acpi-requisiti-windows.md`.
+- Tabelle obbligatorie: FADT (HW_REDUCED), MADT, DSDT, DBG2. Il GICD non è dichiarato obbligatorio da Microsoft.
+- Parking protocol v1 (2014): mailbox da 4 KB; risveglio con "an interrupt" non specificato; un loop WFE/polling è compatibile [ipotesi].
+- **Discrepanze bloccanti in `acpigen`:** parking version/address = 0 (va messo 1 + un indirizzo); niente GICD segnaposto; la CPU di boot deve essere la prima; GICR base = 1 come nel Pi3; mancano FADT, DBG2, SPCR e DSDT.
+- **Nota sulle regole:** WebFetch ha salvato il PDF della specifica nella cartella interna dei risultati dei tool di Claude, non nella repository.
+
+### 2026-10-13: A4 completato (#7), il precedente del Raspberry Pi 3 (**risultato critico**)
+- File: `re/f0-rpi3-precedente.md`.
+- **Verificato da Opus:** in `tianocore/edk2-platforms` `Platform/RaspberryPi/AcpiTables/Madt.aslc:51-52` c'è il commento: "Use 1 for GICR Base Address below, since Windows 10 on Raspberry Pi 3 does not boot otherwise, and this is the value that Microsoft had in their IoT blobs."
+- **Conclusione:** sul Pi 3 **nessuna terza parte** forniva il controller di interrupt. Il supporto al BCM2836 era **dentro l'HAL di Windows** (e nelle prime build ARM64 serviva perfino una patch). Il precedente quindi **non dimostra** che un'estensione HAL possa fornire un controller di interrupt.
+- Il Pi 3 ARM64 avviava i core con PSCI (tramite ATF), non con il parking protocol.
+
+### 2026-10-13: A11 completato (#19), estensione HAL timer sul watchdog
+- File: `docs/design/watariboot/HALEXT-TIMER-WDT.md`.
+- **Verificato da Opus:** `ms-iot/imx-iotcore@public_preview hals/halext/HalExtiMX7Timers` esiste (`HalExtension.c`, `.inf`, `.def`).
+- L'interfaccia timer osservata nell'esempio i.MX: `RegisterResourceDescriptor` + `TIMER_INITIALIZATION_BLOCK` + 5 callback. Il GSI dell'interrupt viene consegnato da un controller che va fornito a parte.
+- **Dipendenza critica:** l'IRQ 338 del watchdog è dell'AIC. Senza un controller non-GIC riconosciuto da Windows il timer non scatta mai. Il "bark" di WD0 non è mai stato usato in codice pubblico (test hardware H1).
+- **NUOVA PISTA (verificata da Opus):** `Wack0/NtHalExts` (Unlicense, push 2024-09, "Windows 8.x HAL extensions") contiene **`halextbcm2709`**, un'estensione HAL di terze parti per il controller di interrupt del BCM2709 (Raspberry Pi 2, **senza GIC**) su Windows 8.x ARM32. **Se confermato, è la prova che un controller di interrupt può essere fornito da un'estensione HAL** (almeno su Windows 8 ARM32). Da studiare per prima cosa. Attenzione: include header DDK Microsoft, quindi si legge senza copiare niente.
+
+### 2026-10-13: A7 completato (#10), verdetto preliminare
+- File: `re/f0-verdetto-preliminare.md`, `docs/adr/bozza-esito-fase0-preliminare.md`.
+- Stime (solo interrupt, timer e core): nativo puro **circa 12%**, piano B EL2 circa 53%, altro circa 35%.
+- **Nota di Opus:** le stime sono state fatte **prima** della scoperta di `halextbcm2709`, che alza la probabilità del ramo "controller registrabile via estensione HAL" (stimato al 20% in A7). Vanno ricalcolate dopo averlo studiato.
+- Raccomandazione: Gate B a basso costo con priorità a V4 e V6; leggere l'header del WDK `nthalext.h` (serve l'ok dell'utente per il download); soglia del piano B decisa dall'utente.
+
+## Riepilogo del terzo giro
+- Gate A **completo**: A1–A11 tutti `[x]`.
+- Prossimo passo: studiare `Wack0/NtHalExts/halextbcm2709`, poi il Gate B.

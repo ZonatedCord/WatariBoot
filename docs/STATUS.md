@@ -1,6 +1,6 @@
 # Stato del progetto
 
-**Aggiornato:** 2026-10-12 (sessione 01)
+**Aggiornato:** 2026-10-13 (sessione marco-01, notte)
 **Fase corrente:** 0, lo spike sul HAL di Windows ARM64 e i controller di interrupt non-GIC
 
 ## Traguardi
@@ -10,7 +10,9 @@
 - [x] Sessione di progettazione (`docs/design/watariboot/`, ADR da 0001 a 0005)
 - [x] Analisi e audit di NTASP: strada indipendente (ADR-0007), bug segnalato con la issue NT-for-ASi/apple_silicon_platforms_mu#23
 - [x] Gate A, primo giro: A3, A5, A6 (PR #15). Scoperta: il timer del M1 è solo FIQ, vedi la bozza di ADR "strategia timer FIQ"
-- [ ] Gate A, secondo giro: A8–A11 (piste sul timer FIQ, modello AIC in QEMU)
+- [x] Gate A, secondo e terzo giro: A1, A2, A4, A7–A11 (PR #22 e la PR di questo giro). **Gate A completo.**
+- [ ] **Prossimo:** studiare `Wack0/NtHalExts/halextbcm2709`, un'estensione HAL di terze parti per un controller di interrupt non-GIC (Pi 2, Windows 8.x ARM32). Può cambiare il verdetto.
+- [ ] Gate B: QEMU + EDK2 + Windows (V0, V1, V4, V6). Richiede l'ok dell'utente per i download e il disco esterno collegato.
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
 - [ ] Fase 2: EDK2 sul MacBook
@@ -27,8 +29,12 @@
 - Debug host (dalla Fase 2): consigliato un portatile o mini PC Windows x86 usato (m1n1 + WinDbg). Alternativa: Raspberry Pi 5 da 8 GB (minimo Pi 4 Model B da 4 GB) con cavo USB-A→USB-C, ma per WinDbg serve comunque Windows.
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
+## Verdetto preliminare (A7, prima della pista halextbcm2709)
+- Nativo puro circa 12%, piano B (shim EL2 con vGIC) circa 53%, altro circa 35%. Dettagli in `re/f0-verdetto-preliminare.md`.
+- La soglia del piano B la decide l'utente (bozza ADR `bozza-esito-fase0-preliminare.md`).
+
 ## Da decidere (non bloccanti)
 - **Organizzazione GitHub:** facoltativa e rimandabile. Il nome è da scegliere (`watari` è occupato, `watariboot` è libero). Va creata dal browser, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.
 
 ## Da dove si riparte
-Vedi `docs/sessions/2026-10-12-marco-01.md`. **Prossima azione:** lanciare Ralph sul Gate A della Fase 0 (`ralph/README.md`): niente download, si può fare subito.
+Vedi `docs/sessions/2026-10-12-marco-01.md` (ultime voci) e `ralph/PROGRESS-fase0.md`. Prima azione: analizzare `halextbcm2709` (lettura su GitHub, senza copiare gli header DDK).
