@@ -1,0 +1,31 @@
+# Binari e simboli Microsoft: mai nel repository
+*.exe
+*.dll
+*.sys
+*.pdb
+*.iso
+*.wim
+*.esd
+*.vhdx
+*.cab
+*.msi
+
+# Ghidra
+*.gpr
+*.rep/
+*.lock
+*.lock~
+
+# Build
+Build/
+build/
+out/
+*.o
+*.obj
+*.efi
+*.fd
+*.macho
+*.bin
+
+# Sistema
+.DS_Store
