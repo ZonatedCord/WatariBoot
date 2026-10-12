@@ -21,7 +21,7 @@ Strumenti ammessi: lettura web (WebSearch e WebFetch), `gh api` in sola lettura,
   Come girava Windows (IoT Core / ARM64) sul BCM2836/7 senza GIC, ricostruito da fonti pubbliche: `ms-iot/rpi-iotcore`, `raspberrypi/windows-drivers`, `pftf/RPi3`, `worproject`, forum, ACPI pubblicate (MADT/CSRT del Pi 3).
   Output: `re/f0-rpi3-precedente.md`.
   Criterio di completamento: è chiaro, con fonti, se esisteva un'estensione HAL per il controller di interrupt, oppure è dichiarato non determinabile.
-- [ ] *(issue #8)* **A5. Progetto dell'esperimento in QEMU (Gate B).**
+- [x] *(issue #8)* **A5. Progetto dell'esperimento in QEMU (Gate B).**
   Matrice delle varianti ACPI da provare: (1) baseline con GIC; (2) MADT senza GICD; (3) GICC con il parking protocol; (4) CSRT con un gruppo di risorse nostro. Per ogni variante: cosa si osserva (bugcheck code, output del debugger, se l'estensione viene caricata) e cosa si conclude. Includere il setup di debug (KDNET/seriale) e l'ambiente per compilare un'estensione HAL di prova (WDK in una VM Windows ARM, solo come strumento di sviluppo).
   Output: `docs/design/watariboot/ESPERIMENTO-F0.md`.
   Se i file di A1, A2 e A4 (di Ciani) non sono ancora su `main`, scrivi l'esperimento basandoti su `docs/PLAN.md` e su `docs/design/watariboot/INTERFACES.md`, e segna come [ipotesi] i punti che dipendono da loro.
