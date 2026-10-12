@@ -9,6 +9,8 @@
 - [x] Nome: **Watari Boot**, con sottotitolo fisso "Windows nativo su Apple Silicon" (ADR-0006)
 - [x] Sessione di progettazione (`docs/design/watariboot/`, ADR da 0001 a 0005)
 - [x] Analisi e audit di NTASP: strada indipendente (ADR-0007), bug segnalato con la issue NT-for-ASi/apple_silicon_platforms_mu#23
+- [x] Gate A, primo giro: A3, A5, A6 (PR #15). Scoperta: il timer del M1 è solo FIQ, vedi la bozza di ADR "strategia timer FIQ"
+- [ ] Gate A, secondo giro: A8–A11 (piste sul timer FIQ, modello AIC in QEMU)
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
 - [ ] Fase 2: EDK2 sul MacBook
@@ -19,7 +21,7 @@
 
 ## Blocchi e necessità
 - ✅ **Backup Time Machine confermato** (2026-10-12, completato alle 19:06). Destinazione: volume cifrato "Time Machine" sul disco esterno, con quota di 1 TB; backup orari automatici. Escluso `~/Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteData` (file con nome troppo lungo che bloccava il backup). **La regola resta:** prima di ogni download si chiede comunque conferma all'utente.
-- ⚠️ **Spazio sul disco interno: 56 GB liberi** (era 5,9 GB). Per il Gate B ne servono circa 100: mancano ancora circa 45 GB.
+- ✅ **Spazio per il Gate B (75–115 GB):** si usa il disco esterno, `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (circa 450 GB liberi oltre la quota di Time Machine). Il disco va collegato; la cartella si crea al primo uso.
 - Fase 0: il task sui binari Windows è stato fermato da un filtro di sicurezza. Serve decidere come procedere.
 - Restore DFU: ✅ risolto. Il socio dell'utente ha un Mac (servono Apple Configurator e un cavo USB-C). Prima va tentato il **revive**, che non cancella i dati; il **restore** cancella tutto.
 - Debug host (dalla Fase 2): consigliato un portatile o mini PC Windows x86 usato (m1n1 + WinDbg). Alternativa: Raspberry Pi 5 da 8 GB (minimo Pi 4 Model B da 4 GB) con cavo USB-A→USB-C, ma per WinDbg serve comunque Windows.

@@ -15,4 +15,4 @@ Va sempre accompagnato dal sottotitolo fisso: **"Windows nativo su Apple Silicon
 
 ## Conseguenze
 - "Windows", "Apple" e "Apple Silicon" compaiono solo in forma descrittiva (sottotitolo, descrizioni), mai nel nome, nel logo o nel nome dell'organizzazione.
-- Repo: `ZonatedCord/WatariBoot` (privata). Cartella locale: `~/Documents/02_PROGETTI/WatariBoot`. Cartella dei dati esterni: `~/WatariBoot-data/`.
+- Repo: `ZonatedCord/WatariBoot` (privata). Cartella locale: `~/Documents/02_PROGETTI/WatariBoot`. Cartella dei dati esterni: `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato).

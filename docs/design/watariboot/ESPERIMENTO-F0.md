@@ -88,7 +88,7 @@ Compilazione EDK2: richiede toolchain AArch64 (GCC cross o clang) e `python3`, `
 ### 2.3 ISO Windows 11 ARM64
 
 - ISO ufficiale Microsoft di Windows 11 ARM64 [UMANO]: download da microsoft.com (pagina "Download Windows 11 Arm64"; URL esatto da verificare da Marco al momento, non fissato qui: [ipotesi]). Dimensione stimata ~5-7 GB [ipotesi].
-- Congelare **build e hash SHA-256** dell'ISO usata e registrarli nel diario (R-11). Non mettere l'ISO nel repository: va in `~/WatariBoot-data/` (CLAUDE.md di progetto).
+- Congelare **build e hash SHA-256** dell'ISO usata e registrarli nel diario (R-11). Non mettere l'ISO nel repository: va in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato) (CLAUDE.md di progetto).
 - Licenza/attivazione: Windows senza chiave funziona in modalità non attivata per test; condizioni d'uso: [ipotesi, controllare i termini Microsoft] [UMANO].
 - Requisiti del setup (TPM 2.0, Secure Boot, RAM, disco): [ipotesi, da confermare con A2/documentazione Microsoft]. Il bypass dei controlli del setup è una pratica di comunità non documentata da Microsoft: **non** la si usa se esiste l'alternativa swtpm (sopra).
 
@@ -208,7 +208,7 @@ Tutti i passi sotto richiedono **prima**: backup completo Time Machine, conferma
 | H2 | Spazio disco | Decidere dove stanno le immagini (SSD esterno, disco interno liberato, o PC Windows come host debugger). Obiettivo ≥ 100 GB disponibili, vedi 2.4 |
 | H3 | Installare QEMU | es. Homebrew (`brew install qemu`) [ipotesi sul comando, controllare la formula], o compilazione; verificare con `qemu-system-aarch64 --version` |
 | H4 | Installare toolchain EDK2 e compilare firmware | passi a cura di un esecutore, dopo conferma |
-| H5 | Scaricare l'ISO Windows 11 ARM64 | sito Microsoft ufficiale; registrare versione/build e SHA-256; salvarla fuori dal repo in `~/WatariBoot-data/` |
+| H5 | Scaricare l'ISO Windows 11 ARM64 | sito Microsoft ufficiale; registrare versione/build e SHA-256; salvarla fuori dal repo in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato) |
 | H6 | Windows di sviluppo con WDK e debugger | una VM Windows ARM (o PC Windows): Windows SDK, WDK, Visual Studio Build Tools per compilare la DLL di V4 e per usare WinDbg. Software da scaricare dai siti Microsoft [UMANO]. Strumento di virtualizzazione per la VM sul Mac: scelta di Marco [ipotesi: UTM/Parallels/VMware; ognuna ha licenze e prezzi propri, da verificare] |
 | H7 | Licenze | Windows (non attivato per test: verificare i termini [ipotesi]); strumento di virtualizzazione della VM debugger; WDK/SDK/VS Build Tools: licenze Microsoft da leggere e accettare **da Marco**. L'accettazione dei termini non la fa un agente |
 | H8 | `swtpm` | per il TPM virtuale; installazione [UMANO]; sintassi QEMU verificata (2.1) |
