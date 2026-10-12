@@ -1,0 +1,23 @@
+{
+  "autore": "marco",
+  "sessions": {
+    "4df3d681-bd44-4979-973b-f533c681f3b1": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 14331997,
+          "cache_write_1h": 225309,
+          "cache_write_5m": 0,
+          "input": 208,
+          "output": 101829
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 3571124,
+          "cache_write_1h": 0,
+          "cache_write_5m": 357283,
+          "input": 90,
+          "output": 407
+        }
+      }
+    }
+  }
+}

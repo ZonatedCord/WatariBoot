@@ -20,7 +20,8 @@ Obiettivo: dual boot **nativo** di Windows ARM64 su Apple Silicon. Si parte da u
 1. Scrivere `docs/sessions/AAAA-MM-GG-<autore>-NN.md` (un file per autore, per evitare conflitti): obiettivo, cosa è stato fatto, decisioni (con link agli ADR), risultati verificati, problemi aperti, prossimi passi.
 2. Aggiornare `docs/STATUS.md`: fase corrente, traguardi raggiunti, blocchi, da dove si riparte.
 3. Ogni decisione architetturale va in una bozza `docs/adr/bozza-<titolo>.md`; il numero si assegna al merge.
-4. Commit e push **su un branch**, poi PR verso `main`. Mai push diretto su `main` (vedi `docs/CONTRIBUTING.md`).
+4. Aggiornare il contatore dei token e dei costi: `python3 -I tools/token-usage.py --autore <marco|ciani>`. Aggiorna `docs/costs/<autore>.json` e la tabella nel README.
+5. Commit e push **su un branch**, poi PR verso `main`. Mai push diretto su `main` (vedi `docs/CONTRIBUTING.md`).
 
 ## Collaborazione
 - Lavorano in due (Marco + Ciani) più Ralph. Le regole su branch, PR, issue e file "caldi" sono in `docs/CONTRIBUTING.md` e vanno rispettate sempre.
