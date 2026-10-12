@@ -37,14 +37,14 @@ Strumenti ammessi: lettura web (WebSearch e WebFetch), `gh api` in sola lettura,
 ## Gate A, secondo giro: le piste sul timer FIQ (dopo A3)
 Stesse regole del Gate A: niente download e niente installazioni.
 
-- [ ] *(issue #16)* **A8. Un modello AIC in QEMU: esiste già?**
+- [x] *(issue #16)* **A8. Un modello AIC in QEMU: esiste già?**
   Cerca e valuta i fork pubblici di QEMU che emulano un SoC Apple con AIC (per esempio progetti che emulano gli iPhone come t8030). Per ciascuno: repository, licenza, ultimo commit, quanto AIC emulano (IRQ, IPI, FIQ del timer), versione di QEMU di base, possibilità di innestare l'AIC sulla macchina `virt` aarch64 al posto del GIC.
   Fonti: `gh api` e web.
   Output: `re/f0-qemu-aic-modelli.md`, con una raccomandazione: riusare, prendere solo l'AIC, oppure scrivere da zero, e una stima del lavoro.
-- [ ] *(issue #17)* **A9. Il bit "CONVERT_SIQ_TO_IRQ" e altre vie hardware per il timer in IRQ.**
+- [x] *(issue #17)* **A9. Il bit "CONVERT_SIQ_TO_IRQ" e altre vie hardware per il timer in IRQ.**
   Dove è definito in m1n1 (file e righe), se compare nel codice open source di Apple (XNU, repo `apple-oss-distributions/xnu`, solo lettura via `gh api`) o in altro codice pubblico (Asahi, Corellium, documentazione). Cerca anche altri meccanismi IMP-DEF di Apple per instradare o virtualizzare il timer (per esempio i registri che XNU usa per il timer).
   Output: `re/f0-timer-irq-hw.md`, con il protocollo di un **test hardware** da fare con il proxy m1n1 (HW-1, issue #20): registri da scrivere, cosa osservare e come tornare indietro in sicurezza.
-- [ ] *(issue #18)* **A10. Esperimento V6: Windows con il timer consegnato come FIQ.**
+- [x] *(issue #18)* **A10. Esperimento V6: Windows con il timer consegnato come FIQ.**
   Aggiungi a `docs/design/watariboot/ESPERIMENTO-F0.md` la variante V6. In QEMU `virt`, come si configura il PPI del timer come Group 0 / FIQ (GICv3 con security, oppure il bit nel GTDT o nell'emulazione), con le fonti dalla documentazione QEMU, Arm e Linux. Cosa osservare: Windows gestisce la FIQ, va in bugcheck o si blocca. Cosa concludere per ogni esito.
   Modifica SOLO la sezione nuova V6 e la tabella della matrice.
 
