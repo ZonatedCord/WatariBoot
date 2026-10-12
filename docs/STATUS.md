@@ -18,7 +18,7 @@
 ## Blocchi e necessità
 - ⚠️ **BACKUP COMPLETO (Time Machine) OBBLIGATORIO prima di qualsiasi download o installazione sul Mac.** Stato: non ancora confermato dall'utente.
 - Fase 0: il task sui binari Windows è stato fermato da un filtro di sicurezza. Serve decidere come procedere.
-- Restore DFU: serve l'accesso a un altro Mac (l'utente non ne ha).
+- Restore DFU: ✅ risolto. Il socio dell'utente ha un Mac (servono Apple Configurator e un cavo USB-C). Prima va tentato il **revive**, che non cancella i dati; il **restore** cancella tutto.
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
 ## Da dove si riparte
