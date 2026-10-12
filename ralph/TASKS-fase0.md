@@ -14,7 +14,7 @@ Strumenti ammessi: lettura web (WebSearch e WebFetch), `gh api` in sola lettura,
 - [→] *(Ciani, issue #5: Ralph NON lo fa)* **A2. Requisiti ACPI di Windows ARM64.**
   Tabelle obbligatorie e campi minimi: MADT/GICC, GTDT, FADT, DBG2, SPCR, PPTT. Requisiti BSA/SBSA che Windows impone. Specifica Microsoft del *Multiprocessor Parking Protocol* (versione, layout della mailbox, come si sveglia un core).
   Output: `re/f0-acpi-requisiti-windows.md`.
-- [ ] *(issue #6)* **A3. M1: sorgenti FIQ e alternative in IRQ.**
+- [x] *(issue #6)* **A3. M1: sorgenti FIQ e alternative in IRQ.**
   Dal codice Asahi (`irq-apple-aic.c`, m1n1 `aic.c`/`hv_*`, `arch_timer`): elenco di tutte le sorgenti FIQ del t8103 (timer fisico e virtuale, Fast IPI, PMU, uncore). Per ognuna: si può disabilitare o instradare in IRQ? Esistono timer in MMIO alternativi sul SoC? Come funzionano le IPI AIC in IRQ?
   Output: `re/f0-m1-fiq-irq.md`, con file e righe Asahi citati.
 - [→] *(Ciani, issue #7: Ralph NON lo fa)* **A4. Il precedente Raspberry Pi 3 (senza GIC).**
@@ -25,7 +25,7 @@ Strumenti ammessi: lettura web (WebSearch e WebFetch), `gh api` in sola lettura,
   Matrice delle varianti ACPI da provare: (1) baseline con GIC; (2) MADT senza GICD; (3) GICC con il parking protocol; (4) CSRT con un gruppo di risorse nostro. Per ogni variante: cosa si osserva (bugcheck code, output del debugger, se l'estensione viene caricata) e cosa si conclude. Includere il setup di debug (KDNET/seriale) e l'ambiente per compilare un'estensione HAL di prova (WDK in una VM Windows ARM, solo come strumento di sviluppo).
   Output: `docs/design/watariboot/ESPERIMENTO-F0.md`.
   Se i file di A1, A2 e A4 (di Ciani) non sono ancora su `main`, scrivi l'esperimento basandoti su `docs/PLAN.md` e su `docs/design/watariboot/INTERFACES.md`, e segna come [ipotesi] i punti che dipendono da loro.
-- [ ] *(issue #9)* **A6. `tools/acpigen`: generatore di tabelle ACPI su host, con test.**
+- [x] *(issue #9)* **A6. `tools/acpigen`: generatore di tabelle ACPI su host, con test.**
   Libreria C11 + CLI che, a partire da un modello dati (C o JSON), produce MADT (GICC con i campi del parking protocol), GTDT, PPTT e CSRT in binario, con checksum corretti.
   - Unit test compilati con `clang` + `make`, già presenti sul sistema: layout e offset dei campi verificati contro la specifica, checksum, casi limite.
   - Dati t8103 (cluster, MPIDR) presi dal DTS di Asahi via `gh api` e citati.
