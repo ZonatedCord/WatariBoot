@@ -83,7 +83,6 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
 
 ## Terzo giro (branch `ralph/f0-gate-a3`, 2026-10-13)
 - Marco ha riassegnato a Ralph i task di Ciani (A1, A2, A4, A11) per non bloccare la Fase 0. Ordine: A1, A2 e A4 in parallelo → A11 → A7.
-- IN CORSO: A11 e A7 delegati in parallelo ad agenti Sonnet. **Non rilanciarli.**
 
 ### 2026-10-13: A1 completato (#4), estensioni HAL
 - File: `re/f0-halext-doc-pubblica.md`.
@@ -104,3 +103,20 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
 - **Verificato da Opus:** in `tianocore/edk2-platforms` `Platform/RaspberryPi/AcpiTables/Madt.aslc:51-52` c'è il commento: "Use 1 for GICR Base Address below, since Windows 10 on Raspberry Pi 3 does not boot otherwise, and this is the value that Microsoft had in their IoT blobs."
 - **Conclusione:** sul Pi 3 **nessuna terza parte** forniva il controller di interrupt. Il supporto al BCM2836 era **dentro l'HAL di Windows** (e nelle prime build ARM64 serviva perfino una patch). Il precedente quindi **non dimostra** che un'estensione HAL possa fornire un controller di interrupt.
 - Il Pi 3 ARM64 avviava i core con PSCI (tramite ATF), non con il parking protocol.
+
+### 2026-10-13: A11 completato (#19), estensione HAL timer sul watchdog
+- File: `docs/design/watariboot/HALEXT-TIMER-WDT.md`.
+- **Verificato da Opus:** `ms-iot/imx-iotcore@public_preview hals/halext/HalExtiMX7Timers` esiste (`HalExtension.c`, `.inf`, `.def`).
+- L'interfaccia timer osservata nell'esempio i.MX: `RegisterResourceDescriptor` + `TIMER_INITIALIZATION_BLOCK` + 5 callback. Il GSI dell'interrupt viene consegnato da un controller che va fornito a parte.
+- **Dipendenza critica:** l'IRQ 338 del watchdog è dell'AIC. Senza un controller non-GIC riconosciuto da Windows il timer non scatta mai. Il "bark" di WD0 non è mai stato usato in codice pubblico (test hardware H1).
+- **NUOVA PISTA (verificata da Opus):** `Wack0/NtHalExts` (Unlicense, push 2024-09, "Windows 8.x HAL extensions") contiene **`halextbcm2709`**, un'estensione HAL di terze parti per il controller di interrupt del BCM2709 (Raspberry Pi 2, **senza GIC**) su Windows 8.x ARM32. **Se confermato, è la prova che un controller di interrupt può essere fornito da un'estensione HAL** (almeno su Windows 8 ARM32). Da studiare per prima cosa. Attenzione: include header DDK Microsoft, quindi si legge senza copiare niente.
+
+### 2026-10-13: A7 completato (#10), verdetto preliminare
+- File: `re/f0-verdetto-preliminare.md`, `docs/adr/bozza-esito-fase0-preliminare.md`.
+- Stime (solo interrupt, timer e core): nativo puro **circa 12%**, piano B EL2 circa 53%, altro circa 35%.
+- **Nota di Opus:** le stime sono state fatte **prima** della scoperta di `halextbcm2709`, che alza la probabilità del ramo "controller registrabile via estensione HAL" (stimato al 20% in A7). Vanno ricalcolate dopo averlo studiato.
+- Raccomandazione: Gate B a basso costo con priorità a V4 e V6; leggere l'header del WDK `nthalext.h` (serve l'ok dell'utente per il download); soglia del piano B decisa dall'utente.
+
+## Riepilogo del terzo giro
+- Gate A **completo**: A1–A11 tutti `[x]`.
+- Prossimo passo: studiare `Wack0/NtHalExts/halextbcm2709`, poi il Gate B.
