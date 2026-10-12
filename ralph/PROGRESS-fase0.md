@@ -83,3 +83,24 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
 
 ## Terzo giro (branch `ralph/f0-gate-a3`, 2026-10-13)
 - Marco ha riassegnato a Ralph i task di Ciani (A1, A2, A4, A11) per non bloccare la Fase 0. Ordine: A1, A2 e A4 in parallelo → A11 → A7.
+- IN CORSO: A11 e A7 delegati in parallelo ad agenti Sonnet. **Non rilanciarli.**
+
+### 2026-10-13: A1 completato (#4), estensioni HAL
+- File: `re/f0-halext-doc-pubblica.md`.
+- **Verdetto: "non determinabile dalle fonti pubbliche"** (circa 30% sì / 20% no / 50% incerto).
+- **Verificato da Opus:** l'unico esempio pubblico di estensioni HAL (`ms-iot/imx-iotcore@public_preview hals/halext`) contiene solo `HalExtiMX6Timers`, `HalExtiMX7Timers` e `HalExtiMXDma`, cioè timer e DMA, nessun controller di interrupt.
+- La specifica CSRT prevede il sottotipo "Interrupt Controller", ma non c'è nessun esempio pubblico che lo usi.
+- **Nota positiva:** esistono estensioni HAL per i **timer** (i.MX), una base concreta per A11.
+
+### 2026-10-13: A2 completato (#5), requisiti ACPI e parking protocol
+- File: `re/f0-acpi-requisiti-windows.md`.
+- Tabelle obbligatorie: FADT (HW_REDUCED), MADT, DSDT, DBG2. Il GICD non è dichiarato obbligatorio da Microsoft.
+- Parking protocol v1 (2014): mailbox da 4 KB; risveglio con "an interrupt" non specificato; un loop WFE/polling è compatibile [ipotesi].
+- **Discrepanze bloccanti in `acpigen`:** parking version/address = 0 (va messo 1 + un indirizzo); niente GICD segnaposto; la CPU di boot deve essere la prima; GICR base = 1 come nel Pi3; mancano FADT, DBG2, SPCR e DSDT.
+- **Nota sulle regole:** WebFetch ha salvato il PDF della specifica nella cartella interna dei risultati dei tool di Claude, non nella repository.
+
+### 2026-10-13: A4 completato (#7), il precedente del Raspberry Pi 3 (**risultato critico**)
+- File: `re/f0-rpi3-precedente.md`.
+- **Verificato da Opus:** in `tianocore/edk2-platforms` `Platform/RaspberryPi/AcpiTables/Madt.aslc:51-52` c'è il commento: "Use 1 for GICR Base Address below, since Windows 10 on Raspberry Pi 3 does not boot otherwise, and this is the value that Microsoft had in their IoT blobs."
+- **Conclusione:** sul Pi 3 **nessuna terza parte** forniva il controller di interrupt. Il supporto al BCM2836 era **dentro l'HAL di Windows** (e nelle prime build ARM64 serviva perfino una patch). Il precedente quindi **non dimostra** che un'estensione HAL possa fornire un controller di interrupt.
+- Il Pi 3 ARM64 avviava i core con PSCI (tramite ATF), non con il parking protocol.

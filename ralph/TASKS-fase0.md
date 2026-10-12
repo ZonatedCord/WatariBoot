@@ -6,18 +6,18 @@ Formato: `- [ ]` da fare, `- [x]` fatto e verificato da Opus, `- [!]` bloccato (
 ## Gate A: niente download, niente installazioni (si possono fare SUBITO)
 Strumenti ammessi: lettura web (WebSearch e WebFetch), `gh api` in sola lettura, scrittura di file nella repo, e gli strumenti già installati (`clang`, `make`, `python3 -I`, `git`).
 
-- [ ] *(issue #4, riassegnata a Ralph)* **A1. Estensioni HAL: documentazione pubblica Microsoft.**
+- [x] *(issue #4, riassegnata a Ralph)* **A1. Estensioni HAL: documentazione pubblica Microsoft.**
   Cosa sono, come vengono caricate (tabella CSRT, ID delle risorse), quali interfacce esistono (timer, DMA, *interrupt controller?*), requisiti di firma e test-signing.
   Fonti ammesse: Microsoft Learn, specifica CSRT, WDK docs, HLK.
   Output: `re/f0-halext-doc-pubblica.md`.
   Criterio di completamento: ogni affermazione ha una fonte. La domanda *"un'estensione HAL può fornire un controller di interrupt?"* ha una risposta [verificato] oppure è dichiarata non risolta da documentazione pubblica.
-- [ ] *(issue #5, riassegnata a Ralph)* **A2. Requisiti ACPI di Windows ARM64.**
+- [x] *(issue #5, riassegnata a Ralph)* **A2. Requisiti ACPI di Windows ARM64.**
   Tabelle obbligatorie e campi minimi: MADT/GICC, GTDT, FADT, DBG2, SPCR, PPTT. Requisiti BSA/SBSA che Windows impone. Specifica Microsoft del *Multiprocessor Parking Protocol* (versione, layout della mailbox, come si sveglia un core).
   Output: `re/f0-acpi-requisiti-windows.md`.
 - [x] *(issue #6)* **A3. M1: sorgenti FIQ e alternative in IRQ.**
   Dal codice Asahi (`irq-apple-aic.c`, m1n1 `aic.c`/`hv_*`, `arch_timer`): elenco di tutte le sorgenti FIQ del t8103 (timer fisico e virtuale, Fast IPI, PMU, uncore). Per ognuna: si può disabilitare o instradare in IRQ? Esistono timer in MMIO alternativi sul SoC? Come funzionano le IPI AIC in IRQ?
   Output: `re/f0-m1-fiq-irq.md`, con file e righe Asahi citati.
-- [ ] *(issue #7, riassegnata a Ralph)* **A4. Il precedente Raspberry Pi 3 (senza GIC).**
+- [x] *(issue #7, riassegnata a Ralph)* **A4. Il precedente Raspberry Pi 3 (senza GIC).**
   Come girava Windows (IoT Core / ARM64) sul BCM2836/7 senza GIC, ricostruito da fonti pubbliche: `ms-iot/rpi-iotcore`, `raspberrypi/windows-drivers`, `pftf/RPi3`, `worproject`, forum, ACPI pubblicate (MADT/CSRT del Pi 3).
   Output: `re/f0-rpi3-precedente.md`.
   Criterio di completamento: è chiaro, con fonti, se esisteva un'estensione HAL per il controller di interrupt, oppure è dichiarato non determinabile.
