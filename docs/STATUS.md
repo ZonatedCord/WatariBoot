@@ -18,10 +18,11 @@
 - [ ] Fase 6: tutti gli Apple Silicon
 
 ## Blocchi e necessità
-- ⚠️ **BACKUP COMPLETO (Time Machine) OBBLIGATORIO prima di qualsiasi download o installazione sul Mac.** Stato: **non fatto** (l'utente al momento non può farlo).
-- ⚠️ **Disco quasi pieno: 5,9 GB liberi su 228 (98%).** Per il Gate B servono almeno 100 GB liberi; l'utente libererà spazio.
+- ✅ **Backup Time Machine confermato** (2026-10-12, completato alle 19:06). Destinazione: volume cifrato "Time Machine" sul disco esterno, con quota di 1 TB; backup orari automatici. Escluso `~/Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteData` (file con nome troppo lungo che bloccava il backup). **La regola resta:** prima di ogni download si chiede comunque conferma all'utente.
+- ⚠️ **Spazio sul disco interno: 56 GB liberi** (era 5,9 GB). Per il Gate B ne servono circa 100: mancano ancora circa 45 GB.
 - Fase 0: il task sui binari Windows è stato fermato da un filtro di sicurezza. Serve decidere come procedere.
 - Restore DFU: ✅ risolto. Il socio dell'utente ha un Mac (servono Apple Configurator e un cavo USB-C). Prima va tentato il **revive**, che non cancella i dati; il **restore** cancella tutto.
+- Debug host (dalla Fase 2): consigliato un portatile o mini PC Windows x86 usato (m1n1 + WinDbg). Alternativa: Raspberry Pi 5 da 8 GB (minimo Pi 4 Model B da 4 GB) con cavo USB-A→USB-C, ma per WinDbg serve comunque Windows.
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
 ## Da decidere (non bloccanti)
