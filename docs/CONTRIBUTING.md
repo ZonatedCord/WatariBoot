@@ -1,6 +1,6 @@
 # Come si lavora in due (più Ralph) senza conflitti
 
-Tre "autori" lavorano sulla stessa repo: **Marco**, **il socio** e **Ralph** (Claude in un loop autonomo). Queste regole servono a non pestarsi i piedi.
+Tre "autori" lavorano sulla stessa repo: **Marco**, **Ciani** e **Ralph** (Claude in un loop autonomo). Queste regole servono a non pestarsi i piedi.
 
 ## 1. `main` è sacro
 - Su `main` non si fa mai push diretto: tutto passa da **branch + Pull Request**, con merge **squash**.
@@ -14,7 +14,7 @@ Tre "autori" lavorano sulla stessa repo: **Marco**, **il socio** e **Ralph** (Cl
 ## 2. Branch
 Formato: `<autore>/<fase>-<tema>`. Esempi:
 - `marco/f0-acpi-requisiti`
-- `<socio>/f1-qemu-baseline`
+- `ciani/f1-qemu-baseline`
 - `ralph/f0-gate-a`
 
 Regole:
