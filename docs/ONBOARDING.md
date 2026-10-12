@@ -21,21 +21,13 @@ Le regole del progetto stanno nel `CLAUDE.md` della repo e Claude le legge da so
   { "env": { "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet" } }
   ```
   Poi va riavviato Claude Code. Al primo agente che parte, controllare nel pannello che sia davvero Sonnet.
-- Il plugin **ralph-wiggum** deve essere installato e attivo (serve il comando `/ralph-loop`).
 
-## 4. Lanciare Ralph (Fase 0, Gate A)
-Seguire `ralph/README.md`. In breve:
-```sh
-git switch main && git pull --rebase
-git switch -c ralph/f0-gate-a && git push -u origin ralph/f0-gate-a
-```
-Poi in Claude Code, dentro la cartella della repo:
-```
-/ralph-loop "Esegui le istruzioni di ralph/PROMPT-fase0.md" --completion-promise "RALPH STOP" --max-iterations 15
-```
-Il Gate A non scarica e non installa niente (solo lettura web e strumenti già presenti: `clang`, `make`, `python3`, `git`). Il Gate B **non** va lanciato senza l'accordo di entrambi.
+## 4. Come lavora Ciani
+- Ciani **non** usa Ralph: lavora a sessioni normali con il suo Claude (Opus capo + subagenti Sonnet).
+- Prende i task dalle **GitHub Issues** assegnandoseli, e lavora su branch `ciani/<fase>-<tema>`. Ogni branch porta a una PR.
+- Non tocca i file di `ralph/` né il branch `ralph/...`.
 
 ## 5. Regole da ricordare
-- Ralph gira solo su `ralph/f0-gate-a`, e solo sul Mac di Ciani: Marco non lavora su quel branch.
+- Ralph, se usato, gira solo sul Mac di Marco e sul branch `ralph/...`.
 - Il diario delle sessioni di Ciani va in `docs/sessions/AAAA-MM-GG-ciani-NN.md`.
 - Tutto il resto è in `docs/CONTRIBUTING.md`.
