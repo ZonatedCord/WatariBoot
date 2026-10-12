@@ -31,6 +31,7 @@ Profilo dell'utente: conosce C e C++, niente firmware. Io scrivo il codice e spi
 Note legali: il reverse engineering per l'interoperabilità è consentito nell'UE (Dir. 2009/24/CE, art. 6). Non redistribuiamo codice Microsoft. Si sviluppa con `bcdedit /set testsigning on`; per la distribuzione pubblica serve la firma Microsoft via Partner Center.
 
 ## Componenti upstream da riusare
+> **ADR-0007:** progetto indipendente. Asahi è la fonte di verità sull'hardware. NTASP (`NT-for-ASi`) si usa solo come riferimento, senza copiarne codice; i suoi dati si usano solo dopo averli verificati con DTS/ADT. Audit in `re/ntasp-audit-qualita.md`.
 - `AsahiLinux/m1n1`:
   - `src/aic.c`, il driver AIC (registri, IPI);
   - `src/adt.c`, il parser dell'ADT;

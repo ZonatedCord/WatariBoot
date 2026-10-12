@@ -8,6 +8,7 @@
 - [x] Repository creato
 - [x] Nome: **Watari Boot**, con sottotitolo fisso "Windows nativo su Apple Silicon" (ADR-0006)
 - [x] Sessione di progettazione (`docs/design/watariboot/`, ADR da 0001 a 0005)
+- [x] Analisi e audit di NTASP: strada indipendente (ADR-0007), bug segnalato con la issue NT-for-ASi/apple_silicon_platforms_mu#23
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
 - [ ] Fase 2: EDK2 sul MacBook
