@@ -80,3 +80,6 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
   2. **Windows che gestisce la FIQ (V6): la pista più importante**, testabile in QEMU con una patch piccola.
   3. Watchdog + estensione HAL timer: concreta, ma dipende da A1/A11 (Ciani).
   4. Banco di prova senza GIC: modello AICv1 in QEMU, da scrivere da zero (circa 8–9 giorni).
+
+## Terzo giro (branch `ralph/f0-gate-a3`, 2026-10-13)
+- Marco ha riassegnato a Ralph i task di Ciani (A1, A2, A4, A11) per non bloccare la Fase 0. Ordine: A1, A2 e A4 in parallelo → A11 → A7.
