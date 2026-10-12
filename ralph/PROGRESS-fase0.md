@@ -43,3 +43,6 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
   1. Il timer architetturale del M1 è solo FIQ. È un rischio critico per ADR-0004 e va verificato con V5 in QEMU e con A1 (le estensioni HAL timer).
   2. In QEMU il GIC non si può rimuovere: gli esperimenti danno solo un "no" affidabile, non un "sì".
   3. Per il Gate B servono 75–115 GiB e le estensioni ad `acpigen` (modello qemu-virt, FADT/SSDT, `--no-gicd`, `--parking`).
+
+## Secondo giro (branch `ralph/f0-gate-a2`, dal 2026-10-13)
+- Task: A8 (#16), A9 (#17), A10 (#18). A7 resta `[!]` in attesa di Ciani.
