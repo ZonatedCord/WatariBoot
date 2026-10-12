@@ -22,7 +22,7 @@
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
 ## Da decidere (non bloccanti)
-- **Nome del progetto:** ✅ deciso **Watari** (渡, "attraversare"). Sono ancora da rinominare la repo, la cartella e i documenti.
+- **Nome del progetto:** **Watari + una seconda parola** (渡, "attraversare"): la prima parte è decisa, la seconda è in discussione. Su GitHub la repo è già stata rinominata `WatariBoot`, provvisoriamente.
 - **Organizzazione GitHub:** il nome è da scegliere (`watari` è occupato; liberi tra gli altri `wataribune`, `watari-project`). Va creata dal browser, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.
 
 ## Da dove si riparte
