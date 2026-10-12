@@ -29,7 +29,7 @@ Obiettivo: dual boot **nativo** di Windows ARM64 su Apple Silicon. Si parte da u
 
 ## Vincoli
 - **Nativo**: niente hypervisor, emulatore o VM come soluzione finale, salvo decisione esplicita dell'utente (vedi il piano B in `docs/PLAN.md`). QEMU si usa solo come banco di prova.
-- **Nessun binario o codice Microsoft nel repository**: ntoskrnl, PDB, ISO e dump vanno in `~/WatariBoot-data/`, fuori dal repository. Gli appunti di reverse engineering vanno in `re/`, scritti con parole nostre e citando gli indirizzi, senza incollare grandi blocchi di codice decompilato.
+- **Nessun binario o codice Microsoft nel repository**: ntoskrnl, PDB, ISO e dump vanno in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato), fuori dal repository. Gli appunti di reverse engineering vanno in `re/`, scritti con parole nostre e citando gli indirizzi, senza incollare grandi blocchi di codice decompilato.
 - Il codice Asahi (MIT / GPL-2.0 / dual) si riusa rispettando la licenza, con un header di provenienza.
 - Ogni affermazione tecnica va marcata come **verificato** (con evidenza) o **ipotesi**.
 - Sicurezza dell'hardware: macOS e recovery non si toccano. Le modifiche al disco passano solo dall'installer di Asahi, e servono un backup e la conferma dell'utente prima di ogni operazione sul disco o sul boot.
