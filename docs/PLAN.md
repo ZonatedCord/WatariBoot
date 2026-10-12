@@ -1,4 +1,4 @@
-# ProvaImpossibile: Windows ARM64 nativo su MacBook Pro 13" M1
+# Watari Boot: Windows ARM64 nativo su MacBook Pro 13" M1
 
 ## Context
 Obiettivo dell'utente: **dual boot nativo** di Windows ARM64 su MacBook Pro M1 (13", 2020), sfruttando tutta la potenza dell'hardware.
@@ -46,7 +46,7 @@ Note legali: il reverse engineering per l'interoperabilità è consentito nell'U
 - `raspberrypi/windows-drivers` e `worproject`: esempi reali di BSP Windows ARM64 su hardware non standard.
 - Kit di Microsoft: WDK (esempi di estensione HAL, StorPort, KMDF, PEP) e simboli pubblici di `ntoskrnl.exe` ARM64 dal symbol server.
 
-## Struttura (`~/Documents/02_PROGETTI/ProvaImpossibile`)
+## Struttura (`~/Documents/02_PROGETTI/WatariBoot`)
 ```
 re/            analisi Ghidra di ntoskrnl/HAL ARM64 e note
 edk2-apple/    AppleSiliconPkg: m1n1 → EDK2, ACPI generate dall'ADT, parking protocol, CSRT
@@ -123,7 +123,7 @@ docs/          diario tecnico, ADR, mappa dell'hardware
 - **Documentazione** in `docs/`:
   - `docs/sessions/AAAA-MM-GG-NN.md`: diario di **ogni fine sessione** (cosa è stato fatto, decisioni, risultati, prossimi passi);
   - `docs/STATUS.md`: lo stato attuale, sempre aggiornato, e il punto da cui ripartire;
-  - `docs/design/provaimpossibile/`: output della sessione di progettazione;
+  - `docs/design/watariboot/`: output della sessione di progettazione;
   - `docs/adr/`: le decisioni architetturali.
 
 ## Esecuzione all'uscita dal plan mode (in ordine)
@@ -135,7 +135,7 @@ docs/          diario tecnico, ADR, mappa dell'hardware
    - `.gitignore`, che esclude binari Microsoft (ntoskrnl, PDB, ISO), output di build e database di Ghidra;
    - questo piano copiato in `docs/PLAN.md`.
 3. **Regola globale**: aggiungere a `~/.claude/CLAUDE.md` la sezione sul workflow Opus capo + esecutori Sonnet. Salvare la memoria `feedback`.
-4. **Sessione di progettazione** con `morasca-agent` (`model: sonnet`), a partire da questo piano: PRD, architettura con diagrammi, rischi, strategia di test e ADR in `docs/design/provaimpossibile/`. Poi rivedo l'output e correggo le imprecisioni tecniche.
+4. **Sessione di progettazione** con `morasca-agent` (`model: sonnet`), a partire da questo piano: PRD, architettura con diagrammi, rischi, strategia di test e ADR in `docs/design/watariboot/`. Poi rivedo l'output e correggo le imprecisioni tecniche.
 5. **GitHub**: `git init`, primo commit, `gh repo create ZonatedCord/ProvaImpossibile --private --source . --push`.
 6. **Avvio della Fase 0**, delegata a Sonnet:
    - agente A: setup di toolchain e Ghidra, e download di ntoskrnl ARM64 con i PDB (fuori dal repository);

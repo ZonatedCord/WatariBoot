@@ -1,7 +1,7 @@
 # ADR-0002: EDK2 invece di U-Boot
 
 - Stato: Accettata (dal piano)
-- Data: 2026-10-12 · Collegamenti: [ARCHITECTURE](../design/provaimpossibile/ARCHITECTURE.md), [INTERFACES](../design/provaimpossibile/INTERFACES.md)
+- Data: 2026-10-12 · Collegamenti: [ARCHITECTURE](../design/watariboot/ARCHITECTURE.md), [INTERFACES](../design/watariboot/INTERFACES.md)
 
 ## Contesto
 Windows ARM64 richiede UEFI e ACPI [ipotesi: requisito dal piano, non ricontrollato su documentazione Microsoft]. Servono GOP, servizi runtime UEFI, ACPI, parking protocol e CSRT. Il piano indica `ArmVirtPkg` e `Platform/RaspberryPi` di edk2-platforms come modelli.

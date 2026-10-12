@@ -1,6 +1,6 @@
 # INTERFACES: contratti fra componenti
 
-- Progetto: ProvaImpossibile · Data: 2026-10-12 · Versione: 0.1 · Stato: draft
+- Progetto: Watari Boot · Data: 2026-10-12 · Versione: 0.1 · Stato: draft
 - Documenti collegati: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
 
 ## Legenda

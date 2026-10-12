@@ -1,6 +1,6 @@
-# PRD: ProvaImpossibile
+# PRD: Watari Boot
 
-- Progetto: ProvaImpossibile (Windows ARM64 nativo su Apple Silicon, primo target MacBook Pro 13" M1, SoC t8103, board j293)
+- Progetto: Watari Boot (Windows ARM64 nativo su Apple Silicon, primo target MacBook Pro 13" M1, SoC t8103, board j293)
 - Data: 2026-10-12 · Versione: 0.1 · Stato: draft
 - Documenti collegati: [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · ADR: [0001](../../adr/0001-boot-nativo-senza-hypervisor.md), [0002](../../adr/0002-edk2-invece-di-uboot.md), [0003](../../adr/0003-parking-protocol-invece-di-psci.md), [0004](../../adr/0004-irq-invece-di-fiq.md), [0005](../../adr/0005-nessun-binario-microsoft-nel-repo.md)
 

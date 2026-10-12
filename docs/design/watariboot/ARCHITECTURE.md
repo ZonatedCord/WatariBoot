@@ -1,6 +1,6 @@
-# ARCHITECTURE: ProvaImpossibile
+# ARCHITECTURE: Watari Boot
 
-- Progetto: ProvaImpossibile · Data: 2026-10-12 · Versione: 0.1 · Stato: draft
+- Progetto: Watari Boot · Data: 2026-10-12 · Versione: 0.1 · Stato: draft
 - Documenti collegati: [PRD](PRD.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
 - Marcatura: `[verificato: fonte]` / `[ipotesi]`. Tutto cio' che descrive il comportamento interno di Windows e' `[ipotesi]` fino alla conclusione della Fase 0.
 
@@ -22,7 +22,7 @@ flowchart LR
   host -->|immagini, driver| mac
   ms[(Dati Microsoft: ntoskrnl, PDB, ISO - fuori dal repo)] -.->|solo analisi locale| host
   asahi[Upstream Asahi: m1n1, linux] -->|codice riusato con provenienza| host
-  subgraph sys[ProvaImpossibile]
+  subgraph sys[Watari Boot]
     sw[Firmware + estensioni HAL + driver]
   end
   host --> sw --> mac

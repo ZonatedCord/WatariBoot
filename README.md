@@ -1,4 +1,8 @@
-# ProvaImpossibile
+# Watari Boot
+
+**渡 (watari): attraversare, passare da una riva all'altra.**
+
+> Watari Boot: Windows nativo su Apple Silicon
 
 **Windows ARM64 in dual boot nativo su Apple Silicon.** Senza hypervisor, emulatore o VM, e senza modificare Windows.
 
@@ -14,7 +18,7 @@ Fase 0: lo spike sul HAL di Windows e i controller di interrupt non-GIC. Il dett
 - [Stato](docs/STATUS.md)
 - [Diario delle sessioni](docs/sessions/)
 - [Decisioni architetturali](docs/adr/)
-- [Design](docs/design/provaimpossibile/)
+- [Design](docs/design/watariboot/)
 
 ## Avvertenze
 Progetto di ricerca sperimentale. Nessun codice o binario Microsoft è incluso in questo repository.

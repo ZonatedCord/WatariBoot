@@ -6,7 +6,8 @@
 ## Traguardi
 - [x] Piano approvato (`docs/PLAN.md`)
 - [x] Repository creato
-- [x] Sessione di progettazione (`docs/design/provaimpossibile/`, ADR da 0001 a 0005)
+- [x] Nome: **Watari Boot**, con sottotitolo fisso "Windows nativo su Apple Silicon" (ADR-0006)
+- [x] Sessione di progettazione (`docs/design/watariboot/`, ADR da 0001 a 0005)
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
 - [ ] Fase 2: EDK2 sul MacBook
@@ -22,8 +23,7 @@
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
 ## Da decidere (non bloccanti)
-- **Nome del progetto:** **Watari + una seconda parola** (渡, "attraversare"): la prima parte è decisa, la seconda è in discussione. Su GitHub la repo è già stata rinominata `WatariBoot`, provvisoriamente.
-- **Organizzazione GitHub:** il nome è da scegliere (`watari` è occupato; liberi tra gli altri `wataribune`, `watari-project`). Va creata dal browser, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.
+- **Organizzazione GitHub:** facoltativa e rimandabile. Il nome è da scegliere (`watari` è occupato, `watariboot` è libero). Va creata dal browser, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.
 
 ## Da dove si riparte
 Vedi `docs/sessions/2026-10-12-01.md`.

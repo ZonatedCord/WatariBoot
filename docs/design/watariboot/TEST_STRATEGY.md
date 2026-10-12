@@ -1,6 +1,6 @@
 # TEST_STRATEGY
 
-- Progetto: ProvaImpossibile · Data: 2026-10-12 · Versione: 0.1 · Stato: draft
+- Progetto: Watari Boot · Data: 2026-10-12 · Versione: 0.1 · Stato: draft
 - Documenti collegati: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [RISKS](RISKS.md)
 - Marcatura: `[verificato: fonte]` / `[ipotesi]`.
 
@@ -15,7 +15,7 @@ I test hardware sono i piu' costosi e rischiosi: ogni passo sul disco richiede b
 
 ## 2. Riproducibilita'
 - Toolchain pinnate (versioni EDK2, compilatore, WDK, QEMU, Ghidra) registrate in `tools/` con hash; build in script/container; nessuna dipendenza da "macchina dello sviluppatore".
-- Input Microsoft (ntoskrnl, PDB, ISO) fuori dal repo in `~/ProvaImpossibile-data/`; nel repo solo nome file, versione, SHA-256 [proposta].
+- Input Microsoft (ntoskrnl, PDB, ISO) fuori dal repo in `~/WatariBoot-data/`; nel repo solo nome file, versione, SHA-256 [proposta].
 - Seed fissi per qualsiasi test con casualita'; fixture ADT: blob di ADT t8103/j293 catturato da dispositivo e conservato [ipotesi: licenza/privacy del blob da valutare; se non committabile, generatore sintetico].
 - Esito ripetuto: ogni criterio di uscita richiede N ripetizioni consecutive (N nel PRD).
 

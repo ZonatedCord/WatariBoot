@@ -1,7 +1,7 @@
 # ADR-0004: Evitare le FIQ, usare IRQ per IPI e timer
 
 - Stato: Accettata (dal piano), con ipotesi tecniche non verificate
-- Data: 2026-10-12 · Collegamenti: [ARCHITECTURE sez. 5](../design/provaimpossibile/ARCHITECTURE.md), [RISKS R-03](../design/provaimpossibile/RISKS.md)
+- Data: 2026-10-12 · Collegamenti: [ARCHITECTURE sez. 5](../design/watariboot/ARCHITECTURE.md), [RISKS R-03](../design/watariboot/RISKS.md)
 
 ## Contesto
 [verificato: `drivers/irqchip/irq-apple-aic.c` di Linux] L'AIC consegna come FIQ gli eventi hard-wired (timer ARM, Fast IPI, performance counter); ha anche due IPI per CPU e 896 IRQ level-triggered. Windows potrebbe non gestire FIQ [ipotesi: da analizzare nel vettore eccezioni in Fase 0].

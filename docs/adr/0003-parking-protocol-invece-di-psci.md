@@ -1,7 +1,7 @@
 # ADR-0003: ACPI Multiprocessor Parking Protocol invece di PSCI
 
 - Stato: Accettata (dal piano), con punti aperti
-- Data: 2026-10-12 · Collegamenti: [INTERFACES 4](../design/provaimpossibile/INTERFACES.md), [RISKS R-06](../design/provaimpossibile/RISKS.md)
+- Data: 2026-10-12 · Collegamenti: [INTERFACES 4](../design/watariboot/INTERFACES.md), [RISKS R-06](../design/watariboot/RISKS.md)
 
 ## Contesto
 Il M1 non ha EL3/PSCI [ipotesi, dal piano]. Servono i core secondari. Windows supporta il parking protocol [ipotesi, dal piano: non verificato su fonte Microsoft qui]. La struttura della mailbox e' verificata dal lato Linux [verificato: https://codebrowser.dev/linux/linux/arch/arm64/kernel/acpi_parking_protocol.c.html].

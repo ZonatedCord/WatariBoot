@@ -1,7 +1,7 @@
 # ADR-0001: Boot nativo senza hypervisor
 
 - Stato: Accettata (dal piano approvato `docs/PLAN.md`); revocabile solo con decisione esplicita dell'utente
-- Data: 2026-10-12 · Collegamenti: [PRD](../design/provaimpossibile/PRD.md), [RISKS R-01](../design/provaimpossibile/RISKS.md)
+- Data: 2026-10-12 · Collegamenti: [PRD](../design/watariboot/PRD.md), [RISKS R-01](../design/watariboot/RISKS.md)
 
 ## Contesto
 L'obiettivo e' usare tutti gli 8 core, le frequenze piene e, a lungo termine, la GPU del M1, senza VM/emulatore. Asahi ha escluso Windows nativo ritenendo necessaria una modifica del kernel [ipotesi: affermazione riportata dal piano, fonte non verificata]. Si ritiene [ipotesi] che esistano estensioni ufficiali (HAL extension via CSRT, tabelle ACPI, driver) sufficienti.
