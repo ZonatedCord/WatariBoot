@@ -13,6 +13,18 @@ Primo target: MacBook Pro 13" M1 (t8103).
 ## Stato
 Fase 0: lo spike sul HAL di Windows e i controller di interrupt non-GIC. Il dettaglio è in [docs/STATUS.md](docs/STATUS.md).
 
+## Token e costi
+<!-- TOKEN-COUNTER:START -->
+**Token totali: 18,588,247 · Costo stimato: $8.32** (aggiornato 2026-10-12; marco: 1 sessioni, $8.32)
+
+| Modello | Input | Output | Cache scritta | Cache letta | Costo stimato |
+|---|---:|---:|---:|---:|---:|
+| `claude-opus-5-5` | 208 | 101,829 | 225,309 | 14,331,997 | $6.71 |
+| `claude-sonnet-5-5` | 90 | 407 | 357,283 | 3,571,124 | $1.61 |
+
+<sub>Stima a prezzi API Anthropic, calcolata dai transcript locali di Claude Code con `tools/token-usage.py`. Con un abbonamento (Pro/Max) la spesa reale è il canone: questo è il costo equivalente a consumo. L'output dei subagenti può essere sottostimato nei log.</sub>
+<!-- TOKEN-COUNTER:END -->
+
 ## Documenti
 - [Piano](docs/PLAN.md)
 - [Stato](docs/STATUS.md)
