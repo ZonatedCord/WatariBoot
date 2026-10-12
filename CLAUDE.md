@@ -23,7 +23,7 @@ Obiettivo: dual boot **nativo** di Windows ARM64 su Apple Silicon. Si parte da u
 4. Commit e push **su un branch**, poi PR verso `main`. Mai push diretto su `main` (vedi `docs/CONTRIBUTING.md`).
 
 ## Collaborazione
-- Lavorano in due (Marco + il socio) più Ralph. Le regole su branch, PR, issue e file "caldi" sono in `docs/CONTRIBUTING.md` e vanno rispettate sempre.
+- Lavorano in due (Marco + Ciani) più Ralph. Le regole su branch, PR, issue e file "caldi" sono in `docs/CONTRIBUTING.md` e vanno rispettate sempre.
 - Ralph loop: solo sul proprio branch `ralph/...`, una sola istanza per volta, istruzioni in `ralph/README.md`.
 
 ## Vincoli

@@ -17,6 +17,7 @@ Fase 0: lo spike sul HAL di Windows e i controller di interrupt non-GIC. Il dett
 - [Piano](docs/PLAN.md)
 - [Stato](docs/STATUS.md)
 - [Diario delle sessioni](docs/sessions/)
+- [Come si collabora](docs/CONTRIBUTING.md) · [Avvio per un nuovo collaboratore](docs/ONBOARDING.md)
 - [Decisioni architetturali](docs/adr/)
 - [Design](docs/design/watariboot/)
 
