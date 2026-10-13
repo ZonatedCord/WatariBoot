@@ -14,7 +14,9 @@
 - [x] Pista `Wack0/NtHalExts` letta (README): l'API ufficiale per i controller di interrupt è stata **rimossa** da Microsoft prima di Windows 8; l'estensione funziona cercando funzioni interne. Vedi `re/f0-nthalexts-pista.md`.
 - [ ] Studiare il codice di `halextbcm2709.c`/`halextapi.c` (solo lettura, senza copiare gli header DDK).
 - [x] **Gate B, B1+B2** (2026-10-13): QEMU 11.1.2, EDK2 `edk2-stable202608` compilato (ArmVirtQemu AARCH64, CLANGDWARF) e avviato in QEMU fino al Boot Manager UEFI. Elenco di cosa è installato e come rimuoverlo: `docs/INSTALLATO.md` + `tools/uninstall-watari.sh`.
-- [ ] Gate B, V0: serve l'ISO di Windows 11 ARM64, scaricata da Marco dalla pagina ufficiale Microsoft in `WatariBoot-data/iso/`.
+- [x] **V0 (TCG):** il Setup di Windows 11 ARM64 (ISO ufficiale it-it build 26300, SHA-256 in `WatariBoot-data/iso/SHA256.txt`) gira in QEMU sul **nostro** EDK2. Screenshot: `WatariBoot-data/logs/screens/tcg-c1.png`. Script: `tools/run-qemu-windows.sh`.
+- [ ] **HVF:** il nostro EDK2 si blocca su "Start boot option" (`[Bds]BdsWait(5)`). Diagnosi in corso (un agente stava provando il firmware incluso in QEMU, una build RELEASE, GICv2). **Da riprendere qui:** controllare `git status` sul branch locale `marco/gate-b-v0` per eventuali modifiche lasciate dall'agente.
+- [ ] Poi: installazione di Windows nella VM (valutare il disco interno per la velocità), quindi V1 e V6.
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
 - [ ] Fase 2: EDK2 sul MacBook
