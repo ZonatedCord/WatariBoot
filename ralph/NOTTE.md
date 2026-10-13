@@ -15,7 +15,7 @@ Ogni esecuzione notturna parte **da zero**: legge questo file e lavora sul primo
 - Prima di finire: commit + push, aggiorna `ralph/PROGRESS-notte.md` e le righe "Notte" in `docs/STATUS.md`.
 
 ## Task (in ordine)
-- [x] **N1. HVF.** *(risolto alle 00:40, vedi F-08)* Diagnosi del blocco HVF (F-08):
+- [x] **N1. HVF.** *(risolto poco dopo mezzanotte, vedi F-08)* Diagnosi del blocco HVF (F-08):
   - controlla `tools/edk2-timer-imask.patch` e il log di eventuali tentativi in `WatariBoot-data/logs/`;
   - prova con il firmware EDK2 incluso in QEMU (`/opt/homebrew/share/qemu/edk2-aarch64-code.fd`), poi con una build RELEASE, poi con `gic-version=2`;
   - obiettivo: con HVF arrivare almeno all'avvio del CD di Windows. Se dopo un tentativo serio non si risolve, documenta in F-08 e passa avanti (si continua con TCG).
