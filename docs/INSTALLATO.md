@@ -26,12 +26,16 @@ Radice: `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (totale ~1.0G)
 - `src/edk2/Build/`: output della build ArmVirtQemu, 355M.
 - `logs/`: log di build e QEMU (`b2-uefi.log`, `b2-uefi-tcg.log`, `b2-uefi-hvf.log`, `b2-build.log`).
 - `run/`: copie da 64M dei firmware usate da QEMU (`efi.img`, `vars.img`).
+- `vm/` (Gate B, V0): `win11.qcow2` (disco NVMe da 64G virtuali, sparso), `win11-efi.img` e `win11-vars.img` (pflash da 64M ciascuno; le variabili si ricreano cancellando il file). Ordine di grandezza dello spazio: qcow2 pochi MB finche' non si installa, 128M per i due pflash (sparsi).
+- `logs/screens/`: screenshot (PNG) dei test headless; `logs/win-cmd.txt` (comando QEMU), `win-qemu.log`, `win-serial.log`.
+- `run/qemu-mon.sock`, `run/qemu.pid`: monitor QEMU e pid del test headless.
+- `iso/`: ISO Windows 11 ARM64 it-it (8.4G) + SHA256.txt.
 - `brew-prima.txt`: pacchetti brew presenti prima.
 
 Fuori dal disco esterno: solo il link simbolico `/tmp/watari-data` -> cartella dati (creato da `tools/env.sh`; serve perché EDK2 non accetta spazi nei percorsi; sparisce al riavvio).
 
 ## Script
-`tools/env.sh`, `tools/build-edk2.sh`, `tools/run-qemu-uefi.sh`, `tools/uninstall-watari.sh`.
+`tools/env.sh`, `tools/build-edk2.sh`, `tools/run-qemu-uefi.sh`, `tools/run-qemu-windows.sh`, `tools/test-qemu-windows.sh`, `tools/uninstall-watari.sh`.
 
 ## Come rimuovere tutto
 Con lo script (default dry-run, non cancella nulla):
