@@ -29,6 +29,7 @@ Radice: `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (totale ~1.0G)
 - `vm/` (Gate B, V0): `win11.qcow2` (disco NVMe da 64G virtuali, sparso), `win11-efi.img` e `win11-vars.img` (pflash da 64M ciascuno; le variabili si ricreano cancellando il file). Ordine di grandezza dello spazio: qcow2 pochi MB finche' non si installa, 128M per i due pflash (sparsi).
 - `logs/screens/`: screenshot (PNG) dei test headless; `logs/win-cmd.txt` (comando QEMU), `win-qemu.log`, `win-serial.log`.
 - `run/qemu-mon.sock`, `run/qemu.pid`: monitor QEMU e pid del test headless.
+- `vm/unattend.iso` (piccola, ~1 MB): contiene `autounattend.xml` (da `tools/make-unattend-iso.sh`); si collega con `run-qemu-windows.sh --unattend`.
 - `iso/`: ISO Windows 11 ARM64 it-it (8.4G) + SHA256.txt.
 - `brew-prima.txt`: pacchetti brew presenti prima.
 
