@@ -13,7 +13,8 @@
 - [x] Gate A, secondo e terzo giro: A1, A2, A4, A7–A11 (PR #22 e la PR di questo giro). **Gate A completo.**
 - [x] Pista `Wack0/NtHalExts` letta (README): l'API ufficiale per i controller di interrupt è stata **rimossa** da Microsoft prima di Windows 8; l'estensione funziona cercando funzioni interne. Vedi `re/f0-nthalexts-pista.md`.
 - [ ] Studiare il codice di `halextbcm2709.c`/`halextapi.c` (solo lettura, senza copiare gli header DDK).
-- [ ] Gate B: QEMU + EDK2 + Windows (V0, V1, V4, V6). Richiede l'ok dell'utente per i download e il disco esterno collegato.
+- [x] **Gate B, B1+B2** (2026-10-13): QEMU 11.1.2, EDK2 `edk2-stable202608` compilato (ArmVirtQemu AARCH64, CLANGDWARF) e avviato in QEMU fino al Boot Manager UEFI. Elenco di cosa è installato e come rimuoverlo: `docs/INSTALLATO.md` + `tools/uninstall-watari.sh`.
+- [ ] Gate B, V0: serve l'ISO di Windows 11 ARM64, scaricata da Marco dalla pagina ufficiale Microsoft in `WatariBoot-data/iso/`.
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
 - [ ] Fase 2: EDK2 sul MacBook

@@ -53,8 +53,8 @@ Stesse regole del Gate A: niente download e niente installazioni.
   Output: `docs/design/watariboot/HALEXT-TIMER-WDT.md`.
 
 ## Gate B: richiede backup confermato + almeno 100 GB liberi + l'ok umano (Ralph NON li esegue)
-- [ ] B1. Installare qemu, acpica-tools e le dipendenze di EDK2. [UMANO conferma]
-- [ ] B2. Build di EDK2 `ArmVirtQemu` e boot fino alla shell UEFI in QEMU.
+- [x] B1. Installare qemu, acpica-tools e le dipendenze di EDK2. [UMANO conferma]
+- [x] B2. Build di EDK2 `ArmVirtQemu` e boot fino alla shell UEFI in QEMU.
 - [ ] B3. ISO ufficiale di Windows 11 ARM64 dal sito Microsoft. [UMANO: download dal browser]
 - [ ] B4. Baseline: Windows ARM64 avviato in QEMU con il nostro EDK2 e le tabelle di `acpigen`.
 - [ ] B5. Le varianti della matrice A5, con le evidenze raccolte.
