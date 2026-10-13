@@ -63,7 +63,7 @@ CMD=(qemu-system-aarch64 -M virt,gic-version=3 "${CPU[@]}" -smp 4 -m "$MEM"
     -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0
     -drive if=none,id=cd0,format=raw,media=cdrom,readonly=on,file="$ISO"
     -device usb-storage,bus=xhci.0,drive=cd0,bootindex=0
-    "${UNA[@]}"
+    ${UNA[@]+"${UNA[@]}"}
     -drive if=none,id=hd0,format=qcow2,file="$DISK"
     -device nvme,drive=hd0,serial=watari0,bootindex=1
     -net none "${DISP[@]}" ${QEMU_EXTRA:-})

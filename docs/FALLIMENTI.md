@@ -43,11 +43,13 @@ Formato di ogni voce:
 - **Successo:** `edksetup.sh` di EDK2 e il comando `screendump` del monitor QEMU falliscono se il percorso contiene spazi (il disco si chiama "Arthur Fonzarelli").
 - **Lezione:** si usa il link `/tmp/watari-data` (creato da `tools/env.sh`). Meglio dare ai dischi di lavoro nomi senza spazi.
 
-## F-08 · Accelerazione HVF con il nostro EDK2 (2026-10-13, APERTO)
+## F-08 · Accelerazione HVF con il nostro EDK2 (2026-10-13, **RISOLTO** 2026-10-14)
 - **Provato:** avviare Windows in QEMU con `-accel hvf -cpu host`, `-M virt,gic-version=3` e il nostro EDK2 `edk2-stable202608` (DEBUG, CLANGDWARF).
 - **Successo:** si blocca sul logo TianoCore ("Start boot option"); la seriale si ferma a `[Bds]BdsWait(5)` e una CPU resta al 100%. Lo stesso firmware con TCG funziona e arriva al Setup di Windows.
-- **Perché:** da diagnosticare (ipotesi: il timer generico sotto HVF; un agente ha preparato `tools/edk2-timer-imask.patch`, **non ancora verificato**).
-- **Lezione:** finché non è risolto, gli esperimenti girano con TCG, che è 10–50 volte più lento.
+- **Ipotesi sbagliate escluse** (utili a chi prova lo stesso): build RELEASE, `kernel-irqchip=off`, `gic-version=2`, `highmem=off`, `-smp 1` e il mascheramento del timer (IMASK); la patch provvisoria `edk2-timer-imask.patch` è stata scartata.
+- **Causa (verificata):** con `-cpu host` sotto HVF, il campo `ID_AA64PFR0_EL1.GIC` vale 0 (letto nel firmware: pfr0=0x1101000010110011), anche se l'interfaccia GICv3 è utilizzabile. `ArmGicDxe` (`GicV3Supported`) decide GICv2/v3 solo da quel campo, quindi caricava il driver **GICv2** su un GICv3: nessun IRQ (PMR=0, IGRPEN1=0), il timer virtuale restava pendente e `BdsWait` aspettava per sempre. Il firmware EDK2 incluso in Homebrew invece funziona (è una build diversa).
+- **Soluzione:** `tools/edk2-hvf-gicv3.patch`: GICv3 anche se la piattaforma dichiara una base dei redistributor (`PcdGicRedistributorsBase != 0`); viene applicata da `tools/build-edk2.sh`. **Verificato da Opus:** con HVF il Setup di Windows compare (`logs/screens/win-hvf-180s.png`).
+- **Lezione:** su Apple Silicon con HVF i registri ID della CPU possono non dire la verità sulle funzioni del GIC. Il firmware non deve fidarsi solo di quelli. Possibile segnalazione a EDK2 (da decidere con Marco).
 
 ## F-09 · Regole sui download violate dagli agenti (2026-10-13)
 - **Successo:** due subagenti hanno salvato file temporanei (una copia del sorgente Linux `aic.c`, il PDF della specifica parking) nelle cartelle interne di Claude, nonostante il divieto di download nei prompt. Il backup era confermato e niente è finito nella repository.
