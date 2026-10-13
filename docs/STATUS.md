@@ -11,7 +11,8 @@
 - [x] Analisi e audit di NTASP: strada indipendente (ADR-0007), bug segnalato con la issue NT-for-ASi/apple_silicon_platforms_mu#23
 - [x] Gate A, primo giro: A3, A5, A6 (PR #15). Scoperta: il timer del M1 è solo FIQ, vedi la bozza di ADR "strategia timer FIQ"
 - [x] Gate A, secondo e terzo giro: A1, A2, A4, A7–A11 (PR #22 e la PR di questo giro). **Gate A completo.**
-- [ ] **Prossimo:** studiare `Wack0/NtHalExts/halextbcm2709`, un'estensione HAL di terze parti per un controller di interrupt non-GIC (Pi 2, Windows 8.x ARM32). Può cambiare il verdetto.
+- [x] Pista `Wack0/NtHalExts` letta (README): l'API ufficiale per i controller di interrupt è stata **rimossa** da Microsoft prima di Windows 8; l'estensione funziona cercando funzioni interne. Vedi `re/f0-nthalexts-pista.md`.
+- [ ] Studiare il codice di `halextbcm2709.c`/`halextapi.c` (solo lettura, senza copiare gli header DDK).
 - [ ] Gate B: QEMU + EDK2 + Windows (V0, V1, V4, V6). Richiede l'ok dell'utente per i download e il disco esterno collegato.
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
@@ -30,8 +31,13 @@
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
 ## Verdetto preliminare (A7, prima della pista halextbcm2709)
-- Nativo puro circa 12%, piano B (shim EL2 con vGIC) circa 53%, altro circa 35%. Dettagli in `re/f0-verdetto-preliminare.md`.
+- **Aggiornato dopo NtHalExts:** nativo pulito ~5%, nativo con funzioni interne ~20%, piano B ~50%, altro ~25% (`re/f0-nthalexts-pista.md`). Le stime di A7 sono in `re/f0-verdetto-preliminare.md`.
 - La soglia del piano B la decide l'utente (bozza ADR `bozza-esito-fase0-preliminare.md`).
+
+## Per Ciani (se lavora oggi)
+Niente issue nuove, per non mandare notifiche. Scegli uno di questi, su un branch `ciani/...` e con **una sola PR** alla fine:
+1. **Studio di `halextbcm2709`** (solo lettura su GitHub): come registra il controller di interrupt nell'HAL di NT (callback, strutture, IPI). Output: una sezione in `re/f0-nthalexts-pista.md`.
+2. **Correzioni di `tools/acpigen`** da A2 (`re/f0-acpi-requisiti-windows.md`, sezione discrepanze): parking version 1 + indirizzo, CPU di boot per prima, GICR=1, niente GICD segnaposto; poi i generatori FADT e DBG2. Criterio: `make -C tools/acpigen test` verde.
 
 ## Da decidere (non bloccanti)
 - **Organizzazione GitHub:** facoltativa e rimandabile. Il nome è da scegliere (`watari` è occupato, `watariboot` è libero). Va creata dal browser, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.

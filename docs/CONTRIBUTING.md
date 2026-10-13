@@ -38,14 +38,18 @@ Regole:
 | `docs/PLAN.md` | Si cambia solo insieme a un ADR. |
 | `CLAUDE.md` | Si cambia solo se siete d'accordo tutti e due. |
 
-## 5. Review
+## 5. Notifiche
+- Ogni issue, PR, commento o assegnazione manda una mail a tutti i collaboratori. Si lavora a **una PR per sessione o per traguardo**, senza commenti o riassegnazioni superflue.
+- Consiglio: sulla pagina della repo, **Watch → Participating and @mentions**.
+
+## 6. Review
 - Ogni PR la approva **chi non l'ha scritta**. Per le PR di Ralph: Opus fa la verifica tecnica, poi un umano dà l'ok finale e fa il merge.
 - Per le PR di codice: CI verde (quando ci sarà) + niente binari Microsoft (vedi `.gitignore`).
 
-## 6. Commit
+## 7. Commit
 - Messaggi in italiano, all'imperativo, con il "perché" quando non è ovvio. Esempio: `acpigen: aggiungi checksum MADT`.
 - Le righe di attribuzione per i commit fatti da Claude seguono le istruzioni della sessione.
 
-## 7. Ralph
+## 8. Ralph
 - Gira **solo** sul suo branch `ralph/...`, uno alla volta. Non fa mai merge.
 - Le regole operative sono in `ralph/README.md`.
