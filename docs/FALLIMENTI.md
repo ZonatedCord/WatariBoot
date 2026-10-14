@@ -77,3 +77,10 @@ Formato di ogni voce:
 - **Provato:** modificata `acpigen_cpu`/`acpigen_madt_opts` in `acpigen.h` e rifatto `tools/build-edk2-watari.sh`.
 - **Fallito:** EDK2 non rileva le modifiche agli header di acpigen (percorso fuori da PACKAGES_PATH): `WatariAcpiOverride.c` restava compilato con il vecchio layout di `acpigen_model`, quindi leggeva `Model->gtdt` a un offset sbagliato: "acpigen_build_gtdt errore -2" oppure puntatore errato e QEMU/HVF in abort (`Assertion failed: (isv)` in `hvf_handle_exception`, a circa 7 s, durante il firmware).
 - **Rimedio:** `tools/build-edk2-watari.sh` cancella la cartella di build del modulo prima di compilare. Se si vede l'abort `isv` subito dopo "MADT acpigen installata", controllare prima se il driver e' stantio.
+
+## F-13 · V6: timer in Group 0 a ExitBootServices ripristinato in Group 1 (2026-10-14)
+- **Provato:** `WatariTimerFiqDxe` mette PPI 27/30 in Group 0 a ExitBootServices (IGROUPR0 -> 0xB7FFFFFF, `ICC_IGRPEN0`=1, `GICD_CTLR.EnableGrp0`); Windows 11 con `kernel-irqchip=off` e trace del GIC.
+- **Successo:** la scrittura avviene (seriale e trace `0x10080 = 0xb7ffffff`).
+- **Fallito:** nel trace, subito dopo (`IGRPEN1=0`, `ICENABLER0=0xffff00ff`) arriva `IGROUPR0=0xffffffff`: PPI di nuovo in Group 1, prima che il timer sia abilitato. Zero `hvf_inject_fiq`: nessuna FIQ consegnata, quindi non si sa se Windows tollererebbe la FIQ. In piu' il controllo (firmware V1) con `kernel-irqchip=off` non arriva alla schermata di blocco ma a Windows RE (boot lento, "ripristino automatico"), quindi il banco di prova e' degradato.
+- **Perche' (ipotesi):** un re-init del GIC dopo ExitBootServices (firmware o HAL di Windows) azzera i gruppi; non identificato chi.
+- **Lezione:** il metodo A da solo non basta. Prima identificare lo scrittore di IGROUPR0 (es. trace con timestamp e PC, o hook nel monitor), e capire perche' `kernel-irqchip=off` degrada il boot di Windows; poi decidere se serve il metodo B (patch QEMU, da non compilare senza il via di Marco).
