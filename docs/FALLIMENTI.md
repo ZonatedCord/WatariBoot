@@ -59,3 +59,10 @@ Formato di ogni voce:
 - **Provato:** controllare con `screendump` l'installazione automatica di Windows (HVF, ramfb, senza display).
 - **Successo:** dopo ~2 ore lo screenshot era completamente nero, il disco non scriveva più e la seriale era muta: sembrava un hang. In realtà Windows aveva finito e lo schermo si era spento per inattività.
 - **Lezione:** prima di dichiarare un blocco, mandare un tasto (`sendkey shift` dal monitor QEMU) e rifare lo screenshot. Il silenzio della seriale non dice nulla sul kernel di Windows (il debug seriale non era ancora attivo/verificato).
+
+## F-11 · Windows non avvia con MADT+GTDT di acpigen (modello qemu-virt) (2026-10-14)
+- **Provato:** firmware `QEMU_EFI-watari.fd` (driver `WatariAcpiOverride`, che a ReadyToBoot sostituisce MADT e GTDT con quelle di `acpigen -m qemu-virt`) e avvio del Windows 11 installato (N2), con HVF, disco in modalità `snapshot=on` (non modificato).
+- **Successo:** il driver gira (log: MADT 412 byte rimossa/installata, GTDT 104 byte) e Windows carica `ntoskrnl.exe`, poi si blocca per oltre 7 minuti: CPU QEMU al 100%, schermo fermo sul logo TianoCore, nessun nuovo output seriale (screenshot `n4w-d`, `logs/screens/n4w-c.png`).
+- **Controllo (verificato):** stesso disco e stessa VM con il firmware originale (ACPI di QEMU): desktop in meno di 2 minuti (`logs/screens/n4w-base.png`). Quindi la causa è nelle nostre tabelle, non nell'ambiente.
+- **Ipotesi (da provare, una alla volta):** (1) parking protocol con `PSCI=0` nella FADT originale: noi non installiamo la nostra FADT ma la MADT dice parking v1 → Windows aspetta le pagine di parking mai riservate (il sospetto principale); (2) GICR=0/struttura GICR 0x0E diversa da QEMU; (3) GTDT senza `ACTIVE_LOW`; (4) layout della MADT scritto a memoria dalla spec.
+- **Prossimo passo:** provare la MADT con parking disattivato (versione 0, indirizzo 0), poi installare anche la nostra FADT, e confrontare con le tabelle originali dumpate.

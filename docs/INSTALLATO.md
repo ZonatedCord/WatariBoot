@@ -52,3 +52,7 @@ rm -f /tmp/watari-data
 rm -rf "/Volumes/Arthur Fonzarelli/WatariBoot-data"
 ```
 Per confrontare: `comm -13 <(sort brew-prima.txt) <(brew list --formula | sort)` deve tornare vuoto.
+
+## Notte 2026-10-14 (N3/N4)
+- Repo: `edk2-apple/WatariQemuPkg/`, `tools/build-edk2-watari.sh`, `tools/acpigen/src/{fadt,dbg2,qemu_virt_model}.c`.
+- Disco esterno: `WatariBoot-data/vm/QEMU_EFI-watari.fd`, `/tmp/watari-data/build-watari/` (workspace EDK2 separato), `win11.qcow2` (~14 GB, Windows 11 installato). Rimozione: cancellare questi percorsi.

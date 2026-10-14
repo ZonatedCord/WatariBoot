@@ -42,3 +42,11 @@ Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risu
 - **Ipotesi aperte:** layout FADT/DBG2/GICR Structure scritto a memoria dalla spec ACPI 6.5 (`Acpi65.h` non confrontato); flag GTDT qemu-virt solo ALWAYS_ON (non active-low come chiesto: il DT dice active-high); parking con PSCI=0 su qemu-virt anche se QEMU usa PSCI.
 - Passi falsi dell'agente: `find /` troppo ampia (nessun danno), un `sed` fallito e rifatto.
 - **Prossimo: N4** (driver DXE WatariAcpiOverride in `edk2-apple/WatariQemuPkg`).
+
+## 2026-10-14 ~03:30: N4 FATTO a metà (agente Sonnet + verifica Opus)
+- **Build riuscita (verificato):** `edk2-apple/WatariQemuPkg` + `tools/build-edk2-watari.sh`; firmware `WATARI_DATA/vm/QEMU_EFI-watari.fd`. Il driver compila i sorgenti di acpigen senza copiarli (shim `string.h`). Log del driver verificato di persona nel seriale.
+- **Windows con le nostre tabelle: NON parte** (F-11), mentre con il firmware originale arriva al desktop (verificato con screenshot). Non è stato modificato il disco (`snapshot=on`).
+- Incidente dell'agente: ha sovrascritto per errore la build di `build-edk2.sh` e l'ha rigenerata (nessun danno, la VM usa copie).
+- Il seriale mostra righe con `\SystemRoot\system32\ntoskrnl.exe` ripetute: ipotesi, traffico del debug del kernel su seriale (testsigning/debug quindi attivi); non verificato.
+- **Ripartire da:** F-11, ipotesi 1 (parking disattivato nel modello qemu-virt).
+- Tutti i QEMU sono chiusi. Nessun download/installazione. `INSTALLATO.md`: nuovi file in `edk2-apple/`, `tools/build-edk2-watari.sh`, `WATARI_DATA/build-watari/` e `vm/QEMU_EFI-watari.fd`.

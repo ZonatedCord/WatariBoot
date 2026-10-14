@@ -39,4 +39,4 @@ Ogni esecuzione notturna parte **da zero**: legge questo file e lavora sul primo
   - modello `qemu-virt` (letto dalle ACPI di QEMU: `-machine dumpdtb` oppure le tabelle dumpate da EDK2/UEFI shell `acpiview`);
   - generatori FADT e DBG2.
   Criterio: `make -C tools/acpigen test` verde.
-- [ ] **N4. V1 (preparazione).** Driver DXE `WatariAcpiOverride` in un pacchetto `edk2-apple/WatariQemuPkg` (sorgenti nella repo, build con l'EDK2 sul disco esterno) che sostituisce MADT e GTDT con quelle di `acpigen`. Criterio: build riuscita e, se N2 è fatto, Windows avviato con le nostre tabelle (screenshot).
+- [x] **N4. V1 (preparazione).** *(build riuscita; Windows NON parte con le nostre tabelle: F-11)* Driver DXE `WatariAcpiOverride` in un pacchetto `edk2-apple/WatariQemuPkg` (sorgenti nella repo, build con l'EDK2 sul disco esterno) che sostituisce MADT e GTDT con quelle di `acpigen`. Criterio: build riuscita e, se N2 è fatto, Windows avviato con le nostre tabelle (screenshot).
