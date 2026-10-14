@@ -1,33 +1,33 @@
-# Avvio per Ciani (e per il suo Claude)
+# Onboarding for Ciani (and for their Claude)
 
-## 1. Accesso
-- Marco aggiunge Ciani come collaboratore della repo privata `ZonatedCord/WatariBoot`, poi Ciani accetta l'invito da email o da GitHub.
+## 1. Access
+- Marco adds Ciani as a collaborator on the private repo `ZonatedCord/WatariBoot`, then Ciani accepts the invitation from email or from GitHub.
 
-## 2. Setup una tantum
+## 2. One-time setup
 ```sh
-gh auth login                      # se non è già fatto
+gh auth login                      # if not already done
 gh repo clone ZonatedCord/WatariBoot ~/Documents/02_PROGETTI/WatariBoot
 cd ~/Documents/02_PROGETTI/WatariBoot
-./tools/install-hooks.sh           # blocca i push diretti su main
-git config user.name "<Nome Cognome>"
-git config user.email "<email GitHub>"
+./tools/install-hooks.sh           # blocks direct pushes to main
+git config user.name "<First Last>"
+git config user.email "<GitHub email>"
 ```
 
-## 3. Configurare Claude Code sul Mac di Ciani
-Le regole del progetto stanno nel `CLAUDE.md` della repo e Claude le legge da solo. In più servono due impostazioni **sulla macchina di Ciani**:
-- Opus come modello principale (`/model opus`).
-- Sonnet come modello predefinito dei subagenti. In `~/.claude/settings.json`:
+## 3. Configuring Claude Code on Ciani's Mac
+The project rules live in the repo's `CLAUDE.md` and Claude reads them on its own. In addition, two settings are needed **on Ciani's machine**:
+- Opus as the main model (`/model opus`).
+- Sonnet as the default model for subagents. In `~/.claude/settings.json`:
   ```json
   { "env": { "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet" } }
   ```
-  Poi va riavviato Claude Code. Al primo agente che parte, controllare nel pannello che sia davvero Sonnet.
+  Then Claude Code must be restarted. When the first agent starts, check in the panel that it really is Sonnet.
 
-## 4. Come lavora Ciani
-- Ciani **non** usa Ralph: lavora a sessioni normali con il suo Claude (Opus capo + subagenti Sonnet).
-- Prende i task dalle **GitHub Issues** assegnandoseli, e lavora su branch `ciani/<fase>-<tema>`. Ogni branch porta a una PR.
-- Non tocca i file di `ralph/` né il branch `ralph/...`.
+## 4. How Ciani works
+- Ciani does **not** use Ralph: they work in normal sessions with their Claude (Opus boss + Sonnet subagents).
+- They take tasks from the **GitHub Issues** by assigning them to themselves, and work on `ciani/<phase>-<topic>` branches. Every branch leads to a PR.
+- They do not touch the files in `ralph/` nor the `ralph/...` branch.
 
-## 5. Regole da ricordare
-- Ralph, se usato, gira solo sul Mac di Marco e sul branch `ralph/...`.
-- Il diario delle sessioni di Ciani va in `docs/sessions/AAAA-MM-GG-ciani-NN.md`.
-- Tutto il resto è in `docs/CONTRIBUTING.md`.
+## 5. Rules to remember
+- Ralph, if used, runs only on Marco's Mac and on the `ralph/...` branch.
+- Ciani's session diary goes in `docs/sessions/YYYY-MM-DD-ciani-NN.md`.
+- Everything else is in `docs/CONTRIBUTING.md`.

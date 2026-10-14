@@ -1,28 +1,28 @@
-# Ralph loop: come lanciarlo
+# Ralph loop: how to launch it
 
-Ralph è Claude in loop: a ogni iterazione riceve lo stesso prompt (`PROMPT-fase0.md`), svolge **un** task di `TASKS-fase0.md`, verifica, fa commit sul proprio branch e ricomincia. Si ferma quando scrive `<promise>RALPH STOP</promise>` oppure al numero massimo di iterazioni.
+Ralph is Claude in a loop: at each iteration it receives the same prompt (`PROMPT-phase0.md`), performs **one** task from `TASKS-phase0.md`, verifies, commits on its own branch and starts again. It stops when it writes `<promise>RALPH STOP</promise>` or at the maximum number of iterations.
 
-## Prima di lanciarlo (checklist)
-1. `./tools/install-hooks.sh` (una volta per clone): blocca i push diretti su `main`.
-2. Repo aggiornata e branch dedicato:
+## Before launching it (checklist)
+1. `./tools/install-hooks.sh` (once per clone): blocks direct pushes to `main`.
+2. Up-to-date repo and dedicated branch:
    ```sh
    git switch main && git pull --rebase
-   git switch -c ralph/f0-gate-a   # oppure: git switch ralph/f0-gate-a, se esiste già
+   git switch -c ralph/f0-gate-a   # or: git switch ralph/f0-gate-a, if it already exists
    git push -u origin ralph/f0-gate-a
    ```
-3. Avvia Claude Code **nella cartella della repo**, con Opus come modello principale. `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` è già impostato in `~/.claude/settings.json`. Al primo agente che parte, controlla nel pannello che sia davvero Sonnet.
-4. Nessun altro (né il socio né un'altra sessione Claude) deve lavorare sul branch `ralph/f0-gate-a`.
+3. Start Claude Code **in the repo folder**, with Opus as the main model. `CLAUDE_CODE_SUBAGENT_MODEL=sonnet` is already set in `~/.claude/settings.json`. When the first agent starts, check in the panel that it really is Sonnet.
+4. Nobody else (neither the partner nor another Claude session) must work on the `ralph/f0-gate-a` branch.
 
-## Comando
+## Command
 ```
-/ralph-loop "Esegui le istruzioni di ralph/PROMPT-fase0.md" --completion-promise "RALPH STOP" --max-iterations 15
+/ralph-loop "Run the instructions in ralph/PROMPT-phase0.md" --completion-promise "RALPH STOP" --max-iterations 15
 ```
-- 7 task, uno per iterazione, più margine per i tentativi ripetuti: 15 iterazioni bastano. Ogni iterazione costa token: **non togliere `--max-iterations`.**
-- Per fermarlo in qualsiasi momento: `/cancel-ralph`.
+- 7 tasks, one per iteration, plus margin for repeated attempts: 15 iterations are enough. Every iteration costs tokens: **do not remove `--max-iterations`.**
+- To stop it at any time: `/cancel-ralph`.
 
-## Mentre gira
-- Il progresso si legge in `ralph/PROGRESS-fase0.md`, anche da GitHub, perché Ralph fa push a ogni task.
-- Il Gate B (download, QEMU, ISO di Windows) **non** lo fa: richiede backup confermato, almeno 100 GB liberi e l'ok umano.
+## While it runs
+- Progress can be read in `ralph/PROGRESS-phase0.md`, also from GitHub, because Ralph pushes after every task.
+- Gate B (downloads, QEMU, Windows ISO) it does **not** do: it requires a confirmed backup, at least 100 GB free and human approval.
 
-## Quando ha finito
-Ralph apre una PR `ralph/f0-gate-a → main`. Si apre una sessione con Opus, che fa la review della PR. Poi un umano approva e fa il merge (squash).
+## When it is done
+Ralph opens a PR `ralph/f0-gate-a → main`. A session with Opus is opened, which reviews the PR. Then a human approves and merges (squash).

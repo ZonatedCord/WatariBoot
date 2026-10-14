@@ -1,28 +1,28 @@
-# RISKS: registro rischi
+# RISKS: risk register
 
-- Progetto: Watari Boot · Data: 2026-10-12 · Versione: 0.1 · Stato: draft
-- Documenti collegati: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md)
-- Probabilita' e impatto sono stime qualitative del progettista (A/M/B), non misurate: `[ipotesi]`.
+- Project: Watari Boot · Date: 2026-10-12 · Version: 0.1 · Status: draft
+- Related documents: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md)
+- Probability and impact are the designer's qualitative estimates (H/M/L), not measured: `[hypothesis]`.
 
-| ID | Rischio | Prob. | Impatto | Mitigazione | Piano B |
+| ID | Risk | Prob. | Impact | Mitigation | Plan B |
 |---|---|---|---|---|---|
-| R-01 | Spike negativo: l'HAL non accetta un controller non-GIC da estensioni di terzi [ipotesi, ipotesi centrale] | M | Critico | Fase 0 prima di tutto; evidenze in `re/`; isolare l'interfaccia (INTERFACES 5) | (a) shim a EL2 con interfaccia GIC di virtualizzazione (`ICH_*`) per soli interrupt, overhead stimato ~1% [ipotesi del piano, non misurato]; (b) patch kernel per ricerca, non distribuibile. Decide l'utente (ADR-0001) |
-| R-02 | Windows richiede un GIC (GICD/GICR) nella MADT per enumerare CPU o per il parking [ipotesi] | M | Alto | Verificare in Fase 0/1 su ntoskrnl e in QEMU | GIC fittizio in ACPI intercettato dall'estensione; poi piano B di R-01 |
-| R-03 | Timer solo FIQ (il timer ARM va su FIQ [verificato: irq-apple-aic.c]) e non instradabile in IRQ | M | Alto | Studiare registri/mode del M1 in m1n1/Asahi; sorgente timer alternativa in IRQ | Polling timer via estensione, oppure shim EL2; decidere con utente |
-| R-04 | Debug senza secondo computer e canale di debug Windows non disponibile su hardware non standard (KDCOM richiede UART descritta; KDNET richiede NIC supportata) [ipotesi] | A | Alto | Pi 5 come debug host da Fase 2; DBG2 + UART di debug; log su framebuffer; m1n1 come proxy | Debug via m1n1 (memoria) senza WinDbg; bugcheck su framebuffer |
-| R-05 | Brick/perdita dati del Mac | B | Critico | Solo partizione separata Asahi; backup; conferma prima di ogni operazione; macOS e recovery intatti | Restore via DFU da un altro Mac (richiede un secondo Mac che l'utente non ha [piano: nota]); necessario procurarsene l'accesso prima della Fase 2 |
-| R-06 | Parking protocol: il wake via IPI non funziona senza GIC; semantica esatta non verificata sulla specifica | M | Alto | Leggere la specifica; polling con WFE nel parcheggio; invio IPI AIC | Singolo core (degradato) per le fasi 3-4; poi risolvere |
-| R-07 | Comportamento CPU Apple fuori standard che Windows non tollera (registri IMPDEF, SError, page size/granularita', ID register) [ipotesi] | M | Alto | Analisi in Fase 0; test in Fase 3 con log di bugcheck | Se non rimediabile via firmware: shim EL2 |
-| R-08 | IOMMU DART (pagine 16K) incompatibile con DMA di Windows (4K) | M | Medio-Alto | Bypass dove possibile; mappature nei driver; SART per ANS | Bounce buffer a 16K nei nostri driver |
-| R-09 | SSD ANS2: init e SART complessi da portare; rischio di corruzione dati | M | Alto | Porting da driver Asahi; test su partizione dedicata; modello host | Avvio e installazione su USB esterno (SSD esterna) |
-| R-10 | Firmware m1n1/EDK2: instabilita' USB/PHY/framebuffer | M | Medio | Riuso codice m1n1; test ripetuti | Boot da USB con controller gia' inizializzato da m1n1 |
-| R-11 | Windows aggiorna e cambia il comportamento (build diversa dalla Fase 0) | M | Medio | Congelare build e hash; regressione dopo ogni aggiornamento | Rimanere su build congelata |
-| R-12 | Firma dei driver: in sviluppo test-signing; per distribuzione serve Partner Center [dal piano] | A (per distribuzione) | Medio | Distinguere obiettivo ricerca / distribuzione | Distribuzione solo come istruzioni/test mode |
-| R-13 | Legale: uso di dati Microsoft e reverse engineering [dal piano: consentito per interoperabilita' in UE, Dir. 2009/24/CE art. 6; non verificato qui, non e' consulenza legale] | B | Alto | Nessun binario/codice MS nel repo (ADR-0005); appunti con parole nostre | Parere legale se si pubblica |
-| R-14 | Licenze del codice Asahi (MIT/GPL-2.0) incompatibili con la licenza scelta per il repo | M | Medio | Header di provenienza; scelta della licenza dopo audit | Riscrittura clean-room dei moduli GPL |
-| R-15 | Complessita' per un utente senza esperienza firmware; progresso limitato dal tempo di esecuzione sull'hardware | A | Medio | Agenti scrivono, utente esegue; procedure passo-passo | Ridurre ambito alla Fase 3 come obiettivo di ricerca |
-| R-16 | Dipendenza da upstream Asahi che cambia (m1n1, ADT) | M | Medio | Pinnare commit; header di provenienza | Fork mantenuto |
-| R-17 | Fase 5: GPU WDDM molto grande e fuori portata | A | Medio | Basic Display su GOP; WDDM come progetto separato | Nessuna accelerazione |
+| R-01 | Negative spike: the HAL does not accept a non-GIC controller from third-party extensions [hypothesis, central hypothesis] | M | Critical | Phase 0 before anything else; evidence in `re/`; isolate the interface (INTERFACES 5) | (a) EL2 shim with the virtualization GIC interface (`ICH_*`) for interrupts only, estimated overhead ~1% [plan hypothesis, not measured]; (b) kernel patch for research, not distributable. The user decides (ADR-0001) |
+| R-02 | Windows requires a GIC (GICD/GICR) in the MADT to enumerate CPUs or for parking [hypothesis] | M | High | Verify in Phase 0/1 on ntoskrnl and in QEMU | Dummy GIC in ACPI intercepted by the extension; then the R-01 plan B |
+| R-03 | FIQ-only timer (the ARM timer goes to FIQ [verified: irq-apple-aic.c]) and cannot be routed to IRQ | M | High | Study the M1 registers/modes in m1n1/Asahi; alternative timer source on IRQ | Timer polling via the extension, or an EL2 shim; decide with the user |
+| R-04 | Debugging without a second computer, and the Windows debug channel is unavailable on non-standard hardware (KDCOM requires a described UART; KDNET requires a supported NIC) [hypothesis] | H | High | Pi 5 as debug host from Phase 2; DBG2 + debug UART; framebuffer log; m1n1 as proxy | Debug via m1n1 (memory) without WinDbg; bugcheck on framebuffer |
+| R-05 | Brick/data loss on the Mac | L | Critical | Separate Asahi partition only; backup; confirmation before every operation; macOS and recovery left intact | Restore via DFU from another Mac (requires a second Mac that the user does not have [plan: note]); access to one must be arranged before Phase 2 |
+| R-06 | Parking protocol: wake via IPI does not work without a GIC; exact semantics not verified against the specification | M | High | Read the specification; polling with WFE in the parking loop; send AIC IPI | Single core (degraded) for phases 3-4; then resolve |
+| R-07 | Non-standard Apple CPU behavior that Windows does not tolerate (IMPDEF registers, SError, page size/granularity, ID registers) [hypothesis] | M | High | Analysis in Phase 0; test in Phase 3 with bugcheck logs | If not fixable via firmware: EL2 shim |
+| R-08 | DART IOMMU (16K pages) incompatible with Windows DMA (4K) | M | Medium-High | Bypass where possible; mappings in the drivers; SART for ANS | 16K bounce buffers in our drivers |
+| R-09 | ANS2 SSD: complex init and SART to port; risk of data corruption | M | High | Port from the Asahi driver; test on a dedicated partition; host model | Boot and install on external USB (external SSD) |
+| R-10 | m1n1/EDK2 firmware: USB/PHY/framebuffer instability | M | Medium | Reuse m1n1 code; repeated tests | Boot from USB with the controller already initialized by m1n1 |
+| R-11 | Windows updates and changes behavior (build different from Phase 0) | M | Medium | Freeze build and hash; regression after every update | Stay on the frozen build |
+| R-12 | Driver signing: test-signing during development; distribution requires Partner Center [from the plan] | H (for distribution) | Medium | Distinguish research goal / distribution | Distribution only as instructions/test mode |
+| R-13 | Legal: use of Microsoft data and reverse engineering [from the plan: permitted for interoperability in the EU, Dir. 2009/24/EC art. 6; not verified here, not legal advice] | L | High | No Microsoft binaries/code in the repo (ADR-0005); notes in our own words | Legal opinion if publishing |
+| R-14 | Asahi code licenses (MIT/GPL-2.0) incompatible with the license chosen for the repo | M | Medium | Provenance headers; choose the license after an audit | Clean-room rewrite of the GPL modules |
+| R-15 | Complexity for a user without firmware experience; progress limited by execution time on the hardware | H | Medium | Agents write, the user runs; step-by-step procedures | Reduce scope to Phase 3 as a research goal |
+| R-16 | Dependence on upstream Asahi changes (m1n1, ADT) | M | Medium | Pin commits; provenance headers | Maintained fork |
+| R-17 | Phase 5: WDDM GPU is very large and out of reach | H | Medium | Basic Display on GOP; WDDM as a separate project | No acceleration |
 
-## Note
-Priorita' per la sessione immediata: R-01, R-02, R-03 sono risolvibili (almeno in parte) con la sola Fase 0 e non richiedono hardware.
+## Notes
+Priorities for the immediate session: R-01, R-02, R-03 can be resolved (at least in part) with Phase 0 alone and require no hardware.

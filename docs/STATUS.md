@@ -1,56 +1,56 @@
-# Stato del progetto
+# Project status
 
-**Aggiornato:** 2026-10-14 (sessione marco-01, notte chiusa)
-**Strategia (2026-10-14):** **piano B adottato**, Windows in dual boot sopra uno strato EL2 minimo (`docs/adr/bozza-piano-b-strato-el2.md`, `re/pianoB-fattibilita.md`). La strada nativa pura è chiusa: GIC obbligatorio (V2), parking in deadlock (V3, F-15).
-**Fase corrente:** 0, lo spike sul HAL di Windows ARM64 e i controller di interrupt non-GIC
+**Updated:** 2026-10-14 (session marco-01, night closed)
+**Strategy (2026-10-14):** **Plan B adopted**, Windows dual boot on top of a minimal EL2 layer (`docs/adr/draft-plan-b-el2-layer.md`, `re/planB-feasibility.md`). The pure native route is closed: GIC mandatory (V2), parking in deadlock (V3, F-15).
+**Current phase:** 0, the spike on the Windows ARM64 HAL and non-GIC interrupt controllers
 
-## Traguardi
-- [x] Piano approvato (`docs/PLAN.md`)
-- [x] Repository creato
-- [x] Nome: **Watari Boot**, con sottotitolo fisso "Windows nativo su Apple Silicon" (ADR-0006)
-- [x] Sessione di progettazione (`docs/design/watariboot/`, ADR da 0001 a 0005)
-- [x] Analisi e audit di NTASP: strada indipendente (ADR-0007), bug segnalato con la issue NT-for-ASi/apple_silicon_platforms_mu#23
-- [x] Gate A, primo giro: A3, A5, A6 (PR #15). Scoperta: il timer del M1 è solo FIQ, vedi la bozza di ADR "strategia timer FIQ"
-- [x] Gate A, secondo e terzo giro: A1, A2, A4, A7–A11 (PR #22 e la PR di questo giro). **Gate A completo.**
-- [x] Pista `Wack0/NtHalExts` letta (README): l'API ufficiale per i controller di interrupt è stata **rimossa** da Microsoft prima di Windows 8; l'estensione funziona cercando funzioni interne. Vedi `re/f0-nthalexts-pista.md`.
-- [ ] Studiare il codice di `halextbcm2709.c`/`halextapi.c` (solo lettura, senza copiare gli header DDK).
-- [x] **Gate B, B1+B2** (2026-10-13): QEMU 11.1.2, EDK2 `edk2-stable202608` compilato (ArmVirtQemu AARCH64, CLANGDWARF) e avviato in QEMU fino al Boot Manager UEFI. Elenco di cosa è installato e come rimuoverlo: `docs/INSTALLATO.md` + `tools/uninstall-watari.sh`.
-- [x] **V0 (TCG):** il Setup di Windows 11 ARM64 (ISO ufficiale it-it build 26300, SHA-256 in `WatariBoot-data/iso/SHA256.txt`) gira in QEMU sul **nostro** EDK2. Screenshot: `WatariBoot-data/logs/screens/tcg-c1.png`. Script: `tools/run-qemu-windows.sh`.
-- [x] **HVF (risolto 2026-10-14, F-08):** il nostro EDK2 si bloccava su "Start boot option" (`[Bds]BdsWait(5)`). Diagnosi in corso (un agente stava provando il firmware incluso in QEMU, una build RELEASE, GICv2). **Da riprendere qui:** controllare `git status` sul branch locale `marco/gate-b-v0` per eventuali modifiche lasciate dall'agente.
-- [x] **Notte 2026-10-14 (chiusa, PR #27, riepilogo in `ralph/PROGRESS-notte.md`; si riparte da F-11):** lavoro autonomo pianificato secondo `ralph/NOTTE.md` (N1 HVF, N2 installazione automatica, N3 acpigen, N4 V1), sul branch `marco/notte-2026-10-14`, diario in `ralph/PROGRESS-notte.md`. **N1 e N2 fatti** (Windows 11 installato in modo automatico con HVF, desktop verificato); N3 fatto; N4 build ok ma Windows non parte con le nostre tabelle (F-11), da lì si riparte.
-- [x] **V1** (2026-10-14): Windows avvia con le nostre MADT+GTDT (mancava la GIC MSI Frame, F-11 risolto). `docs/img/v1-ok.png`.
-- [x] **V2**: con la MADT senza GICD Windows si blocca, quindi sembra richiedere il GICD.
-- [x] **V3**: Windows **usa il parking protocol** (mailbox della CPU1 scritta, il nostro stub salta), poi bugcheck `HAL_INITIALIZATION_FAILED (0x5C)` (F-15): problema di handshake da risolvere.
-- [!] **V6**: inconcludente (F-13); il metodo B richiede di compilare QEMU (decide Marco).
-- **Lettura:** i core secondari via parking sono una strada reale (V3); il GIC invece sembra obbligatorio (V2), quindi il piano B resta il più probabile. Riepilogo in `docs/sessions/2026-10-14-marco-01.md`.
-- [x] ~~Poi: installazione di Windows nella VM~~ (fatta, N2) (valutare il disco interno per la velocità), quindi V1 e V6.
-- [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
-- [ ] Fase 1: prototipo in QEMU
-- [ ] Fase 2: EDK2 sul MacBook
-- [ ] Fase 3: kernel di Windows nativo
-- [ ] Fase 4: desktop
-- [ ] Fase 5: potenza piena
-- [ ] Fase 6: tutti gli Apple Silicon
+## Milestones
+- [x] Plan approved (`docs/PLAN.md`)
+- [x] Repository created
+- [x] Name: **Watari Boot**, with the fixed subtitle "Native Windows on Apple Silicon" (ADR-0006)
+- [x] Design session (`docs/design/watariboot/`, ADRs 0001 to 0005)
+- [x] NTASP analysis and audit: independent route (ADR-0007), bug reported with issue NT-for-ASi/apple_silicon_platforms_mu#23
+- [x] Gate A, first round: A3, A5, A6 (PR #15). Discovery: the M1 timer is FIQ-only, see the draft ADR "timer FIQ strategy"
+- [x] Gate A, second and third rounds: A1, A2, A4, A7–A11 (PR #22 and this round's PR). **Gate A complete.**
+- [x] `Wack0/NtHalExts` lead read (README): the official API for interrupt controllers was **removed** by Microsoft before Windows 8; the extension works by looking up internal functions. See `re/f0-nthalexts-lead.md`.
+- [ ] Study the code of `halextbcm2709.c`/`halextapi.c` (read-only, without copying the DDK headers).
+- [x] **Gate B, B1+B2** (2026-10-13): QEMU 11.1.2, EDK2 `edk2-stable202608` built (ArmVirtQemu AARCH64, CLANGDWARF) and booted in QEMU up to the UEFI Boot Manager. List of what is installed and how to remove it: `docs/INSTALLED.md` + `tools/uninstall-watari.sh`.
+- [x] **V0 (TCG):** the Windows 11 ARM64 Setup (official it-it ISO build 26300, SHA-256 in `WatariBoot-data/iso/SHA256.txt`) runs in QEMU on **our own** EDK2. Screenshot: `WatariBoot-data/logs/screens/tcg-c1.png`. Script: `tools/run-qemu-windows.sh`.
+- [x] **HVF (solved 2026-10-14, F-08):** our EDK2 hung at "Start boot option" (`[Bds]BdsWait(5)`). Diagnosis in progress (an agent was trying the firmware bundled with QEMU, a RELEASE build, GICv2). **To resume here:** check `git status` on the local branch `marco/gate-b-v0` for any changes left by the agent.
+- [x] **Night of 2026-10-14 (closed, PR #27, summary in `ralph/PROGRESS-night.md`; resume from F-11):** autonomous work planned according to `ralph/NIGHT.md` (N1 HVF, N2 automatic installation, N3 acpigen, N4 V1), on the branch `marco/notte-2026-10-14`, diary in `ralph/PROGRESS-night.md`. **N1 and N2 done** (Windows 11 installed automatically with HVF, desktop verified); N3 done; N4 build ok but Windows does not start with our tables (F-11), resume from there.
+- [x] **V1** (2026-10-14): Windows boots with our MADT+GTDT (the GIC MSI Frame was missing, F-11 solved). `docs/img/v1-ok.png`.
+- [x] **V2**: with the MADT without GICD Windows hangs, so it seems to require the GICD.
+- [x] **V3**: Windows **uses the parking protocol** (CPU1's mailbox written, our stub jumps), then bugcheck `HAL_INITIALIZATION_FAILED (0x5C)` (F-15): a handshake problem to solve.
+- [!] **V6**: inconclusive (F-13); method B requires building QEMU (Marco decides).
+- **Reading:** secondary cores via parking are a real route (V3); the GIC, on the other hand, seems mandatory (V2), so Plan B remains the most likely. Summary in `docs/sessions/2026-10-14-marco-01.md`.
+- [x] ~~Next: installing Windows in the VM~~ (done, N2) (evaluate the internal disk for speed), then V1 and V6.
+- [ ] Phase 0: yes/no verdict on the HAL extension for the AIC
+- [ ] Phase 1: prototype in QEMU
+- [ ] Phase 2: EDK2 on the MacBook
+- [ ] Phase 3: native Windows kernel
+- [ ] Phase 4: desktop
+- [ ] Phase 5: full power
+- [ ] Phase 6: all Apple Silicon
 
-## Blocchi e necessità
-- ✅ **Backup Time Machine confermato** (2026-10-12, completato alle 19:06). Destinazione: volume cifrato "Time Machine" sul disco esterno, con quota di 1 TB; backup orari automatici. Escluso `~/Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteData` (file con nome troppo lungo che bloccava il backup). **La regola resta:** prima di ogni download si chiede comunque conferma all'utente.
-- ✅ **Spazio per il Gate B (75–115 GB):** si usa il disco esterno, `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (circa 450 GB liberi oltre la quota di Time Machine). Il disco va collegato; la cartella si crea al primo uso.
-- Fase 0: il task sui binari Windows è stato fermato da un filtro di sicurezza. Serve decidere come procedere.
-- Restore DFU: ✅ risolto. Il socio dell'utente ha un Mac (servono Apple Configurator e un cavo USB-C). Prima va tentato il **revive**, che non cancella i dati; il **restore** cancella tutto.
-- Debug host (dalla Fase 2): consigliato un portatile o mini PC Windows x86 usato (m1n1 + WinDbg). Alternativa: Raspberry Pi 5 da 8 GB (minimo Pi 4 Model B da 4 GB) con cavo USB-A→USB-C, ma per WinDbg serve comunque Windows.
-- Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
+## Blockers and needs
+- ✅ **Time Machine backup confirmed** (2026-10-12, completed at 19:06). Destination: encrypted "Time Machine" volume on the external disk, with a 1 TB quota; automatic hourly backups. Excluded `~/Library/Containers/com.apple.Safari/Data/Library/WebKit/WebsiteData` (a file with a name too long that blocked the backup). **The rule stands:** before every download the user is still asked for confirmation.
+- ✅ **Space for Gate B (75–115 GB):** the external disk is used, `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (about 450 GB free beyond the Time Machine quota). The disk must be plugged in; the folder is created on first use.
+- Phase 0: the task on the Windows binaries was stopped by a safety filter. A decision is needed on how to proceed.
+- DFU restore: ✅ solved. The user's partner has a Mac (Apple Configurator and a USB-C cable are needed). First try the **revive**, which does not erase data; the **restore** erases everything.
+- Debug host (from Phase 2): a used Windows x86 laptop or mini PC is recommended (m1n1 + WinDbg). Alternative: Raspberry Pi 5 8 GB (minimum Pi 4 Model B 4 GB) with a USB-A→USB-C cable, but WinDbg still requires Windows.
+- A **debug host** (a Raspberry Pi 5 or an old laptop) is needed from Phase 2.
 
-## Verdetto preliminare (A7, prima della pista halextbcm2709)
-- **Aggiornato dopo NtHalExts:** nativo pulito ~5%, nativo con funzioni interne ~20%, piano B ~50%, altro ~25% (`re/f0-nthalexts-pista.md`). Le stime di A7 sono in `re/f0-verdetto-preliminare.md`.
-- La soglia del piano B la decide l'utente (bozza ADR `bozza-esito-fase0-preliminare.md`).
+## Preliminary verdict (A7, before the halextbcm2709 lead)
+- **Updated after NtHalExts:** clean native ~5%, native with internal functions ~20%, Plan B ~50%, other ~25% (`re/f0-nthalexts-lead.md`). The A7 estimates are in `re/f0-preliminary-verdict.md`.
+- The Plan B threshold is decided by the user (draft ADR `draft-phase0-preliminary-outcome.md`).
 
-## Per Ciani (se lavora oggi)
-Niente issue nuove, per non mandare notifiche. Scegli uno di questi, su un branch `ciani/...` e con **una sola PR** alla fine:
-1. **Studio di `halextbcm2709`** (solo lettura su GitHub): come registra il controller di interrupt nell'HAL di NT (callback, strutture, IPI). Output: una sezione in `re/f0-nthalexts-pista.md`.
-2. **Correzioni di `tools/acpigen`** da A2 (`re/f0-acpi-requisiti-windows.md`, sezione discrepanze): parking version 1 + indirizzo, CPU di boot per prima, GICR=1, niente GICD segnaposto; poi i generatori FADT e DBG2. Criterio: `make -C tools/acpigen test` verde.
+## For Ciani (if working today)
+No new issues, to avoid sending notifications. Pick one of these, on a `ciani/...` branch and with **a single PR** at the end:
+1. **Study of `halextbcm2709`** (read-only on GitHub): how it registers the interrupt controller in NT's HAL (callbacks, structures, IPI). Output: a section in `re/f0-nthalexts-lead.md`.
+2. **`tools/acpigen` fixes** from A2 (`re/f0-acpi-windows-requirements.md`, discrepancies section): parking version 1 + address, boot CPU first, GICR=1, no placeholder GICD; then the FADT and DBG2 generators. Criterion: `make -C tools/acpigen test` green.
 
-## Da decidere (non bloccanti)
-- **Organizzazione GitHub:** facoltativa e rimandabile. Il nome è da scegliere (`watari` è occupato, `watariboot` è libero). Va creata dal browser, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.
+## To decide (non-blocking)
+- **GitHub organization:** optional and postponable. The name is to be chosen (`watari` is taken, `watariboot` is free). It must be created from the browser, then the repo is transferred (history is preserved and the old address is redirected). Reserve the name before any public announcement.
 
-## Da dove si riparte
-Vedi `docs/sessions/2026-10-12-marco-01.md` (ultime voci) e `ralph/PROGRESS-fase0.md`. Prima azione: analizzare `halextbcm2709` (lettura su GitHub, senza copiare gli header DDK).- Fallimenti e lezioni: `docs/FALLIMENTI.md` (letto da tutte le sessioni).
+## Where to resume
+See `docs/sessions/2026-10-12-marco-01.md` (latest entries) and `ralph/PROGRESS-phase0.md`. First action: analyze `halextbcm2709` (read on GitHub, without copying the DDK headers).- Failures and lessons learned: `docs/FAILURES.md` (read by all sessions).

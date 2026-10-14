@@ -1,10 +1,10 @@
-# F0 / A9: il bit `CONVERT_SIQ_TO_IRQ` e altre vie per avere il tick in IRQ (con protocollo HW-1)
+# F0 / A9: the `CONVERT_SIQ_TO_IRQ` bit and other ways to get the tick as an IRQ (with protocol HW-1)
 
-Task A9 (issue #17), con il protocollo del test hardware HW-1 (issue #20). Ricerca in sola lettura con `gh api` e WebSearch. Nessun download, nessun clone, nessun binario Microsoft.
+Task A9 (issue #17), with the hardware test protocol HW-1 (issue #20). Read-only research with `gh api` and WebSearch. No downloads, no clones, no Microsoft binaries.
 
-Convenzioni: **[V: repo/file:righe@ref]** = verificato leggendo quel file; **[I]** = ipotesi o deduzione. Le righe sono quelle di `cat -n`.
+Conventions: **[V: repo/file:lines@ref]** = verified by reading that file; **[H]** = hypothesis or deduction. Lines are those of `cat -n`.
 
-| Sigla | Repo e riferimento |
+| Abbreviation | Repo and reference |
 |---|---|
 | `M` | AsahiLinux/m1n1, `main`, HEAD `fbec52a81f2b12a5cf75f83a653d46df0bbc36ce` |
 | `D` | AsahiLinux/docs, `main`, HEAD `0d1f8917fa88745d62a4c05d802c4a7298c8616b` |
@@ -13,146 +13,146 @@ Convenzioni: **[V: repo/file:righe@ref]** = verificato leggendo quel file; **[I]
 
 ---
 
-## 1. Il registro e il bit in m1n1
+## 1. The register and the bit in m1n1
 
-### 1.1 Definizione
-- Registro: `SYS_IMP_APL_ACC_OVRD = sys_reg(3, 5, 15, 6, 0)`, cioè `s3_5_c15_c6_0` **[V: M:src/cpu_regs.h:541]**.
-- Nome lungo: nel proxyclient è `ACC_OVRD_EL1`, "Apple Core Cluster Override" **[V: M:proxyclient/m1n1/apple_regs.json:253]**. Accanto c'è `ACC_EBLK_OVRD_EL1` (s3_5_c15_c6_1), "E-Block Override" **[V: apple_regs.json, riga dopo]**.
-- Il bit: `#define ACC_OVRD_CONVERT_SIQ_TO_IRQ BIT(22)` **[V: M:cpu_regs.h:563]**. Non ha una descrizione: nel file i bit di questo registro non hanno commenti.
-- Bit vicini, tutti da `cpu_regs.h`:
+### 1.1 Definition
+- Register: `SYS_IMP_APL_ACC_OVRD = sys_reg(3, 5, 15, 6, 0)`, i.e. `s3_5_c15_c6_0` **[V: M:src/cpu_regs.h:541]**.
+- Long name: in the proxyclient it is `ACC_OVRD_EL1`, "Apple Core Cluster Override" **[V: M:proxyclient/m1n1/apple_regs.json:253]**. Next to it is `ACC_EBLK_OVRD_EL1` (s3_5_c15_c6_1), "E-Block Override" **[V: apple_regs.json, next line]**.
+- The bit: `#define ACC_OVRD_CONVERT_SIQ_TO_IRQ BIT(22)` **[V: M:cpu_regs.h:563]**. It has no description: in the file the bits of this register have no comments.
+- Neighbouring bits, all from `cpu_regs.h`:
 
-| Bit | Nome in m1n1 | Note |
+| Bit | Name in m1n1 | Notes |
 |---|---|---|
 | 19 | `DVFM_SAFE_VOL` | **[V: cpu_regs.h:560]** |
 | 20 | `FRC_ZOUT_AMX_PWR_DN_TMR` | **[V: :561]** |
 | 21 | `RC_ACK_INTR_LOCK` | **[V: :562]** |
 | **22** | **`CONVERT_SIQ_TO_IRQ`** | **[V: :563]** |
 | [24:23] | `VOL_UPD_ACK` | **[V: :564-565]** |
-| [26:25] | `POWER_DOWN_CPM` | usato in `cpu_sleep` **[V: M:src/utils.c:256]** |
+| [26:25] | `POWER_DOWN_CPM` | used in `cpu_sleep` **[V: M:src/utils.c:256]** |
 | [28:27] | `CPM_WAKE_UP` | **[V: :568-569]** |
 | 29, 30, 31 | `DISABLE_CLK_DTR`, `DISABLE_PSW_OFF_ABORT`, `RESET_CPM` | **[V: :570-572]** |
 
-  Il contesto è un registro di **power management del cluster** (CPM, SRM, retention, deep sleep, DVFM, PMGR). L'interrupt-related più vicino è `RC_ACK_INTR_LOCK` (bit 21). Quindi `CONVERT_SIQ_TO_IRQ` sta probabilmente in una parte del cluster che parla con il power manager, non nel percorso del timer del core [I].
-- Dove nasce il nome: il commit `b067f2697` (Hector Martin, 18 aprile 2023) dice solo "Add ACC_OVRD register. Not used yet, but might be in the future" **[V: gh api commits/b067f2697]**. I nomi (anche `PRE_RESET_CLK_CNTS`, `CNVT_INC_TO_FULL_UPD`, ...) non sono nei sorgenti XNU pubblici: l'header XNU conosce solo i bit 13-18, 25-29, 32 e 34 **[V: X:pexpert/pexpert/arm64/apple_arm64_regs.h:29-42]**. L'origine dei nomi non è documentata [I: probabile fonte interna o dump di stringhe, non verificabile].
-- La documentazione Asahi di `ACC_OVRD` elenca solo i bit di deep sleep (13-18, 25-29, 32, 34) e **non cita il bit 22** **[V: D:docs/hw/cpu/system-registers.md:361-376]**.
+  The context is a **cluster power-management** register (CPM, SRM, retention, deep sleep, DVFM, PMGR). The closest interrupt-related bit is `RC_ACK_INTR_LOCK` (bit 21). So `CONVERT_SIQ_TO_IRQ` probably lives in a part of the cluster that talks to the power manager, not in the core's timer path [H].
+- Where the name comes from: commit `b067f2697` (Hector Martin, 18 April 2023) says only "Add ACC_OVRD register. Not used yet, but might be in the future" **[V: gh api commits/b067f2697]**. The names (also `PRE_RESET_CLK_CNTS`, `CNVT_INC_TO_FULL_UPD`, ...) are not in the public XNU sources: the XNU header knows only bits 13-18, 25-29, 32 and 34 **[V: X:pexpert/pexpert/arm64/apple_arm64_regs.h:29-42]**. The origin of the names is not documented [H: probably an internal source or a string dump, not verifiable].
+- The Asahi documentation of `ACC_OVRD` lists only the deep-sleep bits (13-18, 25-29, 32, 34) and **does not mention bit 22** **[V: D:docs/hw/cpu/system-registers.md:361-376]**.
 
-### 1.2 Tutti gli usi in m1n1 (src/ e proxyclient/)
-Ricerca `CONVERT_SIQ` nell'organizzazione: **una sola occorrenza, la definizione** **[V: gh search `CONVERT_SIQ_TO_IRQ+org:AsahiLinux`]**. Gli usi di `ACC_OVRD` in generale:
-- `M:src/utils.c:254-257`: in `cpu_sleep(deep)` con `SLEEP_GLOBAL`, `reg_mask(ACC_OVRD, DIS_L2_FLUSH_ACC_SLEEP_MASK, PWR_DN_SRM(3) | DIS_L2_FLUSH_ACC_SLEEP(2) | TRAIN_DOWN_LINK(3) | POWER_DOWN_CPM(3) | DISABLE_PIO_ON_WFI_CPU | DEEP_SLEEP)` **[V]**. Il bit 22 non si tocca.
-- `M:proxyclient/m1n1/hv/__init__.py:663`: `ACC_OVRD_EL1` (e `ACC_CFG_EL1`) sono nell'insieme `ro` dell'hypervisor, cioè le scritture del guest non passano **[V: __init__.py:655-664, interpretazione dell'insieme `ro` come "scritture ignorate" è [I]]**.
-- `M:proxyclient/m1n1/apple_regs.json:253`: solo il nome, **nessun fieldset** per il bit 22 **[V]**.
-- Nessun uso in `src/chickens*.c` **[V: grep]**.
+### 1.2 All uses in m1n1 (src/ and proxyclient/)
+Search for `CONVERT_SIQ` in the organization: **a single occurrence, the definition** **[V: gh search `CONVERT_SIQ_TO_IRQ+org:AsahiLinux`]**. Uses of `ACC_OVRD` in general:
+- `M:src/utils.c:254-257`: in `cpu_sleep(deep)` with `SLEEP_GLOBAL`, `reg_mask(ACC_OVRD, DIS_L2_FLUSH_ACC_SLEEP_MASK, PWR_DN_SRM(3) | DIS_L2_FLUSH_ACC_SLEEP(2) | TRAIN_DOWN_LINK(3) | POWER_DOWN_CPM(3) | DISABLE_PIO_ON_WFI_CPU | DEEP_SLEEP)` **[V]**. Bit 22 is not touched.
+- `M:proxyclient/m1n1/hv/__init__.py:663`: `ACC_OVRD_EL1` (and `ACC_CFG_EL1`) are in the hypervisor's `ro` set, i.e. guest writes do not go through **[V: __init__.py:655-664, interpretation of the `ro` set as "writes ignored" is [H]]**.
+- `M:proxyclient/m1n1/apple_regs.json:253`: name only, **no fieldset** for bit 22 **[V]**.
+- No use in `src/chickens*.c` **[V: grep]**.
 
-### 1.3 Valore osservato sul M1
-- I dump di Asahi riportano `SYS_APL_ACC_OVRD s3_5_c15_c6_0 = 0x180010102001c207`, uguale su Icestorm e Firestorm, sia in m1n1 (dopo i chicken bits) sia **sotto Darwin 20.3.0 (XNU 7195.81.3)** **[V: D:docs/hw/cpu/system-register-dumps.md:239 e :610]**.
-- I byte bassi sono `0x2001c207`: il byte dei bit [23:16] vale `0x01`, quindi **il bit 22 è 0** in entrambi i dump **[V: calcolo sul valore sopra]**.
-- Conseguenza: sul M1, macOS riceve il timer in FIQ con bit 22 = 0 (valore di fabbrica o impostato dal firmware) **[V come dato]**. Cosa succede con bit 22 = 1 è sconosciuto [I].
-- Non si sa se il registro sia per core o per cluster. Il nome ("Core Cluster") e l'esistenza di `ACC_EBLK_OVRD` suggeriscono il livello cluster, con una copia per blocco E/P, ma il contenuto identico tra Icestorm e Firestorm non lo dimostra [I].
+### 1.3 Value observed on M1
+- Asahi's dumps report `SYS_APL_ACC_OVRD s3_5_c15_c6_0 = 0x180010102001c207`, identical on Icestorm and Firestorm, both in m1n1 (after the chicken bits) and **under Darwin 20.3.0 (XNU 7195.81.3)** **[V: D:docs/hw/cpu/system-register-dumps.md:239 and :610]**.
+- The low bytes are `0x2001c207`: the byte for bits [23:16] is `0x01`, so **bit 22 is 0** in both dumps **[V: calculation on the value above]**.
+- Consequence: on M1, macOS receives the timer as FIQ with bit 22 = 0 (factory value or set by the firmware) **[V as data]**. What happens with bit 22 = 1 is unknown [H].
+- It is not known whether the register is per core or per cluster. The name ("Core Cluster") and the existence of `ACC_EBLK_OVRD` suggest cluster level, with one copy per E/P block, but identical content between Icestorm and Firestorm does not prove it [H].
 
 ---
 
-## 2. Dove cercare altrove: cosa risulta
+## 2. Where else to look: what turns up
 
-### 2.1 XNU (codice Apple open source)
-- **Nessuna occorrenza** di `CONVERT_SIQ`, `SIQ_CFG` o di `s3_4_c15_c10_4` in XNU **[V: gh search su `X`, tre ricerche vuote]**. XNU non tocca mai il bit 22 di `ACC_OVRD`: gli usi sono tutti nel percorso deep sleep **[V: X:osfmk/arm64/machine_routines_asm.s:1055-1081]**.
-- `ARM64_REG_CYC_OVRD_irq_*/fiq_*` (modo "disable" 2 sui bit [23:22] e [21:20]) sono in XNU e li imposta a zero all'avvio (`and ... ~(irq_mask|fiq_mask)`) **[V: X:osfmk/arm64/start.s:789; apple_arm64_regs.h:45-48]** e li imposta a "disable" prima della WFI profonda **[V: machine_routines_asm.s:1036-1037]**. È l'unico controllo IRQ/FIQ che XNU usa e riguarda il risveglio, non il tipo di segnale [I].
+### 2.1 XNU (Apple open source code)
+- **No occurrence** of `CONVERT_SIQ`, `SIQ_CFG` or `s3_4_c15_c10_4` in XNU **[V: gh search on `X`, three empty searches]**. XNU never touches bit 22 of `ACC_OVRD`: all uses are in the deep sleep path **[V: X:osfmk/arm64/machine_routines_asm.s:1055-1081]**.
+- `ARM64_REG_CYC_OVRD_irq_*/fiq_*` ("disable" mode 2 on bits [23:22] and [21:20]) are in XNU, which sets them to zero at startup (`and ... ~(irq_mask|fiq_mask)`) **[V: X:osfmk/arm64/start.s:789; apple_arm64_regs.h:45-48]** and sets them to "disable" before deep WFI **[V: machine_routines_asm.s:1036-1037]**. It is the only IRQ/FIQ control that XNU uses and it concerns wake-up, not the signal type [H].
 
-**Come XNU gestisce il timer del kernel su Apple Silicon [V]:**
-1. Il "decrementer" del kernel è il **timer virtuale EL0**: `ml_set_decrementer` scrive `CNTV_TVAL_EL0` **[V: X:osfmk/arm64/machine_routines.c:2393-2405]**. Per le SoC con `HAS_APPLE_GENERIC_TIMER` (header `H15.h` e `H16.h`) usa invece registri Apple S3_x (`S3_1_C15_C15_4` = TVAL, `S3_1_C15_C0_5` = CTL, ecc.) **[V: machine_routines.c:2375-2388; H15.h:49 "Supports 24 MHz Apple timer"]**. Un test XNU dice che con `AIDR_EL1` bit 32 (AGT) il contatore è a 1 GHz, altrimenti a 24 MHz **[V: X:tests/apple_generic_timer.c:19-25]**.
-2. `fiq_context_init` abilita il timer virtuale (`CNTV_CTL_EL0 = ENABLE`) e **maschera il timer fisico** (`CNTP_CTL_EL0 = IMASKED`) per precauzione **[V: machine_routines.c:2627-2646]**.
-3. L'interrupt del timer arriva come **FIQ**: i vettori puntano a `fleh_fiq` **[V: X:osfmk/arm64/locore.s:542-547, 805-809]**, che chiama `sleh_fiq`. Questa classifica: IPI veloce (`S3_5_C15_C1_1 & PENDING`), poi timer (`ml_get_timer_pending`: `CNTV_CTL_EL0.ISTATUS`), poi PMI; tutto il resto cade nel ramo "non sappiamo se è un timer" e viene trattato come `rtclock_intr` **[V: X:osfmk/arm64/sleh.c:2583-2672; machine_routines.c:2548-2551]**.
-4. Gli IRQ veri (`sleh_irq`) vanno al driver del controller di interrupt della piattaforma, che non è nel sorgente pubblico (la parte AIC è in un kext chiuso) [I].
-5. Le IPI sono Fast IPI via sysreg (`HAS_IPI`, `gFastIPI`) e arrivano anch'esse in FIQ **[V: sleh.c:2594-2642]**.
-6. Il WFE usa lo "event stream" dell'arch timer (`CNTKCTL_EL1.EVNTEN`), che è un evento per WFE e non un interrupt **[V: machine_routines.c:2600-2614]**.
+**How XNU handles the kernel timer on Apple Silicon [V]:**
+1. The kernel's "decrementer" is the **EL0 virtual timer**: `ml_set_decrementer` writes `CNTV_TVAL_EL0` **[V: X:osfmk/arm64/machine_routines.c:2393-2405]**. For SoCs with `HAS_APPLE_GENERIC_TIMER` (headers `H15.h` and `H16.h`) it uses Apple S3_x registers instead (`S3_1_C15_C15_4` = TVAL, `S3_1_C15_C0_5` = CTL, etc.) **[V: machine_routines.c:2375-2388; H15.h:49 "Supports 24 MHz Apple timer"]**. An XNU test says that with `AIDR_EL1` bit 32 (AGT) the counter runs at 1 GHz, otherwise at 24 MHz **[V: X:tests/apple_generic_timer.c:19-25]**.
+2. `fiq_context_init` enables the virtual timer (`CNTV_CTL_EL0 = ENABLE`) and **masks the physical timer** (`CNTP_CTL_EL0 = IMASKED`) as a precaution **[V: machine_routines.c:2627-2646]**.
+3. The timer interrupt arrives as a **FIQ**: the vectors point to `fleh_fiq` **[V: X:osfmk/arm64/locore.s:542-547, 805-809]**, which calls `sleh_fiq`. This classifies: fast IPI (`S3_5_C15_C1_1 & PENDING`), then timer (`ml_get_timer_pending`: `CNTV_CTL_EL0.ISTATUS`), then PMI; everything else falls into the "we don't know if it's a timer" branch and is treated as `rtclock_intr` **[V: X:osfmk/arm64/sleh.c:2583-2672; machine_routines.c:2548-2551]**.
+4. True IRQs (`sleh_irq`) go to the platform's interrupt controller driver, which is not in the public source (the AIC part is in a closed kext) [H].
+5. IPIs are Fast IPIs via sysreg (`HAS_IPI`, `gFastIPI`) and they also arrive as FIQs **[V: sleh.c:2594-2642]**.
+6. WFE uses the arch timer's "event stream" (`CNTKCTL_EL1.EVNTEN`), which is an event for WFE and not an interrupt **[V: machine_routines.c:2600-2614]**.
 
-**Quindi: XNU non usa mai un tick in IRQ su Apple Silicon.** Usa il timer ARM virtuale come FIQ. Non c'è alcun timer MMIO in uso nel percorso del kernel, e `pe_arm_init_timer` registra solo un `tbd_ops` vuoto sotto arm64 **[V: X:pexpert/arm/pe_identify_machine.c:247-275]**.
+**So: XNU never uses a tick as IRQ on Apple Silicon.** It uses the ARM virtual timer as a FIQ. There is no MMIO timer in use in the kernel path, and `pe_arm_init_timer` registers only an empty `tbd_ops` under arm64 **[V: X:pexpert/arm/pe_identify_machine.c:247-275]**.
 
 ### 2.2 Linux Asahi
-- `irq-apple-aic.c`: nessun riferimento a `SIQ`, `ACC_OVRD` o `CYC_OVRD`; i soli registri IMP-DEF tra timer e FIQ sono `VM_TMR_FIQ_ENA_EL2` e Fast IPI **[V: L:drivers/irqchip/irq-apple-aic.c, grep]**.
-- L'unico commento sul perché non si può mascherare: "Only the guest timers have real mask bits, unfortunately." **[V: L:irq-apple-aic.c:502]**. Non c'è alcun commento che spieghi perché il timer non possa andare in IRQ; è semplicemente documentato come cablato su FIQ **[V: D:docs/hw/soc/aic.md:71-73, "bypasses AIC. It is wired straight to FIQ"]**.
-- Un messaggio di avvio nella documentazione mostra "CPU features: detected: FIQs" e "AIC: initialized with 896 IRQs, 2 FIQs, 2 IPIs, 32 vIPIs" **[V: D:docs/platform/dev-quickstart.md:653,669]**.
+- `irq-apple-aic.c`: no references to `SIQ`, `ACC_OVRD` or `CYC_OVRD`; the only IMP-DEF registers between timer and FIQ are `VM_TMR_FIQ_ENA_EL2` and Fast IPI **[V: L:drivers/irqchip/irq-apple-aic.c, grep]**.
+- The only comment on why it cannot be masked: "Only the guest timers have real mask bits, unfortunately." **[V: L:irq-apple-aic.c:502]**. There is no comment explaining why the timer cannot go to IRQ; it is simply documented as wired to FIQ **[V: D:docs/hw/soc/aic.md:71-73, "bypasses AIC. It is wired straight to FIQ"]**.
+- A boot message in the documentation shows "CPU features: detected: FIQs" and "AIC: initialized with 896 IRQs, 2 FIQs, 2 IPIs, 32 vIPIs" **[V: D:docs/platform/dev-quickstart.md:653,669]**.
 
-### 2.3 Documentazione Asahi e progetti pubblici
-- `D:docs/hw/cpu/system-registers.md`: **un solo registro parla di IRQ/FIQ del core**, ed è `s3_4_c15_c10_4`: "labeled SIQ_CFG_EL1 in m1n1. If a core writes 0x3 to its copy of the register, AICv2 will not send IRQs to that core. FIQs unaffected, as those are part of the core complexes themselves. (0x0 and 0x2 are known values that will enable IRQs on a core, but 0x0 seems to cause weird EL1 problems)" **[V: system-registers.md:735-737]**. Cioè **i FIQ sono interni al complesso dei core, gli IRQ passano per un blocco esterno** [V come testo, il senso è dell'autore].
-- Nome completo in m1n1: `SIQ_CFG_EL1`, "System Interrupt Configuration (EL1)", encoding (3,4,15,10,4) **[V: apple_regs.json:227]**. m1n1 vi scrive `2` sui core con `siq_cfg` ("Enable IRQs (at least necessary on t600x)", "XXX 0 causes pathological behavior in EL1, 2 works") **[V: M:src/chickens.c:228-232]**. Il flag `siq_cfg` è impostato nella struttura con `.siq_cfg = true` a riga 78, nel blocco `features_m1` (iniziato a riga 69) **[V: chickens.c:69-78; vedi 136-141 dove `features_m1` serve anche M1 Pro e Max]** (che sia attivo anche sul t8103 puro è [I]: da leggere sul valore).
-- Valore letto di `SIQ_CFG_EL1` sul M1: `0x3` sia in m1n1 sia in Darwin **[V: D:system-register-dumps.md:208 e :579]**. Se il dump è davvero di un M1 base, il valore 0x3 non blocca gli IRQ lì (l'AICv1 non lo usa) [I]. Questa contraddizione apparente con la frase "0x3 = nessun IRQ" suggerisce che il registro riguardi solo l'AICv2 [I].
-- Le registrazioni del tipo `VM_TMR_LR_EL2`/`VM_TMR_FIQ_ENA_EL2` e `HACR_EL2` bit 20 sono descritte: il timer guest, quando scatta, imposta lo stato "pending" in un registro tipo list register del vGIC, e `HACR_EL2[20]` lo maschera lasciando il FIQ "pending" in `VM_TMR_LR` **[V: D:system-registers.md:493-497, 662]**.
-- Nessun'altra fonte pubblica trovata che usi o descriva `CONVERT_SIQ_TO_IRQ`. Una ricerca web con i termini `ACC_OVRD`, `SIQ`, `s3_5_c15_c6_0` non ha restituito nulla di pertinente (solo la documentazione AIC e le discussioni sulla patch Linux del 2021) **[V: WebSearch]**.
+### 2.3 Asahi documentation and public projects
+- `D:docs/hw/cpu/system-registers.md`: **only one register talks about core IRQ/FIQ**, and it is `s3_4_c15_c10_4`: "labeled SIQ_CFG_EL1 in m1n1. If a core writes 0x3 to its copy of the register, AICv2 will not send IRQs to that core. FIQs unaffected, as those are part of the core complexes themselves. (0x0 and 0x2 are known values that will enable IRQs on a core, but 0x0 seems to cause weird EL1 problems)" **[V: system-registers.md:735-737]**. That is, **FIQs are internal to the core complex, IRQs go through an external block** [V as text, the interpretation is the author's].
+- Full name in m1n1: `SIQ_CFG_EL1`, "System Interrupt Configuration (EL1)", encoding (3,4,15,10,4) **[V: apple_regs.json:227]**. m1n1 writes `2` to it on the cores with `siq_cfg` ("Enable IRQs (at least necessary on t600x)", "XXX 0 causes pathological behavior in EL1, 2 works") **[V: M:src/chickens.c:228-232]**. The `siq_cfg` flag is set in the structure with `.siq_cfg = true` at line 78, in the `features_m1` block (starting at line 69) **[V: chickens.c:69-78; see 136-141 where `features_m1` also serves M1 Pro and Max]** (whether it is also active on the plain t8103 is [H]: to be read from the value).
+- Value read of `SIQ_CFG_EL1` on M1: `0x3` both in m1n1 and in Darwin **[V: D:system-register-dumps.md:208 and :579]**. If the dump really comes from a base M1, the value 0x3 does not block IRQs there (AICv1 does not use it) [H]. This apparent contradiction with the sentence "0x3 = no IRQ" suggests that the register concerns only AICv2 [H].
+- The registrations of the kind `VM_TMR_LR_EL2`/`VM_TMR_FIQ_ENA_EL2` and `HACR_EL2` bit 20 are described: the guest timer, when it fires, sets the "pending" state in a vGIC list-register-like register, and `HACR_EL2[20]` masks it leaving the FIQ "pending" in `VM_TMR_LR` **[V: D:system-registers.md:493-497, 662]**.
+- No other public source found that uses or describes `CONVERT_SIQ_TO_IRQ`. A web search with the terms `ACC_OVRD`, `SIQ`, `s3_5_c15_c6_0` returned nothing relevant (only the AIC documentation and discussions about the 2021 Linux patch) **[V: WebSearch]**.
 
 ---
 
-## 3. Che cosa sono gli "SIQ"
+## 3. What the "SIQs" are
 
-**Non lo sappiamo.** Quello che c'è:
-1. In m1n1, "SIQ" compare in tre contesti, e non è detto che siano la stessa cosa:
-   - `SIQ_CFG_EL1`, "System **Interrupt** Configuration" (nome lungo in `apple_regs.json`): controlla se un core riceve gli IRQ dal controller (AICv2) **[V: apple_regs.json:227; system-registers.md:737]**.
+**We do not know.** What exists:
+1. In m1n1, "SIQ" appears in three contexts, and they are not necessarily the same thing:
+   - `SIQ_CFG_EL1`, "System **Interrupt** Configuration" (long name in `apple_regs.json`): controls whether a core receives IRQs from the controller (AICv2) **[V: apple_regs.json:227; system-registers.md:737]**.
    - `ACC_OVRD_CONVERT_SIQ_TO_IRQ` (bit 22).
-   - `HID1_CONSERVATIVE_SIQ` (bit 44 di HID1) ed `EHID20_BLZ_CONSERVATIVE_SIQ` (bit 6 di EHID20) **[V: cpu_regs.h:80, 391]**. Qui il nome sembra riferirsi alla pipeline del core, **non** agli interrupt: il commento in `hurricane_zephyr.c` che accompagna `reg_set(HID1, HID1_CONSERVATIVE_SIQ)` dice "disable crypto fusion across decode groups" e "Original Name: ARM64_REG_HID1_disAESFuseAcrossGrp" **[V: M:src/chickens/hurricane_zephyr.c:20-26]**, cioè il nome m1n1 `CONSERVATIVE_SIQ` e il nome XNU non coincidono. Quindi in questi due casi "SIQ" potrebbe essere una sigla interna diversa (es. coda di issue) [I].
-2. Nel contesto interrupt, "SIQ" potrebbe essere un'interruzione "di sistema" generata dentro il complesso dei core (come il timer, le IPI veloci e la PMU) e che il sistema converte in IRQ verso l'AIC; **ma è una congettura costruita sul nome**. L'unica prova a favore è che il registro `SIQ_CFG_EL1` ha "System Interrupt" nel nome e controlla gli IRQ [I].
-3. Nessuna fonte che ho letto definisce l'acronimo.
+   - `HID1_CONSERVATIVE_SIQ` (bit 44 of HID1) and `EHID20_BLZ_CONSERVATIVE_SIQ` (bit 6 of EHID20) **[V: cpu_regs.h:80, 391]**. Here the name seems to refer to the core's pipeline, **not** to interrupts: the comment in `hurricane_zephyr.c` accompanying `reg_set(HID1, HID1_CONSERVATIVE_SIQ)` says "disable crypto fusion across decode groups" and "Original Name: ARM64_REG_HID1_disAESFuseAcrossGrp" **[V: M:src/chickens/hurricane_zephyr.c:20-26]**, i.e. the m1n1 name `CONSERVATIVE_SIQ` and the XNU name do not coincide. So in these two cases "SIQ" could be a different internal acronym (e.g. issue queue) [H].
+2. In the interrupt context, "SIQ" could be a "system" interrupt generated inside the core complex (like the timer, the fast IPIs and the PMU) that the system converts into an IRQ towards the AIC; **but this is a conjecture built on the name**. The only evidence in favour is that the `SIQ_CFG_EL1` register has "System Interrupt" in its name and controls IRQs [H].
+3. No source I read defines the acronym.
 
 ---
 
-## 4. Altre vie IMP-DEF per un'interruzione periodica in IRQ, con grado di prova
+## 4. Other IMP-DEF ways to get a periodic interrupt as an IRQ, with level of evidence
 
-| # | Via | Grado di prova | Note |
+| # | Way | Level of evidence | Notes |
 |---|---|---|---|
-| 1 | `ACC_OVRD[22]` `CONVERT_SIQ_TO_IRQ` | **Solo nome**, nessun uso né descrizione (§1). Bit 0 in tutti i dump del M1 | Probabilità che converta proprio il timer: bassa [I] (§6) |
-| 2 | **Timer guest EL02 con `VM_TMR_FIQ_ENA_EL2`** (bit 0 = V, bit 1 = P, `s3_5_c15_c1_3`) | **Registro e semantica verificati** **[V: L:irq-apple-aic.c:187-189; D:system-registers.md:499-504; M:cpu_regs.h:749-751]**. Linux lo usa per mascherare davvero il FIQ del timer guest. Il comportamento "FIQ spento, ma stato conservato in `VM_TMR_LR_EL2`" è descritto **[V: system-registers.md:493-497]** | Non produce un IRQ: **spegne** il FIQ e tiene lo stato in un registro tipo list register. Per farlo diventare un interrupt in Windows servirebbe un EL2 che inietta un IRQ o FIQ virtuale (`HCR_EL2.VI/VF`), come fa `hv_update_fiq` **[V: M:src/hv/hv_exc.c:152-180]**. È un hypervisor e quindi piano B. Serve solo se Windows gira a EL2 con timer EL02 [I] |
-| 3 | Test già fatti dal team m1n1 su `HCR_EL2.TGE`, `HACR_EL2[20]`, `VM_TMR_FIQ_ENA` con lettura di `ISR_EL1` e `VM_TMR_LR` | Esiste lo script `proxyclient/experiments/timer_test.py` **[V: M:proxyclient/experiments/timer_test.py:1-109]** ma **non ne conosciamo i risultati**: non sono nel repo | Utile come modello per HW-1 (§5); i risultati sono forse nella loro documentazione privata [I] |
-| 4 | **PMU in modalità AIC**: `PMCR0.IMODE = 2` (AIC) e `UPMCR0.IMODE = 2` | Il valore "2=AIC" è documentato **[V: D:system-registers.md:558,622; M:cpu_regs.h:605]**. **Non si sa quale hwirq AIC** corrisponda né se funzioni sul t8103 | Un contatore PMC (es. cicli) programmato per fare overflow dopo N cicli sarebbe un "timer" periodico in IRQ, ma **conta cicli e non tempo**: con DVFS la frequenza cambia, quindi serve ricalibrare. Candidato [I] |
-| 5 | **Watchdog WD0, IRQ AIC 338** | Il commento del driver Linux descrive il BARK con interrupt, il DT dà `AIC_IRQ 338` **[V: L:drivers/watchdog/apple_wdt.c:22-35; arch/arm64/boot/dts/apple/t8103.dtsi:1228, già in `re/f0-m1-fiq-irq.md` §3]** | Mai collaudato in Linux. Rischio: `RESET_EN` su WD0 riavvia in recovery |
-| 6 | **Software IRQ dell'AIC (`SW_SET`)** e **IPI legacy** | Verificati come meccanismo (`re/f0-m1-fiq-irq.md` §3.4 e §4) | Non è un timer: serve una sorgente periodica esterna (1, 4 o 5) che lo inneschi |
-| 7 | **Copia del contatore nell'AIC** a `0x8020/0x8028` (`CNTPCT`) | Documentata, ma è solo un contatore **[V: D:docs/hw/soc/aic.md:27-28]** | Nessun registro di confronto noto: non genera interrupt |
-| 8 | `CYC_OVRD` bit [21:20] FIQ mode e [23:22] IRQ mode | Documentati e usati da XNU e m1n1 per l'idle **[V: X:apple_arm64_regs.h:45-48; M:utils.c:269-270]** | Solo "disable" (2), controllano il risveglio dei core. **Non** convertono FIQ in IRQ [I] |
-| 9 | `SIQ_CFG_EL1` (s3_4_c15_c10_4) | Documentato: controlla se gli IRQ dell'AICv2 raggiungono il core **[V: system-registers.md:737]** | Non riguarda i FIQ ("FIQs unaffected"). Non è una via di conversione |
-| 10 | Event stream dell'arch timer (`CNTKCTL_EL1.EVNTEN`) | Usato da XNU **[V: machine_routines.c:2600-2614]** | Produce un evento per WFE, non un interrupt |
+| 1 | `ACC_OVRD[22]` `CONVERT_SIQ_TO_IRQ` | **Name only**, no use or description (§1). Bit 0 in all M1 dumps | Probability that it converts precisely the timer: low [H] (§6) |
+| 2 | **EL02 guest timer with `VM_TMR_FIQ_ENA_EL2`** (bit 0 = V, bit 1 = P, `s3_5_c15_c1_3`) | **Register and semantics verified** **[V: L:irq-apple-aic.c:187-189; D:system-registers.md:499-504; M:cpu_regs.h:749-751]**. Linux uses it to actually mask the guest timer's FIQ. The behaviour "FIQ off, but state preserved in `VM_TMR_LR_EL2`" is described **[V: system-registers.md:493-497]** | It does not produce an IRQ: it **turns off** the FIQ and keeps the state in a list-register-like register. To make it an interrupt in Windows an EL2 would be needed that injects a virtual IRQ or FIQ (`HCR_EL2.VI/VF`), as `hv_update_fiq` does **[V: M:src/hv/hv_exc.c:152-180]**. That is a hypervisor and hence plan B. Useful only if Windows runs at EL2 with EL02 timers [H] |
+| 3 | Tests already done by the m1n1 team on `HCR_EL2.TGE`, `HACR_EL2[20]`, `VM_TMR_FIQ_ENA` reading `ISR_EL1` and `VM_TMR_LR` | The script `proxyclient/experiments/timer_test.py` exists **[V: M:proxyclient/experiments/timer_test.py:1-109]** but **we do not know its results**: they are not in the repo | Useful as a model for HW-1 (§5); the results may be in their private documentation [H] |
+| 4 | **PMU in AIC mode**: `PMCR0.IMODE = 2` (AIC) and `UPMCR0.IMODE = 2` | The value "2=AIC" is documented **[V: D:system-registers.md:558,622; M:cpu_regs.h:605]**. **It is not known which AIC hwirq** corresponds to it nor whether it works on t8103 | A PMC counter (e.g. cycles) programmed to overflow after N cycles would be a periodic "timer" as IRQ, but it **counts cycles and not time**: with DVFS the frequency changes, so recalibration is needed. Candidate [H] |
+| 5 | **Watchdog WD0, AIC IRQ 338** | The Linux driver comment describes the BARK with interrupt, the DT gives `AIC_IRQ 338` **[V: L:drivers/watchdog/apple_wdt.c:22-35; arch/arm64/boot/dts/apple/t8103.dtsi:1228, already in `re/f0-m1-fiq-irq.md` §3]** | Never exercised in Linux. Risk: `RESET_EN` on WD0 reboots into recovery |
+| 6 | **AIC software IRQ (`SW_SET`)** and **legacy IPI** | Verified as a mechanism (`re/f0-m1-fiq-irq.md` §3.4 and §4) | Not a timer: it needs an external periodic source (1, 4 or 5) to trigger it |
+| 7 | **Copy of the counter in the AIC** at `0x8020/0x8028` (`CNTPCT`) | Documented, but it is only a counter **[V: D:docs/hw/soc/aic.md:27-28]** | No known compare register: it does not generate interrupts |
+| 8 | `CYC_OVRD` bits [21:20] FIQ mode and [23:22] IRQ mode | Documented and used by XNU and m1n1 for idle **[V: X:apple_arm64_regs.h:45-48; M:utils.c:269-270]** | Only "disable" (2), they control the wake-up of cores. They do **not** convert FIQ to IRQ [H] |
+| 9 | `SIQ_CFG_EL1` (s3_4_c15_c10_4) | Documented: controls whether AICv2 IRQs reach the core **[V: system-registers.md:737]** | It does not concern FIQs ("FIQs unaffected"). It is not a conversion route |
+| 10 | Arch timer event stream (`CNTKCTL_EL1.EVNTEN`) | Used by XNU **[V: machine_routines.c:2600-2614]** | Produces an event for WFE, not an interrupt |
 
-Conclusione sezione: **una conversione FIQ→IRQ del timer non è documentata da nessuna parte.** Le sole due vie con un barlume di prova sono il bit 22 (da testare) e la PMU in modalità AIC (da testare, cicli e non tempo).
+Conclusion of the section: **a FIQ→IRQ conversion of the timer is not documented anywhere.** The only two routes with a glimmer of evidence are bit 22 (to be tested) and the PMU in AIC mode (to be tested, cycles and not time).
 
 ---
 
-## 5. Protocollo HW-1 (issue #20): test di `ACC_OVRD[22]`
+## 5. Protocol HW-1 (issue #20): test of `ACC_OVRD[22]`
 
-### 5.0 Obiettivo
-Rispondere a una domanda sola: **con `ACC_OVRD[22] = 1`, il timer architetturale di un core M1 cambia modo di arrivare, da FIQ a IRQ?** Il test è in sola lettura/scrittura di registri di CPU dal proxy, senza toccare il disco.
+### 5.0 Objective
+Answer a single question: **with `ACC_OVRD[22] = 1`, does the architectural timer of an M1 core change the way it arrives, from FIQ to IRQ?** The test only reads/writes CPU registers from the proxy, without touching the disk.
 
-### 5.1 Prerequisiti
-- **Backup Time Machine confermato dall'utente prima di cominciare** (regola assoluta). Il test non tocca dischi né il boot, ma lo stato di partenza ne richiede uno, e l'ambiente (debug host con m1n1 e Python) richiede installazioni sul Mac host se è un Mac. **Nessun download né installazione finché il backup non è confermato.**
-- Il MacBook Pro M1 (j293) con m1n1 in **modalità proxy**. Due strade documentate:
-  1. Asahi installato con l'opzione "UEFI environment only" e **backdoor proxy mode** (`csrutil disable` + `nvram boot-args=-v` dal 1TR sul volume m1n1, attesa di 5 secondi al boot) **[V: D:docs/sw/m1n1-user-guide.md, sezione "Backdoor proxy mode"; D:docs/sw/tethered-boot.md]**. Questa modifica tocca solo il volume Asahi, non macOS, ma richiede conferma dell'utente prima di toccare il boot (vincolo di progetto).
-  2. Installazione "tethered-only proxy mode" dell'installer in modalità expert **[V: D:tethered-boot.md]**.
-- Un debug host (Linux, o macOS "meno testato") con Python 3.9+, `pyserial`, `construct` e `m1n1` clonato **[V: D:tethered-boot.md]** collegato con un cavo USB-C alla porta Thunderbolt del j293. Il dispositivo del proxy è `/dev/ttyACM0` su Linux o `/dev/cu.usbmodemP_01` su macOS; variabile `M1N1DEVICE` **[V: D:m1n1-user-guide.md, sezione "Proxy mode"]**.
-- Un secondo canale: UART seriale fisica non necessaria (l'hypervisor basta) **[V: tethered-boot.md]**, ma il proxy USB basta per questo test.
-- Il Mac sotto test deve essere alimentato dalla rete e senza dati critici in sessione.
+### 5.1 Prerequisites
+- **Time Machine backup confirmed by the user before starting** (absolute rule). The test does not touch disks or boot, but the starting state requires one, and the environment (debug host with m1n1 and Python) requires installations on the host Mac if it is a Mac. **No downloads or installations until the backup is confirmed.**
+- The MacBook Pro M1 (j293) with m1n1 in **proxy mode**. Two documented paths:
+  1. Asahi installed with the "UEFI environment only" option and **backdoor proxy mode** (`csrutil disable` + `nvram boot-args=-v` from 1TR on the m1n1 volume, 5-second wait at boot) **[V: D:docs/sw/m1n1-user-guide.md, section "Backdoor proxy mode"; D:docs/sw/tethered-boot.md]**. This change touches only the Asahi volume, not macOS, but requires the user's confirmation before touching boot (project constraint).
+  2. "Tethered-only proxy mode" installation of the installer in expert mode **[V: D:tethered-boot.md]**.
+- A debug host (Linux, or macOS "less tested") with Python 3.9+, `pyserial`, `construct` and `m1n1` cloned **[V: D:tethered-boot.md]**, connected with a USB-C cable to the Thunderbolt port of the j293. The proxy device is `/dev/ttyACM0` on Linux or `/dev/cu.usbmodemP_01` on macOS; variable `M1N1DEVICE` **[V: D:m1n1-user-guide.md, section "Proxy mode"]**.
+- A second channel: a physical serial UART is not needed (the hypervisor is enough) **[V: tethered-boot.md]**, but the USB proxy is enough for this test.
+- The Mac under test must be on mains power and have no critical data in session.
 
-### 5.2 Sequenza di comandi (proxyclient di m1n1)
-Avvio: `python3 -i proxyclient/tools/shell.py` (lo script `shell.py` esiste **[V: elenco di proxyclient/tools]**; che importi `m1n1.setup` è [I], però `proxyclient/experiments/*.py` usano tutti `from m1n1.setup import *`, che espone `p` (proxy), `u` (utils) e `mon` **[V: M:proxyclient/m1n1/setup.py:12-25]**).
+### 5.2 Command sequence (m1n1 proxyclient)
+Startup: `python3 -i proxyclient/tools/shell.py` (the `shell.py` script exists **[V: listing of proxyclient/tools]**; that it imports `m1n1.setup` is [H], however `proxyclient/experiments/*.py` all use `from m1n1.setup import *`, which exposes `p` (proxy), `u` (utils) and `mon` **[V: M:proxyclient/m1n1/setup.py:12-25]**).
 
-API verificate:
-- `u.mrs(reg)` / `u.msr(reg, val)` leggono/scrivono un registro di sistema, eseguiti sul core del proxy tramite `p.call`; errori sollevano `ProxyError("Exception occurred")` perché usa il guard d'eccezione **[V: M:proxyclient/m1n1/proxyutils.py:178-231]**. Il parametro `call=` sceglie il livello: `None`/`"el2"`, `"el1"`, `"el0"`, `"gl1"`, `"gl2"` **[V: proxyutils.py:108-115]**.
-- `u.inst(0xd5033fdf)` esegue un'istruzione (qui `isb`) **[V: timer_test.py:19]**.
+Verified APIs:
+- `u.mrs(reg)` / `u.msr(reg, val)` read/write a system register, executed on the proxy core through `p.call`; errors raise `ProxyError("Exception occurred")` because it uses the exception guard **[V: M:proxyclient/m1n1/proxyutils.py:178-231]**. The `call=` parameter selects the level: `None`/`"el2"`, `"el1"`, `"el0"`, `"gl1"`, `"gl2"` **[V: proxyutils.py:108-115]**.
+- `u.inst(0xd5033fdf)` executes an instruction (here `isb`) **[V: timer_test.py:19]**.
 - `p.read32(addr)`, `p.write32(addr, v)`, `p.set32`, `p.clear32`, `p.mask32` **[V: proxy.py:840-921]**.
-- `p.smp_start_secondaries()`, `p.smp_call_sync(cpu, addr, *args)` per i core secondari **[V: proxy.py:1020-1030]**; come far girare codice utile per `msr` su un altro core con questi è [I] (serve un blob di codice o `u.exec` con `p.smp_call`, non verificato).
-- Nomi dei registri usati dagli script: `CNTV_CTL_EL0`, `CNTV_TVAL_EL0`, `CNTP_CTL_EL0`, `CNTP_TVAL_EL0`, `CNTFRQ_EL0`, `ISR_EL1`, `DAIF`, `HCR_EL2` **[V: timer_test.py:16-105]**; `ACC_OVRD_EL1`, `CYC_OVRD_EL1`, `VM_TMR_FIQ_ENA_EL2`, `VM_TMR_LR_EL2`, `SIQ_CFG_EL1` esistono nel `apple_regs.json` **[V: apple_regs.json:227,243-244,253]**; l'importazione come costanti Python `ACC_OVRD_EL1` da `m1n1.sysreg` è confermata da `hv/__init__.py:663` **[V]**, per `SIQ_CFG_EL1` e `VM_TMR_*` è **[I]** (stesso meccanismo di generazione, non visto). In caso di dubbio usare la tupla `(3, 5, 15, 6, 0)` come fa timer_test.py (`HV_VTMR_CTL = (3, 5, 15, 1, 3)`) **[V: timer_test.py:8,12]**.
+- `p.smp_start_secondaries()`, `p.smp_call_sync(cpu, addr, *args)` for the secondary cores **[V: proxy.py:1020-1030]**; how to run code useful for `msr` on another core with these is [H] (a code blob or `u.exec` with `p.smp_call` is needed, not verified).
+- Register names used by the scripts: `CNTV_CTL_EL0`, `CNTV_TVAL_EL0`, `CNTP_CTL_EL0`, `CNTP_TVAL_EL0`, `CNTFRQ_EL0`, `ISR_EL1`, `DAIF`, `HCR_EL2` **[V: timer_test.py:16-105]**; `ACC_OVRD_EL1`, `CYC_OVRD_EL1`, `VM_TMR_FIQ_ENA_EL2`, `VM_TMR_LR_EL2`, `SIQ_CFG_EL1` exist in `apple_regs.json` **[V: apple_regs.json:227,243-244,253]**; the import as Python constants `ACC_OVRD_EL1` from `m1n1.sysreg` is confirmed by `hv/__init__.py:663` **[V]**, for `SIQ_CFG_EL1` and `VM_TMR_*` it is **[H]** (same generation mechanism, not seen). When in doubt, use the tuple `(3, 5, 15, 6, 0)` as timer_test.py does (`HV_VTMR_CTL = (3, 5, 15, 1, 3)`) **[V: timer_test.py:8,12]**.
 
-**Passo A: baseline, sola lettura.**
+**Step A: baseline, read-only.**
 ```python
 from m1n1.setup import *
 acc0 = u.mrs(ACC_OVRD_EL1)
 cyc0 = u.mrs(CYC_OVRD_EL1)
-siq0 = u.mrs((3,4,15,10,4))         # SIQ_CFG_EL1, [I] solo l'encoding verificato
+siq0 = u.mrs((3,4,15,10,4))         # SIQ_CFG_EL1, [H] only the encoding is verified
 ena0 = u.mrs((3,5,15,1,3))          # VM_TMR_FIQ_ENA_EL2
 daif0, isr0 = u.mrs(DAIF), u.mrs(ISR_EL1)
 freq = u.mrs(CNTFRQ_EL0)
 print(hex(acc0), hex(cyc0), hex(siq0), hex(ena0), hex(daif0), hex(isr0), freq)
 ```
-Atteso (dai dump Asahi, M1 Firestorm): `acc0 = 0x180010102001c207`, bit 22 = 0 **[V: system-register-dumps.md:239]**, `siq0 = 0x3` **[V: :208]**, `CNTFRQ = 24000000` **[V: dev-quickstart.md:670; pe_identify_machine.c:53]**. Annotare tutti i valori: servono per il ripristino. Se `acc0` ha il bit 22 già a 1, **fermarsi** e riferire.
+Expected (from the Asahi dumps, M1 Firestorm): `acc0 = 0x180010102001c207`, bit 22 = 0 **[V: system-register-dumps.md:239]**, `siq0 = 0x3` **[V: :208]**, `CNTFRQ = 24000000` **[V: dev-quickstart.md:670; pe_identify_machine.c:53]**. Record all values: they are needed for restoring. If `acc0` already has bit 22 set to 1, **stop** and report.
 
-**Passo B: controllo (bit 22 = 0), timer virtuale.** Per non farsi interrompere dal proxy, mascherare tutto, come `test_hv_timers` **[V: timer_test.py:34]**.
+**Step B: control (bit 22 = 0), virtual timer.** So as not to be interrupted by the proxy, mask everything, as `test_hv_timers` does **[V: timer_test.py:34]**.
 ```python
-u.msr(DAIF, 0x3c0)            # D A I F mascherati
-def provare(ctl, tval, ms=100):
+u.msr(DAIF, 0x3c0)            # D A I F masked
+def try_timer(ctl, tval, ms=100):
     u.inst(0xd5033fdf)        # isb
     u.msr(ctl, 0)
     u.msr(tval, int(freq * ms / 1000))
@@ -161,70 +161,70 @@ def provare(ctl, tval, ms=100):
     for i in range(6):
         time.sleep(0.05)
         out.append((hex(u.mrs(ISR_EL1)), hex(u.mrs(ctl))))   # ISR bit7=I, bit6=F; CTL bit2=ISTATUS
-    u.msr(ctl, 3)             # IMASK|ENABLE, poi spegnere
+    u.msr(ctl, 3)             # IMASK|ENABLE, then turn off
     u.msr(ctl, 0)
     return out
-print(provare(CNTV_CTL_EL0, CNTV_TVAL_EL0))
-print(provare(CNTP_CTL_EL0, CNTP_TVAL_EL0))
+print(try_timer(CNTV_CTL_EL0, CNTV_TVAL_EL0))
+print(try_timer(CNTP_CTL_EL0, CNTP_TVAL_EL0))
 ```
-Atteso: dopo 100 ms `CTL.ISTATUS=1` e `ISR_EL1.F=1` (bit 6), `I=0`, perché il timer è FIQ (**[I]**, deduzione dal §2; `ISR_EL1` come fa timer_test.py **[V]**; il significato dei bit I/F di `ISR_EL1` è architettura ARMv8 standard [I, ARM ARM]). **Questo è il controllo negativo**: se già qui compare `I=1`, il modello FIQ per il timer EL0 con `HCR_EL2` attuale non è come previsto e bisogna capire prima il perché. Va ripetuto anche leggendo `p.read32(AIC + 0x4200 + ...)` (stato delle linee HW, `AIC_HW_STATE` a `0x23b100000 + 0x4200`) **[V: aic_test.py:14,25; D:aic.md "HW_IRQ_MON"]**, per vedere se una linea dell'AIC cambia durante il test (atteso: nessuna). Il significato esatto di ogni bit è sconosciuto [I]: confrontare solo prima/dopo.
+Expected: after 100 ms `CTL.ISTATUS=1` and `ISR_EL1.F=1` (bit 6), `I=0`, because the timer is FIQ (**[H]**, deduction from §2; `ISR_EL1` as timer_test.py does **[V]**; the meaning of the I/F bits of `ISR_EL1` is standard ARMv8 architecture [H, ARM ARM]). **This is the negative control**: if `I=1` already appears here, the FIQ model for the EL0 timer with the current `HCR_EL2` is not as expected and the reason must be understood first. It must also be repeated reading `p.read32(AIC + 0x4200 + ...)` (state of the HW lines, `AIC_HW_STATE` at `0x23b100000 + 0x4200`) **[V: aic_test.py:14,25; D:aic.md "HW_IRQ_MON"]**, to see whether an AIC line changes during the test (expected: none). The exact meaning of each bit is unknown [H]: compare only before/after.
 
-**Passo C: scrittura del bit 22.**
+**Step C: writing bit 22.**
 ```python
 u.msr(ACC_OVRD_EL1, acc0 | (1 << 22)); u.inst(0xd5033fdf)
-print(hex(u.mrs(ACC_OVRD_EL1)))        # il bit ha mantenuto il valore?
-print(provare(CNTV_CTL_EL0, CNTV_TVAL_EL0))
-print(provare(CNTP_CTL_EL0, CNTP_TVAL_EL0))
-u.msr(ACC_OVRD_EL1, acc0); u.inst(0xd5033fdf)       # ripristino SEMPRE
+print(hex(u.mrs(ACC_OVRD_EL1)))        # did the bit keep its value?
+print(try_timer(CNTV_CTL_EL0, CNTV_TVAL_EL0))
+print(try_timer(CNTP_CTL_EL0, CNTP_TVAL_EL0))
+u.msr(ACC_OVRD_EL1, acc0); u.inst(0xd5033fdf)       # ALWAYS restore
 assert u.mrs(ACC_OVRD_EL1) == acc0
 ```
-Usare `try/finally` per il ripristino. Eventualità:
-- La scrittura solleva `ProxyError`: il registro è bloccato o inesistente in questo contesto (`apple_sysregs_unlocked` è `true` per M1 in m1n1 **[V: chickens.c:72, 46-62]**, quindi è inatteso) [I].
-- La rilettura dà il bit 22 a 0: il bit non è scrivibile (RAZ/WI o gestito da hardware). Esito "fallimento" per la pista.
+Use `try/finally` for the restore. Possible outcomes:
+- The write raises `ProxyError`: the register is locked or nonexistent in this context (`apple_sysregs_unlocked` is `true` for M1 in m1n1 **[V: chickens.c:72, 46-62]**, so this is unexpected) [H].
+- The readback gives bit 22 at 0: the bit is not writable (RAZ/WI or hardware-managed). "Failure" outcome for the lead.
 
-**Passo D: variazioni (solo se C non basta).**
-1. Ripetere C dopo `u.msr((3,5,15,1,3), 0)` e `(...,3)` per escludere l'effetto del mask IMP-DEF.
-2. Ripetere C con `SIQ_CFG_EL1` a 0x2 invece di 0x3 (`m1n1 chickens.c` scrive 2 **[V: chickens.c:231]**) per vedere se la conversione richiede che il percorso IRQ del core sia abilitato. Ripristinare a `siq0`.
-3. Provare gli altri core: avviare i secondari (`p.smp_start_secondaries()`), ripetere il test su un core E e uno P con `p.smp_call_sync` (**[I]** su come eseguire i `msr`: richiede un blob di codice caricato in memoria; fare solo se il passo C sul core boot dà un esito positivo o ambiguo). Il bit potrebbe valere per cluster [I].
-4. Per vedere un IRQ **vero** e non solo `ISR_EL1`, il passo successivo è smascherare solo `DAIF.I` (`u.msr(DAIF, 0x340)`: I libero, F mascherato; valore da ricalcolare con cura) e osservare se `exc_irq` di m1n1 gira e quale evento AIC legge (AIC `EVENT` a `+0x2004`, tipo bit 23:16, numero 15:0 **[V: re/f0-m1-fiq-irq.md §4.1]**). Che cosa fa il gestore IRQ di m1n1 con un evento sconosciuto è **[I]**: potrebbe stampare e proseguire, o bloccarsi. Eseguire solo dopo un esito positivo su `ISR_EL1`.
+**Step D: variations (only if C is not enough).**
+1. Repeat C after `u.msr((3,5,15,1,3), 0)` and `(...,3)` to rule out the effect of the IMP-DEF mask.
+2. Repeat C with `SIQ_CFG_EL1` at 0x2 instead of 0x3 (`m1n1 chickens.c` writes 2 **[V: chickens.c:231]**) to see whether the conversion requires the core's IRQ path to be enabled. Restore to `siq0`.
+3. Try the other cores: start the secondaries (`p.smp_start_secondaries()`), repeat the test on one E core and one P core with `p.smp_call_sync` (**[H]** on how to execute the `msr`s: it requires a code blob loaded in memory; do this only if step C on the boot core gives a positive or ambiguous outcome). The bit might be per cluster [H].
+4. To see a **true** IRQ and not just `ISR_EL1`, the next step is to unmask only `DAIF.I` (`u.msr(DAIF, 0x340)`: I free, F masked; value to be recomputed carefully) and observe whether m1n1's `exc_irq` runs and which AIC event it reads (AIC `EVENT` at `+0x2004`, type bits 23:16, number 15:0 **[V: re/f0-m1-fiq-irq.md §4.1]**). What m1n1's IRQ handler does with an unknown event is **[H]**: it might print and continue, or hang. Run only after a positive outcome on `ISR_EL1`.
 
-### 5.3 Cosa osservare
-- Per ogni prova: `ISR_EL1` (bit 7 = IRQ pending, bit 6 = FIQ pending), `CTL.ISTATUS` (bit 2), valori di `CNTVCT_EL0`.
-- Stato AIC prima/dopo: `AIC_HW_STATE` (`+0x4200`), `AIC_SW_GEN` (`+0x4000`), maschere (`+0x4100`), e `EVENT` (`+0x2004`) solo nel passo D4 (la lettura è un acknowledge) **[V: aic_regs.h già citato in `re/f0-m1-fiq-irq.md`; aic_test.py:14-31]**. Si può usare `mon.add(AIC + 0x4000, 0x200)` e `mon.poll()` come fa aic_test.py **[V: aic_test.py:69-80]**.
-- Registri IMP-DEF: `ACC_OVRD`, `VM_TMR_FIQ_ENA_EL2`, `VM_TMR_LR_EL2` (`s3_5_c15_c1_2`: a EL2 con il timer guest), `IPI_SR_EL1`, `PMCR0` per essere sicuri che non siano loro la fonte di FIQ.
-- Eventuali eccezioni sul proxy (`p.get_exc_count()`) **[V: proxy.py:802]**.
+### 5.3 What to observe
+- For each trial: `ISR_EL1` (bit 7 = IRQ pending, bit 6 = FIQ pending), `CTL.ISTATUS` (bit 2), values of `CNTVCT_EL0`.
+- AIC state before/after: `AIC_HW_STATE` (`+0x4200`), `AIC_SW_GEN` (`+0x4000`), masks (`+0x4100`), and `EVENT` (`+0x2004`) only in step D4 (the read is an acknowledge) **[V: aic_regs.h already cited in `re/f0-m1-fiq-irq.md`; aic_test.py:14-31]**. One can use `mon.add(AIC + 0x4000, 0x200)` and `mon.poll()` as aic_test.py does **[V: aic_test.py:69-80]**.
+- IMP-DEF registers: `ACC_OVRD`, `VM_TMR_FIQ_ENA_EL2`, `VM_TMR_LR_EL2` (`s3_5_c15_c1_2`: at EL2 with the guest timer), `IPI_SR_EL1`, `PMCR0` to be sure that they are not the source of FIQs.
+- Any exceptions on the proxy (`p.get_exc_count()`) **[V: proxy.py:802]**.
 
-### 5.4 Criteri
-- **Successo pieno:** con il bit 22 = 1, il timer scaduto fa salire `ISR_EL1.I` (bit 7) e **non** `ISR_EL1.F`; nel passo D4 arriva un evento IRQ nell'AIC con un tipo e un numero che si possono annotare (hwirq del timer). Segue la domanda successiva: è per core? vale per EL0 phys e virt? vale per EL02?
-- **Successo parziale:** `I` e `F` entrambi alti, oppure `I` alto solo in uno dei due timer: il bit fa qualcosa ma non basta; documentare.
-- **Fallimento:** `ISR_EL1` identico al controllo (solo `F`), o il bit non si scrive, o scrittura in eccezione. Esito che va riportato come "il bit 22 non converte il timer EL0 sul M1" e chiude la pista (a) di `re/f0-m1-fiq-irq.md`. Passare allora a PMU/AIC (§4, via 4) o al WDT.
-- **Anomalia:** blocco del Mac, tempesta di FIQ, perdita del proxy: interrompere il test, ripristinare con il riavvio (§5.5), annotare il passo.
+### 5.4 Criteria
+- **Full success:** with bit 22 = 1, the expired timer raises `ISR_EL1.I` (bit 7) and **not** `ISR_EL1.F`; in step D4 an IRQ event arrives in the AIC with a type and number that can be recorded (the timer's hwirq). The next question follows: is it per core? does it apply to EL0 phys and virt? does it apply to EL02?
+- **Partial success:** `I` and `F` both high, or `I` high in only one of the two timers: the bit does something but is not enough; document it.
+- **Failure:** `ISR_EL1` identical to the control (only `F`), or the bit cannot be written, or the write raises an exception. Outcome to be reported as "bit 22 does not convert the EL0 timer on M1", closing lead (a) of `re/f0-m1-fiq-irq.md`. Then move on to PMU/AIC (§4, route 4) or to the WDT.
+- **Anomaly:** Mac hang, FIQ storm, loss of the proxy: interrupt the test, restore by rebooting (§5.5), note the step.
 
-### 5.5 Ripristino sicuro
-- Prima di scrivere: salvare i valori letti nel passo A (`acc0`, `siq0`, `ena0`, `cyc0`) anche su file dell'host.
-- Ogni prova è chiusa con il ripristino del bit 22 (`u.msr(ACC_OVRD_EL1, acc0)`) in un `finally`, e i timer spenti (`CNTV_CTL_EL0 = 0`, `CNTP_CTL_EL0 = 0`). `DAIF` rimesso a `daif0`.
-- Il test non scrive nulla su disco, NVMe, NVRAM, iBoot o 1TR, a parte l'eventuale abilitazione preliminare del backdoor proxy mode (§5.1) che è un'operazione separata con conferma dell'utente.
-- **I registri si azzerano al riavvio?** Non verificato in nessuna fonte. Deduzione: sono registri di sistema del core, azzerati o riportati ai valori di reset a ogni reset del core, e m1n1 non scrive mai il bit 22 né `ACC_OVRD` in avvio normale **[V: grep, §1.2]**; i dump di m1n1 e di Darwin coincidono, il che suggerisce che il valore all'avvio sia deciso dal reset/iBoot e non da macOS **[V come dato, il resto è I]**. Conservare la possibilità che un riavvio "caldo" (es. `proxyclient/tools/reboot.py` **[V: elenco tools]**) non resetti un registro di cluster in un dominio di alimentazione sempre acceso; per sicurezza fare uno spegnimento completo (tenere premuto il tasto di accensione) e riaccendere, poi rileggere `ACC_OVRD` dal passo A e confrontarlo con `acc0` [I].
-- Se il Mac non risponde: spegnimento forzato col tasto di accensione (macOS e recovery non sono toccati dal test).
+### 5.5 Safe restore
+- Before writing: save the values read in step A (`acc0`, `siq0`, `ena0`, `cyc0`) also to a file on the host.
+- Each trial is closed by restoring bit 22 (`u.msr(ACC_OVRD_EL1, acc0)`) in a `finally`, and the timers turned off (`CNTV_CTL_EL0 = 0`, `CNTP_CTL_EL0 = 0`). `DAIF` put back to `daif0`.
+- The test writes nothing to disk, NVMe, NVRAM, iBoot or 1TR, apart from the possible preliminary enabling of the backdoor proxy mode (§5.1), which is a separate operation with user confirmation.
+- **Do the registers reset on reboot?** Not verified in any source. Deduction: they are core system registers, cleared or returned to their reset values at every core reset, and m1n1 never writes bit 22 or `ACC_OVRD` in normal startup **[V: grep, §1.2]**; the m1n1 and Darwin dumps coincide, which suggests that the value at startup is decided by reset/iBoot and not by macOS **[V as data, the rest is H]**. Keep open the possibility that a "warm" reboot (e.g. `proxyclient/tools/reboot.py` **[V: tools listing]**) does not reset a cluster register in an always-on power domain; to be safe do a complete shutdown (hold the power button) and power on again, then re-read `ACC_OVRD` from step A and compare it with `acc0` [H].
+- If the Mac does not respond: forced shutdown with the power button (macOS and recovery are not touched by the test).
 
-### 5.6 Rischi
-- Basso per il disco; **medio** per la stabilità: il bit sta in un registro di power management del cluster (CPM, SRM, DVFM, PSW). Un cambio indesiderato di un bit vicino sarebbe grave, perciò la scrittura è sempre `acc0 | (1 << 22)` letta-modificata-scritta, mai un valore costruito a mano.
-- Non sappiamo se il bit ha effetti collaterali sul risveglio dei core, sulle IPI o sul deep sleep [I]. Il test non usa `cpu_sleep` né WFI profonde.
+### 5.6 Risks
+- Low for the disk; **medium** for stability: the bit sits in a cluster power-management register (CPM, SRM, DVFM, PSW). An unwanted change of a nearby bit would be serious, so the write is always `acc0 | (1 << 22)` read-modify-write, never a hand-built value.
+- We do not know whether the bit has side effects on core wake-up, on IPIs or on deep sleep [H]. The test does not use `cpu_sleep` or deep WFIs.
 
 ---
 
-## 6. Quanto è promettente HW-1
+## 6. How promising is HW-1
 
-Giudizio: **poco probabile che funzioni sul timer, ma economico e a basso rischio, quindi da fare**.
+Judgment: **unlikely to work on the timer, but cheap and low-risk, hence worth doing**.
 
-A favore:
-- Il nome del bit dice esplicitamente "convertire in IRQ" e il registro esiste su M1: sembra una funzione che Apple può aver previsto (per esempio per SoC in cui il percorso IRQ del core sia usato diversamente) **[V per il nome, I per il significato]**.
-- Il nuovo timer Apple generico (`HAS_APPLE_GENERIC_TIMER`, registri `S3_x`, 1 GHz) mostra che Apple modifica il percorso del timer nelle nuove SoC **[V: X:H15.h:49; tests/apple_generic_timer.c]**; questo non dice nulla di un'opzione IRQ [I].
+In favour:
+- The bit's name explicitly says "convert to IRQ" and the register exists on M1: it looks like a function that Apple may have provided (for example for SoCs where the core's IRQ path is used differently) **[V for the name, H for the meaning]**.
+- The new Apple generic timer (`HAS_APPLE_GENERIC_TIMER`, `S3_x` registers, 1 GHz) shows that Apple changes the timer path in new SoCs **[V: X:H15.h:49; tests/apple_generic_timer.c]**; this says nothing about an IRQ option [H].
 
-Contro:
-- Zero usi, zero descrizioni, bit a 0 anche in macOS (che usa il timer in FIQ) **[V]**.
-- Il registro è dominato da bit di power management; "SIQ" è senza definizione (§3). Può essere un segnale interno al cluster legato alla gestione dell'energia (per esempio un segnale di risveglio) e non il timer [I].
-- La documentazione Asahi dice che i FIQ "sono parte dei complessi dei core" e quindi non passano per il blocco che gestisce gli IRQ **[V: system-registers.md:737]**: se "SIQ" è un'interruzione che va verso il blocco IRQ, il timer ne è escluso per costruzione [I].
-- Stima di probabilità che il bit converta il timer EL0: nell'ordine del **10%**, giudizio mio, non misurato [I].
+Against:
+- Zero uses, zero descriptions, bit at 0 also in macOS (which uses the timer as FIQ) **[V]**.
+- The register is dominated by power-management bits; "SIQ" is undefined (§3). It may be a cluster-internal signal tied to energy management (for example a wake-up signal) and not the timer [H].
+- The Asahi documentation says that FIQs "are part of the core complexes" and therefore do not pass through the block that handles IRQs **[V: system-registers.md:737]**: if "SIQ" is an interrupt that goes towards the IRQ block, the timer is excluded by construction [H].
+- Estimated probability that the bit converts the EL0 timer: on the order of **10%**, my judgment, not measured [H].
 
-Il valore del test è anche negativo: chiudere la pista `a` con un fatto verificato vale quanto trovarla. Tutti i comandi sono reversibili entro la sessione. In parallelo, il test della PMU in modalità AIC (§4 via 4) e del WDT IRQ 338 (A8/A10) restano le alternative con più probabilità di dare un'interruzione periodica in IRQ, a costo di una HAL timer non standard.
+The value of the test is also negative: closing lead `a` with a verified fact is worth as much as finding it. All commands are reversible within the session. In parallel, the test of the PMU in AIC mode (§4 route 4) and of the WDT IRQ 338 (A8/A10) remain the alternatives with the best chance of yielding a periodic interrupt as an IRQ, at the cost of a non-standard timer HAL.

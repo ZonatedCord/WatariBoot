@@ -7,7 +7,7 @@
  *  - timer: interrupts PPI 13,14,11,10 = GSIV 16+PPI = 29,30,27,26, flag DT 4 (level, active high)
  *    e "always-on";
  *  - pl011@9000000 (0x1000).
- * Confronto con le tabelle ACPI originali di QEMU (dump dalla RAM del guest, re/f11-confronto-acpi.md):
+ * Confronto con le tabelle ACPI originali di QEMU (dump dalla RAM del guest, re/f11-acpi-comparison.md):
  *  - GTDT: flag come l'originale (solo NS EL1 ALWAYS_ON; trigger level, polarita' 0 in ACPI);
  *  - MADT: parking 0 (PSCI, come la FADT originale), GICD per prima, GICC con PMU GSIV 23 (PPI 7),
  *    GICR Structure e GIC MSI Frame (0x0D, v2m a 0x08020000, SPI 0x50..0x8F). La MSI Frame MANCANTE
