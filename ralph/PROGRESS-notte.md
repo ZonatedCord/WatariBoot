@@ -50,3 +50,6 @@ Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risu
 - Il seriale mostra righe con `\SystemRoot\system32\ntoskrnl.exe` ripetute: ipotesi, traffico del debug del kernel su seriale (testsigning/debug quindi attivi); non verificato.
 - **Ripartire da:** F-11, ipotesi 1 (parking disattivato nel modello qemu-virt).
 - Tutti i QEMU sono chiusi. Nessun download/installazione. `INSTALLATO.md`: nuovi file in `edk2-apple/`, `tools/build-edk2-watari.sh`, `WATARI_DATA/build-watari/` e `vm/QEMU_EFI-watari.fd`.
+
+## 2026-10-14 (esecuzione notturna 2): nessun task aperto
+- N1-N4 tutti spuntati in NOTTE.md; branch già pushato, PR #27 già aperta, nessun QEMU attivo. Nessuna azione. Ripartire da F-11 (ipotesi 1: parking disattivato in qemu-virt) in una sessione con Marco.
