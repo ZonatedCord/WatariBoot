@@ -35,3 +35,10 @@ Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risu
 - Spenta con `system_powerdown`: chiusura pulita, QEMU terminato. `vm/win11.qcow2` ≈ 14 GB = Windows installato e pronto da riavviare.
 - Durata totale installazione con HVF: circa 1h30-2h (da 00:14 a ~01:30 desktop pronto).
 - **N3 delegato a un agente Sonnet** (acpigen), in corso.
+
+## 2026-10-14 ~02:55: N3 FATTO (agente Sonnet, verificato da Opus)
+- `make -C tools/acpigen clean && make test` rifatto da Opus: **TUTTI I TEST OK** (7 test). Nuovi: FADT (HW_REDUCED_ACPI, PSCI=0), DBG2 (PL011), modello `qemu-virt` (CLI `-m`), parking v1 con pagine distinte, boot CPU per prima, GICR=1, niente GICD segnaposto.
+- Verificato dall'agente con `-machine dumpdtb`+`dtc`: MPIDR 0..3, GICD 0x08000000, GICR 0x080A0000, timer GSIV 29/30/27/26, PL011 0x09000000.
+- **Ipotesi aperte:** layout FADT/DBG2/GICR Structure scritto a memoria dalla spec ACPI 6.5 (`Acpi65.h` non confrontato); flag GTDT qemu-virt solo ALWAYS_ON (non active-low come chiesto: il DT dice active-high); parking con PSCI=0 su qemu-virt anche se QEMU usa PSCI.
+- Passi falsi dell'agente: `find /` troppo ampia (nessun danno), un `sed` fallito e rifatto.
+- **Prossimo: N4** (driver DXE WatariAcpiOverride in `edk2-apple/WatariQemuPkg`).

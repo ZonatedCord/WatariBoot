@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 CC      = clang
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -Iinclude -Isrc -O1
-LIBSRC  := src/common.c src/madt.c src/gtdt.c src/pptt.c src/csrt.c src/t8103_model.c
-TESTS   := madt gtdt pptt csrt
+LIBSRC  := src/common.c src/madt.c src/gtdt.c src/pptt.c src/csrt.c src/fadt.c src/dbg2.c src/t8103_model.c src/qemu_virt_model.c
+TESTS   := madt gtdt pptt csrt fadt dbg2 models fadt dbg2 models
 BUILD   := build
 
 all: $(BUILD)/acpigen
@@ -17,7 +17,9 @@ $(BUILD)/test_%: tests/test_%.c $(LIBSRC) tests/test.h include/acpigen.h src/int
 
 test: $(addprefix $(BUILD)/test_,$(TESTS)) $(BUILD)/acpigen
 	@set -e; for t in $(TESTS); do ./$(BUILD)/test_$$t; done
-	@for t in madt gtdt pptt csrt; do ./$(BUILD)/acpigen $$t -o $(BUILD)/$$t.bin; done
+	@for t in madt gtdt pptt csrt fadt; do ./$(BUILD)/acpigen $$t -o $(BUILD)/$$t.bin; done
+	@for t in madt gtdt pptt fadt dbg2; do ./$(BUILD)/acpigen $$t -m qemu-virt -o $(BUILD)/qemu-virt-$$t.bin; done
+	@if ./$(BUILD)/acpigen dbg2 -o $(BUILD)/x.bin 2>/dev/null; then echo "dbg2 t8103 doveva fallire"; exit 1; fi
 	@echo "TUTTI I TEST OK"
 
 clean:

@@ -31,7 +31,7 @@ Ogni esecuzione notturna parte **da zero**: legge questo file e lavora sul primo
   - Ogni ~20 minuti fai uno `screendump` in `logs/screens/n2-*.png`.
   - Se l'esecuzione sta per finire e l'installazione è ancora in corso, **lascia QEMU acceso** e scrivi in PROGRESS il PID e lo stato; l'esecuzione successiva riprende da lì (controlla gli screenshot).
   - **Successo:** il desktop di Windows o la schermata di login nello screenshot.
-- [ ] **N3. Correzioni di `tools/acpigen`** da `re/f0-acpi-requisiti-windows.md` (sezione discrepanze):
+- [x] **N3. Correzioni di `tools/acpigen`** da `re/f0-acpi-requisiti-windows.md` (sezione discrepanze):
   - parking version 1 + indirizzo;
   - CPU di boot per prima;
   - GICR=1;
