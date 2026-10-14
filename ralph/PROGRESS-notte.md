@@ -53,3 +53,24 @@ Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risu
 
 ## 2026-10-14 (esecuzione notturna 2): nessun task aperto
 - N1-N4 tutti spuntati in NOTTE.md; branch già pushato, PR #27 già aperta, nessun QEMU attivo. Nessuna azione. Ripartire da F-11 (ipotesi 1: parking disattivato in qemu-virt) in una sessione con Marco.
+
+## 2026-10-14, esecuzione notturna 3 (chiusura): RIEPILOGO PER MARCO
+Nessun task aperto, nessun QEMU acceso (verificato con `pgrep`). Nessun download.
+
+**Cosa è riuscito (con evidenza)**
+- N1, HVF funzionante: causa `ID_AA64PFR0_EL1.GIC=0` sotto HVF, patch `tools/edk2-hvf-gicv3.patch` (F-08). Screenshot `logs/screens/win-hvf-180s.png` (Setup di Windows 11).
+- N2, installazione automatica di Windows 11 ARM64 con HVF, senza domande, ~1h30. Screenshot `n2-0023.png` (22%) e `n2-SUCCESSO-desktop.png` (desktop, utente `watari`). Disco: `vm/win11.qcow2` (~14 GB).
+- N3, `tools/acpigen` corretto (parking v1, boot CPU, GICR, FADT, DBG2, modello `qemu-virt`): `make -C tools/acpigen test` verde, 7 test.
+- N4, build del driver `WatariAcpiOverride` (`edk2-apple/WatariQemuPkg`, `tools/build-edk2-watari.sh`): compila e gira (log seriale).
+
+**Cosa è fallito / non verificato**
+- **F-11:** con le nostre MADT+GTDT Windows si blocca dopo `ntoskrnl.exe` (screenshot `n4w-c.png`); con il firmware originale arriva al desktop (`n4w-base.png`). Sospetto principale: parking protocol senza FADT nostra.
+- **F-10:** schermo nero scambiato per blocco (era lo schermo spento per inattività). **F-09:** download fuori regola degli agenti.
+- Non verificati: `C:\watari-ok.txt`, testsigning, debug seriale del kernel; layout FADT/DBG2/GICR scritto dalla spec a memoria.
+
+**Decisioni per Marco**
+1. Merge della PR #27 (non fatto da me).
+2. Quale ipotesi di F-11 provare per prima (consiglio: parking disattivato, poi FADT nostra).
+3. Tenere o togliere `vm/win11.qcow2` (14 GB) e `WATARI_DATA/build-watari/`: elenco in `docs/INSTALLATO.md`.
+
+**Da dove ripartire:** F-11, ipotesi 1, con `tools/build-edk2-watari.sh` e il disco di N2 (usare `snapshot=on`).
