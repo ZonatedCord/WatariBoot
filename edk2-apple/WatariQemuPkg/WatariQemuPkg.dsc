@@ -15,6 +15,7 @@
   SUPPORTED_ARCHITECTURES        = AARCH64
   BUILD_TARGETS                  = DEBUG|RELEASE|NOOPT
   SKUID_IDENTIFIER               = DEFAULT
+  DEFINE WATARI_TIMER_FIQ        = FALSE
 
 !include ArmVirtPkg/ArmVirtQemu.dsc
 
@@ -26,3 +27,10 @@
 
 [Components.AARCH64]
   WatariQemuPkg/WatariAcpiOverride/WatariAcpiOverride.inf
+
+# V6 (metodo A): driver che porta i PPI del timer in Group 0 (FIQ). Attivo solo con -D WATARI_TIMER_FIQ=TRUE
+# (tools/build-edk2-watari.sh --fiq); il firmware di default non cambia.
+!if $(WATARI_TIMER_FIQ) == TRUE
+[Components.AARCH64]
+  WatariQemuPkg/WatariTimerFiqDxe/WatariTimerFiqDxe.inf
+!endif
