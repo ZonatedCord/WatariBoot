@@ -16,6 +16,7 @@
   BUILD_TARGETS                  = DEBUG|RELEASE|NOOPT
   SKUID_IDENTIFIER               = DEFAULT
   DEFINE WATARI_TIMER_FIQ        = FALSE
+  DEFINE WATARI_PARKING          = FALSE
 
 !include ArmVirtPkg/ArmVirtQemu.dsc
 
@@ -33,4 +34,11 @@
 !if $(WATARI_TIMER_FIQ) == TRUE
 [Components.AARCH64]
   WatariQemuPkg/WatariTimerFiqDxe/WatariTimerFiqDxe.inf
+!endif
+
+# G4/V3: parcheggio dei core secondari (Multiprocessor Parking Protocol) + MADT parking v1 + FADT senza PSCI.
+# Attivo solo con -D WATARI_PARKING=TRUE (tools/build-edk2-watari.sh --parking).
+!if $(WATARI_PARKING) == TRUE
+[Components.AARCH64]
+  WatariQemuPkg/WatariParkingDxe/WatariParkingDxe.inf
 !endif

@@ -18,6 +18,7 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Guid/EventGroup.h>
+#include <Protocol/WatariParking.h>
 
 #include "acpigen.h"
 
@@ -100,6 +101,10 @@ OnReadyToBoot (
   UINT8                    *Buf;
   INT64                    Len;
   EFI_STATUS               Status;
+  WATARI_PARKING_INFO      *Park;
+  acpigen_cpu              Cpus[WATARI_PARKING_MAX_CPUS];
+  CONST acpigen_cpu        *MadtCpus;
+  UINTN                    I;
 
   if (mDone) {
     return;
@@ -126,7 +131,24 @@ OnReadyToBoot (
     return;
   }
 
-  Len = acpigen_build_madt (Buf, WATARI_BUF_SIZE, NULL, Model->cpus, Model->ncpus,
+  // G4: se WatariParkingDxe e' presente (firmware --parking) la MADT descrive il parking v1.
+  MadtCpus = Model->cpus;
+  Park     = NULL;
+  Status   = gBS->LocateProtocol (&gWatariParkingProtocolGuid, NULL, (VOID **)&Park);
+  if (!EFI_ERROR (Status) && (Park->CpuCount == Model->ncpus) && (Model->ncpus <= WATARI_PARKING_MAX_CPUS)) {
+    for (I = 0; I < Model->ncpus; I++) {
+      Cpus[I]                 = Model->cpus[I];
+      Cpus[I].parking_version = Park->Version;
+      Cpus[I].parked_address  = Park->MailboxAddress[I];
+      DEBUG ((DEBUG_INFO, "WatariAcpiOverride: cpu%lu parking v%u mailbox 0x%lx\n",
+              (UINT64)I, Park->Version, Cpus[I].parked_address));
+    }
+    MadtCpus = Cpus;
+  } else {
+    Park = NULL;
+  }
+
+  Len = acpigen_build_madt (Buf, WATARI_BUF_SIZE, NULL, MadtCpus, Model->ncpus,
                             Model->gicd, &Model->madt_opts);
   if (Len > 0) {
     DEBUG ((DEBUG_INFO, "WatariAcpiOverride: MADT generata da acpigen: %ld byte, %lu CPU\n",
@@ -143,6 +165,19 @@ OnReadyToBoot (
     ReplaceTable (AcpiTable, Sdt, "GTDT", SIGNATURE_32 ('G', 'T', 'D', 'T'), Buf, (UINTN)Len);
   } else {
     DEBUG ((DEBUG_ERROR, "WatariAcpiOverride: acpigen_build_gtdt errore %ld\n", Len));
+  }
+
+  if (Park != NULL) {
+    // FADT acpigen: HW_REDUCED_ACPI, ArmBootArchFlags = 0 (PSCI_COMPLIANT = 0). I puntatori a DSDT e
+    // FACS li rimette AcpiTableDxe all'installazione.
+    ZeroMem (Buf, WATARI_BUF_SIZE);
+    Len = acpigen_build_fadt (Buf, WATARI_BUF_SIZE, NULL, NULL);
+    if (Len > 0) {
+      DEBUG ((DEBUG_INFO, "WatariAcpiOverride: FADT generata da acpigen: %ld byte (PSCI_COMPLIANT=0)\n", Len));
+      ReplaceTable (AcpiTable, Sdt, "FADT", SIGNATURE_32 ('F', 'A', 'C', 'P'), Buf, (UINTN)Len);
+    } else {
+      DEBUG ((DEBUG_ERROR, "WatariAcpiOverride: acpigen_build_fadt errore %ld\n", Len));
+    }
   }
 
   FreePool (Buf);

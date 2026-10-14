@@ -6,6 +6,8 @@
 # (QEMU_EFI.fd esistente non si tocca). Uso: tools/build-edk2-watari.sh [--fiq] [DEBUG|RELEASE]
 # --fiq: aggiunge WatariTimerFiqDxe (V6, timer in Group 0 = FIQ) con -D WATARI_TIMER_FIQ=TRUE; usa un
 # WORKSPACE separato (build-watari-fiq) e produce $WATARI_DATA/vm/QEMU_EFI-watari-fiq.fd.
+# --parking: aggiunge WatariParkingDxe (G4/V3, Multiprocessor Parking Protocol; MADT parking v1 e FADT
+# senza PSCI) con -D WATARI_PARKING=TRUE; WORKSPACE build-watari-park, output QEMU_EFI-watari-park.fd.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
@@ -13,9 +15,11 @@ REPO="$(cd "$HERE/.." && pwd)"
 source "$HERE/env.sh"
 
 FIQ=0
+PARK=0
 if [ "${1:-}" = "--fiq" ]; then FIQ=1; shift; fi
+if [ "${1:-}" = "--parking" ]; then PARK=1; shift; fi
 TARGET="${1:-DEBUG}"
-if [ "$FIQ" = 1 ]; then SUFFIX="-fiq"; else SUFFIX=""; fi
+if [ "$FIQ" = 1 ]; then SUFFIX="-fiq"; elif [ "$PARK" = 1 ]; then SUFFIX="-park"; else SUFFIX=""; fi
 mkdir -p "$WATARI_LOGS"
 
 # Patch HVF idempotente (come build-edk2.sh).
@@ -41,6 +45,8 @@ done
 FIQ_INF=""
 [ "$FIQ" = 1 ] && FIQ_INF='\
 INF WatariQemuPkg/WatariTimerFiqDxe/WatariTimerFiqDxe.inf'
+[ "$PARK" = 1 ] && FIQ_INF='\
+INF WatariQemuPkg/WatariParkingDxe/WatariParkingDxe.inf'
 # FDF di wrapper generato da ArmVirtQemu.fdf: include con percorso completo e INF del driver in FvMain.
 sed -e 's/\r$//' -e 's|^!include \([A-Za-z0-9_.]*\)$|!include ArmVirtPkg/\1|' \
     -e '/^!include ArmVirtPkg\/ArmVirtQemuFvMain.fdf.inc$/a\
@@ -60,6 +66,7 @@ make -C BaseTools -j"$(sysctl -n hw.ncpu)" >/dev/null
 
 FIQ_DEFS=()
 [ "$FIQ" = 1 ] && FIQ_DEFS=(-D WATARI_TIMER_FIQ=TRUE)
+[ "$PARK" = 1 ] && FIQ_DEFS=(-D WATARI_PARKING=TRUE)
 # F-12: EDK2 non rileva le modifiche agli header di acpigen (percorso fuori da PACKAGES_PATH):
 # senza questo il driver puo' restare compilato con un layout vecchio di acpigen_model. Si rifa' il modulo.
 rm -rf "$WORKSPACE/Build/ArmVirtQemu-AArch64/${TARGET}_${WATARI_TOOLCHAIN}/AARCH64/WatariQemuPkg"

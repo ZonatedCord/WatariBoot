@@ -1,0 +1,49 @@
+## @file
+#  Watari Boot G4/V3: parcheggio dei core secondari (Multiprocessor Parking Protocol) per QEMU virt.
+#  Alloca una mailbox da 4 KB per CPU, accende i core con PSCI CPU_ON e li lascia in un loop di
+#  parcheggio. Pubblica gli indirizzi per WatariAcpiOverride (MADT con parking v1).
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WatariParkingDxe
+  FILE_GUID                      = 7e1c5d93-2a48-4b0f-86d1-c3a9f05b6e27
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariParkingEntry
+
+[Sources]
+  WatariParkingDxe.c
+  AArch64/ParkStub.S
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  ArmPkg/ArmPkg.dec
+  WatariQemuPkg/WatariQemuPkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  IoLib
+  CacheMaintenanceLib
+  ArmMonitorLib
+  PcdLib
+
+[Guids]
+  gEfiEventReadyToBootGuid
+
+[Protocols]
+  gWatariParkingProtocolGuid
+
+[Pcd]
+  gArmTokenSpaceGuid.PcdGicRedistributorsBase
+
+[Depex]
+  TRUE
