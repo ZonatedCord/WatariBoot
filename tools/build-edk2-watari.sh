@@ -60,6 +60,10 @@ make -C BaseTools -j"$(sysctl -n hw.ncpu)" >/dev/null
 
 FIQ_DEFS=()
 [ "$FIQ" = 1 ] && FIQ_DEFS=(-D WATARI_TIMER_FIQ=TRUE)
+# F-12: EDK2 non rileva le modifiche agli header di acpigen (percorso fuori da PACKAGES_PATH):
+# senza questo il driver puo' restare compilato con un layout vecchio di acpigen_model. Si rifa' il modulo.
+rm -rf "$WORKSPACE/Build/ArmVirtQemu-AArch64/${TARGET}_${WATARI_TOOLCHAIN}/AARCH64/WatariQemuPkg"
+
 build -a AARCH64 -t "$WATARI_TOOLCHAIN" -b "$TARGET" \
       -p WatariQemuPkg/WatariQemuPkg.dsc -n "$(sysctl -n hw.ncpu)" ${FIQ_DEFS[@]+"${FIQ_DEFS[@]}"} \
       2>&1 | tee "${BUILD_LOG:-$WATARI_LOGS/n4-build$SUFFIX.log}"

@@ -60,9 +60,20 @@ Formato di ogni voce:
 - **Successo:** dopo ~2 ore lo screenshot era completamente nero, il disco non scriveva più e la seriale era muta: sembrava un hang. In realtà Windows aveva finito e lo schermo si era spento per inattività.
 - **Lezione:** prima di dichiarare un blocco, mandare un tasto (`sendkey shift` dal monitor QEMU) e rifare lo screenshot. Il silenzio della seriale non dice nulla sul kernel di Windows (il debug seriale non era ancora attivo/verificato).
 
-## F-11 · Windows non avvia con MADT+GTDT di acpigen (modello qemu-virt) (2026-10-14)
-- **Provato:** firmware `QEMU_EFI-watari.fd` (driver `WatariAcpiOverride`, che a ReadyToBoot sostituisce MADT e GTDT con quelle di `acpigen -m qemu-virt`) e avvio del Windows 11 installato (N2), con HVF, disco in modalità `snapshot=on` (non modificato).
-- **Successo:** il driver gira (log: MADT 412 byte rimossa/installata, GTDT 104 byte) e Windows carica `ntoskrnl.exe`, poi si blocca per oltre 7 minuti: CPU QEMU al 100%, schermo fermo sul logo TianoCore, nessun nuovo output seriale (screenshot `n4w-d`, `logs/screens/n4w-c.png`).
-- **Controllo (verificato):** stesso disco e stessa VM con il firmware originale (ACPI di QEMU): desktop in meno di 2 minuti (`logs/screens/n4w-base.png`). Quindi la causa è nelle nostre tabelle, non nell'ambiente.
-- **Ipotesi (da provare, una alla volta):** (1) parking protocol con `PSCI=0` nella FADT originale: noi non installiamo la nostra FADT ma la MADT dice parking v1 → Windows aspetta le pagine di parking mai riservate (il sospetto principale); (2) GICR=0/struttura GICR 0x0E diversa da QEMU; (3) GTDT senza `ACTIVE_LOW`; (4) layout della MADT scritto a memoria dalla spec.
-- **Prossimo passo:** provare la MADT con parking disattivato (versione 0, indirizzo 0), poi installare anche la nostra FADT, e confrontare con le tabelle originali dumpate.
+## F-11 · Windows non avvia con MADT+GTDT di acpigen (modello qemu-virt) (2026-10-14) — RISOLTO
+- **Provato:** firmware `QEMU_EFI-watari.fd` (driver `WatariAcpiOverride`, che a ReadyToBoot sostituisce MADT e GTDT con quelle di `acpigen -m qemu-virt`) e avvio del Windows 11 installato (N2), con HVF, disco `snapshot=on`. Windows caricava `ntoskrnl.exe` e si bloccava (CPU 100%, logo TianoCore). Con il firmware originale: desktop in meno di 2 minuti (`logs/screens/n4w-base.png`).
+- **Causa (verificato):** nella nostra MADT mancava la **GIC MSI Frame** (sottotabella tipo 0x0D, QEMU v2m a 0x08020000, SPI base 0x50, count 0x40). Senza MSI Windows non può usare gli interrupt MSI di NVMe/xHCI e si blocca dopo il caricamento del kernel (spiegazione ipotesi; l'effetto e' verificato dall'ablazione sotto). Il confronto campo per campo e' in `re/f11-confronto-acpi.md` (tabelle originali lette dalla RAM del guest).
+- **Esiti delle ipotesi** (script `/tmp/watari-data/run-f11/t.sh`, 4 minuti, `snapshot=on`; "blocco" = ancora sul logo TianoCore a 230 s):
+  - H0 (ripetizione del problema, firmware com'era): blocco. Riprodotto.
+  - H1 (parking disattivato: version 0, address 0): blocco da solo. Non e' la causa.
+  - H2 (GICD prima dei GICC come QEMU; GICD/GICR gia' identiche in valore): blocco (H1+H2). Non e' la causa.
+  - H3 (flag GTDT come l'originale: solo NS EL1 ALWAYS_ON, resto 0): blocco (H1+H2+H3). Non e' la causa.
+  - H4 (errori di layout/lunghezza): nessuno nei campi dei GICC/GICD/GICR (stessi offset e valori). Differenze benigne: MADT revisione 6 invece di 4, GICC da 82 byte invece di 80, OEM ID.
+  - H5 (nuova, scoperta dal confronto): aggiungere la GIC MSI Frame (e il PMU GSIV 23 nei GICC): **desktop/schermata di login in meno di 120 s**. Ablazione: la sola MSI Frame (PMU 0) basta (lock screen a 120 s). La MSI Frame con parking v1, GICD dopo i GICC e flag GTDT tutti ALWAYS_ON (cioe' il modello originale di F-11 piu' MSI) arriva al desktop: parking, ordine e flag GTDT sono quindi irrilevanti con PSCI su QEMU/HVF.
+- **V1 riuscito:** `logs/screens/v1-ok.png` (desktop; il dialogo "Tasti permanenti" e' causato dai nostri `sendkey shift` per svegliare lo schermo, vedi F-10). Modello finale: parking 0, GICD per prima, PMU 23, GICR Structure, MSI Frame, GTDT come l'originale.
+- **Lezione:** prima di ipotizzare, confrontare con le tabelle originali. Il dump si fa con `pmemsave` dal monitor QEMU e la ricerca di `RSD PTR ` nella RAM (non serve la shell UEFI).
+
+## F-12 · Build del driver con layout stantio (2026-10-14)
+- **Provato:** modificata `acpigen_cpu`/`acpigen_madt_opts` in `acpigen.h` e rifatto `tools/build-edk2-watari.sh`.
+- **Fallito:** EDK2 non rileva le modifiche agli header di acpigen (percorso fuori da PACKAGES_PATH): `WatariAcpiOverride.c` restava compilato con il vecchio layout di `acpigen_model`, quindi leggeva `Model->gtdt` a un offset sbagliato: "acpigen_build_gtdt errore -2" oppure puntatore errato e QEMU/HVF in abort (`Assertion failed: (isv)` in `hvf_handle_exception`, a circa 7 s, durante il firmware).
+- **Rimedio:** `tools/build-edk2-watari.sh` cancella la cartella di build del modulo prima di compilare. Se si vede l'abort `isv` subito dopo "MADT acpigen installata", controllare prima se il driver e' stantio.

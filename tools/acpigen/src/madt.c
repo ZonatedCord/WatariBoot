@@ -25,6 +25,23 @@ static int validate_cpus(const acpigen_cpu *cpus, size_t n)
     return 0;
 }
 
+/* Emette la GICD Structure in buf+off (se gicd != NULL) e restituisce il nuovo offset. */
+static size_t put_gicd(uint8_t *buf, size_t off, const acpigen_gicd *gicd)
+{
+    if (!gicd)
+        return off;
+    acpi_gicd d;
+    memset(&d, 0, sizeof d);
+    d.type = ACPI_MADT_TYPE_GICD;
+    d.length = sizeof d;
+    d.gic_id = gicd->gic_id;
+    d.physical_base_address = gicd->physical_base_address;
+    d.system_vector_base = gicd->system_vector_base;
+    d.gic_version = gicd->gic_version;
+    memcpy(buf + off, &d, sizeof d);
+    return off + sizeof d;
+}
+
 int64_t acpigen_build_madt(uint8_t *buf, size_t cap, const acpigen_oem *oem,
                            const acpigen_cpu *cpus, size_t ncpus, const acpigen_gicd *gicd,
                            const acpigen_madt_opts *opts)
@@ -41,11 +58,14 @@ int64_t acpigen_build_madt(uint8_t *buf, size_t cap, const acpigen_oem *oem,
         return rc;
     size_t total = sizeof(acpi_madt_header) + ncpus * sizeof(acpi_gicc) +
                    (gicd ? sizeof(acpi_gicd) : 0) +
-                   (opts->gicr_range_length ? sizeof(acpi_gicr) : 0);
+                   (opts->gicr_range_length ? sizeof(acpi_gicr) : 0) +
+                   (opts->msi_base ? sizeof(acpi_gic_msi) : 0);
     if (total > cap)
         return ACPIGEN_E_SMALL;
     memset(buf, 0, total);
     size_t off = sizeof(acpi_madt_header);
+    if (opts->gicd_first)
+        off = put_gicd(buf, off, gicd);
     for (size_t k = 0; k < ncpus; k++) {
         /* La CPU di boot per prima, le altre nell'ordine originale. */
         size_t i = (k == 0) ? opts->boot_index
@@ -59,24 +79,15 @@ int64_t acpigen_build_madt(uint8_t *buf, size_t cap, const acpigen_oem *oem,
         g.flags = cpus[i].enabled ? ACPI_GICC_ENABLED : 0;
         g.parking_protocol_version = cpus[i].parking_version;
         g.parked_address = cpus[i].parked_address;
+        g.performance_interrupt_gsiv = cpus[i].perf_gsiv;
         g.gicr_base_address = opts->gicc_gicr_base;
         g.mpidr = cpus[i].mpidr;
         g.processor_power_efficiency_class = cpus[i].efficiency;
         memcpy(buf + off, &g, sizeof g);
         off += sizeof g;
     }
-    if (gicd) {
-        acpi_gicd d;
-        memset(&d, 0, sizeof d);
-        d.type = ACPI_MADT_TYPE_GICD;
-        d.length = sizeof d;
-        d.gic_id = gicd->gic_id;
-        d.physical_base_address = gicd->physical_base_address;
-        d.system_vector_base = gicd->system_vector_base;
-        d.gic_version = gicd->gic_version;
-        memcpy(buf + off, &d, sizeof d);
-        off += sizeof d;
-    }
+    if (!opts->gicd_first)
+        off = put_gicd(buf, off, gicd);
     if (opts->gicr_range_length) {
         acpi_gicr r;
         memset(&r, 0, sizeof r);
@@ -86,6 +97,18 @@ int64_t acpigen_build_madt(uint8_t *buf, size_t cap, const acpigen_oem *oem,
         r.discovery_range_length = opts->gicr_range_length;
         memcpy(buf + off, &r, sizeof r);
         off += sizeof r;
+    }
+    if (opts->msi_base) {
+        acpi_gic_msi m;
+        memset(&m, 0, sizeof m);
+        m.type = ACPI_MADT_TYPE_GIC_MSI;
+        m.length = sizeof m;
+        m.physical_base_address = opts->msi_base;
+        m.flags = opts->msi_flags;
+        m.spi_count = opts->msi_spi_count;
+        m.spi_base = opts->msi_spi_base;
+        memcpy(buf + off, &m, sizeof m);
+        off += sizeof m;
     }
     acpigen_finish(buf, off, "APIC", ACPI_MADT_REVISION, oem);
     return (int64_t)off;
