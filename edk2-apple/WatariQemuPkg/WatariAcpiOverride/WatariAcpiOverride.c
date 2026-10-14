@@ -120,7 +120,12 @@ OnReadyToBoot (
     return;
   }
 
+#ifdef WATARI_NOGICD
+  // V2 (G2): MADT senza GICD (build --nogicd)
+  Model = acpigen_find_model ("qemu-virt-nogicd");
+#else
   Model = acpigen_find_model ("qemu-virt");
+#endif
   if (Model == NULL) {
     DEBUG ((DEBUG_ERROR, "WatariAcpiOverride: modello qemu-virt non trovato\n"));
     return;

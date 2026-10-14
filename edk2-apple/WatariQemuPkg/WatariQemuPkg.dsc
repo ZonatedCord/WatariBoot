@@ -17,6 +17,7 @@
   SKUID_IDENTIFIER               = DEFAULT
   DEFINE WATARI_TIMER_FIQ        = FALSE
   DEFINE WATARI_PARKING          = FALSE
+  DEFINE WATARI_NOGICD           = FALSE
 
 !include ArmVirtPkg/ArmVirtQemu.dsc
 
@@ -41,4 +42,11 @@
 !if $(WATARI_PARKING) == TRUE
 [Components.AARCH64]
   WatariQemuPkg/WatariParkingDxe/WatariParkingDxe.inf
+!endif
+
+# G2/V2: MADT senza GICD (modello qemu-virt-nogicd). Attivo solo con -D WATARI_NOGICD=TRUE
+# (tools/build-edk2-watari.sh --nogicd).
+!if $(WATARI_NOGICD) == TRUE
+[BuildOptions]
+  GCC:*_*_AARCH64_CC_FLAGS = -DWATARI_NOGICD=1
 !endif

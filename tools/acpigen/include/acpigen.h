@@ -333,6 +333,7 @@ extern const acpigen_gicd qemu_virt_gicd;
 extern const acpigen_gtdt_cfg qemu_virt_gtdt;
 extern const acpigen_dbg2_cfg qemu_virt_dbg2;
 extern const acpigen_model qemu_virt_model;
+extern const acpigen_model qemu_virt_nogicd_model; /* V2: come qemu-virt, senza GICD */
 
 /* Cerca un modello per nome ("t8103", "qemu-virt"); NULL se sconosciuto. */
 const acpigen_model *acpigen_find_model(const char *name);

@@ -8,6 +8,8 @@
 # WORKSPACE separato (build-watari-fiq) e produce $WATARI_DATA/vm/QEMU_EFI-watari-fiq.fd.
 # --parking: aggiunge WatariParkingDxe (G4/V3, Multiprocessor Parking Protocol; MADT parking v1 e FADT
 # senza PSCI) con -D WATARI_PARKING=TRUE; WORKSPACE build-watari-park, output QEMU_EFI-watari-park.fd.
+# --nogicd: V2 (G2), MADT senza GICD (modello acpigen qemu-virt-nogicd), -D WATARI_NOGICD=TRUE;
+# WORKSPACE build-watari-nogicd, output QEMU_EFI-watari-nogicd.fd.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
@@ -16,10 +18,12 @@ source "$HERE/env.sh"
 
 FIQ=0
 PARK=0
+NOGICD=0
+if [ "${1:-}" = "--nogicd" ]; then NOGICD=1; shift; fi
 if [ "${1:-}" = "--fiq" ]; then FIQ=1; shift; fi
 if [ "${1:-}" = "--parking" ]; then PARK=1; shift; fi
 TARGET="${1:-DEBUG}"
-if [ "$FIQ" = 1 ]; then SUFFIX="-fiq"; elif [ "$PARK" = 1 ]; then SUFFIX="-park"; else SUFFIX=""; fi
+if [ "$FIQ" = 1 ]; then SUFFIX="-fiq"; elif [ "$PARK" = 1 ]; then SUFFIX="-park"; elif [ "$NOGICD" = 1 ]; then SUFFIX="-nogicd"; else SUFFIX=""; fi
 mkdir -p "$WATARI_LOGS"
 
 # Patch HVF idempotente (come build-edk2.sh).
@@ -67,6 +71,7 @@ make -C BaseTools -j"$(sysctl -n hw.ncpu)" >/dev/null
 FIQ_DEFS=()
 [ "$FIQ" = 1 ] && FIQ_DEFS=(-D WATARI_TIMER_FIQ=TRUE)
 [ "$PARK" = 1 ] && FIQ_DEFS=(-D WATARI_PARKING=TRUE)
+[ "$NOGICD" = 1 ] && FIQ_DEFS=(-D WATARI_NOGICD=TRUE)
 # F-12: EDK2 non rileva le modifiche agli header di acpigen (percorso fuori da PACKAGES_PATH):
 # senza questo il driver puo' restare compilato con un layout vecchio di acpigen_model. Si rifa' il modulo.
 rm -rf "$WORKSPACE/Build/ArmVirtQemu-AArch64/${TARGET}_${WATARI_TOOLCHAIN}/AARCH64/WatariQemuPkg"

@@ -127,5 +127,17 @@ int main(void)
         CHECK(g.parking_protocol_version == 0 && g.parked_address == 0); /* PSCI (F-11 H1) */
         CHECK(g.performance_interrupt_gsiv == 23);
     }
+
+    /* qemu-virt-nogicd (V2): niente GICD, 4 GICC + GICR + MSI Frame */
+    m = acpigen_find_model("qemu-virt-nogicd");
+    CHECK(m && m->gicd == 0);
+    n = acpigen_build_madt(b, sizeof b, 0, m->cpus, m->ncpus, m->gicd, &m->madt_opts);
+    CHECK(n == 44 + 4 * 82 + 16 + 24);
+    check_table(b, n, "APIC", 6);
+    for (size_t off = 44; off < (size_t)n; ) {
+        CHECK(b[off] != 0x0C);                      /* nessuna GICD Structure */
+        off += b[off + 1];
+    }
+    CHECK(b[44] == 0x0B && b[44 + 4 * 82] == 0x0E && b[44 + 4 * 82 + 16] == 0x0D);
     TEST_END();
 }

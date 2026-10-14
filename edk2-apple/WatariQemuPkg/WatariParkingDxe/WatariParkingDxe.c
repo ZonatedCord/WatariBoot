@@ -117,7 +117,7 @@ WatariParkingEntry (
 
     // I core partono con MMU e cache spente: la pagina deve essere in memoria, non nella cache.
     WriteBackInvalidateDataCacheRange (P, SIZE_4KB);
-    InvalidateInstructionCache ();
+    InvalidateInstructionCacheRange (P, SIZE_4KB);  // la variante senza Range e' un ASSERT(FALSE) in ArmCacheMaintenanceLib
     mInfo.MailboxAddress[Cpu] = Page;
     DEBUG ((DEBUG_INFO, "WatariParking: cpu%lu mailbox 0x%lx\n", (UINT64)Cpu, (UINT64)Page));
   }

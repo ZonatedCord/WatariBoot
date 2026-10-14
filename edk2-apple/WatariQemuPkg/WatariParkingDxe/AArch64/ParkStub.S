@@ -31,7 +31,8 @@ ParkStubStart:
     cbnz    x2, 3f
 2:  wfe
     b       1b
-3:  str     xzr, [x19, #8]              // ack: JumpAddress = 0
+3:  str     x2, [x19, #0xFF8]           // diagnostica (V3): copia del JumpAddress visto da questo core
+    str     xzr, [x19, #8]              // ack: JumpAddress = 0
     dsb     sy
     mov     x0, x19                     // X0 = indirizzo della mailbox
     br      x2

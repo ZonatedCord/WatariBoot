@@ -53,11 +53,24 @@ const acpigen_model qemu_virt_model = {
     .gtdt = &qemu_virt_gtdt, .csrt = 0, .dbg2 = &qemu_virt_dbg2, .fadt = 0,
 };
 
+/* V2 (G2): identico a qemu-virt ma SENZA la GICD Structure (GICC + GICR + MSI Frame). Serve a
+ * verificare se Windows richiede la GICD nella MADT (rischio R-02). */
+const acpigen_model qemu_virt_nogicd_model = {
+    .name = "qemu-virt-nogicd", .cpus = qemu_virt_cpus, .ncpus = QEMU_VIRT_NCPUS,
+    .gicd = 0,
+    .madt_opts = { .boot_index = 0, .gicc_gicr_base = 0, .gicd_first = 1,
+                   .gicr_range_base = 0x080A0000ull, .gicr_range_length = 0xF60000,
+                   .msi_base = 0x08020000ull, .msi_flags = 1, .msi_spi_count = 0x40, .msi_spi_base = 0x50 },
+    .gtdt = &qemu_virt_gtdt, .csrt = 0, .dbg2 = &qemu_virt_dbg2, .fadt = 0,
+};
+
 const acpigen_model *acpigen_find_model(const char *name)
 {
     if (name && !strcmp(name, t8103_model.name))
         return &t8103_model;
     if (name && !strcmp(name, qemu_virt_model.name))
         return &qemu_virt_model;
+    if (name && !strcmp(name, qemu_virt_nogicd_model.name))
+        return &qemu_virt_nogicd_model;
     return 0;
 }
