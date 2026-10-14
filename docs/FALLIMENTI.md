@@ -54,3 +54,8 @@ Formato di ogni voce:
 ## F-09 · Regole sui download violate dagli agenti (2026-10-13)
 - **Successo:** due subagenti hanno salvato file temporanei (una copia del sorgente Linux `aic.c`, il PDF della specifica parking) nelle cartelle interne di Claude, nonostante il divieto di download nei prompt. Il backup era confermato e niente è finito nella repository.
 - **Lezione:** i divieti nei prompt degli agenti non bastano. Bisogna dire esplicitamente "niente file temporanei" e controllare dopo.
+
+## F-10 · Schermo nero scambiato per blocco dell'installazione (2026-10-14, falso allarme)
+- **Provato:** controllare con `screendump` l'installazione automatica di Windows (HVF, ramfb, senza display).
+- **Successo:** dopo ~2 ore lo screenshot era completamente nero, il disco non scriveva più e la seriale era muta: sembrava un hang. In realtà Windows aveva finito e lo schermo si era spento per inattività.
+- **Lezione:** prima di dichiarare un blocco, mandare un tasto (`sendkey shift` dal monitor QEMU) e rifare lo screenshot. Il silenzio della seriale non dice nulla sul kernel di Windows (il debug seriale non era ancora attivo/verificato).

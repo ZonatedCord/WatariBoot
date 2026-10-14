@@ -16,7 +16,7 @@
 - [x] **Gate B, B1+B2** (2026-10-13): QEMU 11.1.2, EDK2 `edk2-stable202608` compilato (ArmVirtQemu AARCH64, CLANGDWARF) e avviato in QEMU fino al Boot Manager UEFI. Elenco di cosa è installato e come rimuoverlo: `docs/INSTALLATO.md` + `tools/uninstall-watari.sh`.
 - [x] **V0 (TCG):** il Setup di Windows 11 ARM64 (ISO ufficiale it-it build 26300, SHA-256 in `WatariBoot-data/iso/SHA256.txt`) gira in QEMU sul **nostro** EDK2. Screenshot: `WatariBoot-data/logs/screens/tcg-c1.png`. Script: `tools/run-qemu-windows.sh`.
 - [ ] **HVF:** il nostro EDK2 si blocca su "Start boot option" (`[Bds]BdsWait(5)`). Diagnosi in corso (un agente stava provando il firmware incluso in QEMU, una build RELEASE, GICv2). **Da riprendere qui:** controllare `git status` sul branch locale `marco/gate-b-v0` per eventuali modifiche lasciate dall'agente.
-- [ ] **Notte 2026-10-14:** lavoro autonomo pianificato secondo `ralph/NOTTE.md` (N1 HVF, N2 installazione automatica, N3 acpigen, N4 V1), sul branch `marco/notte-2026-10-14`, diario in `ralph/PROGRESS-notte.md`.
+- [ ] **Notte 2026-10-14:** lavoro autonomo pianificato secondo `ralph/NOTTE.md` (N1 HVF, N2 installazione automatica, N3 acpigen, N4 V1), sul branch `marco/notte-2026-10-14`, diario in `ralph/PROGRESS-notte.md`. **N1 e N2 fatti** (Windows 11 installato in modo automatico con HVF, desktop verificato); N3 e N4 in corso o da fare.
 - [ ] Poi: installazione di Windows nella VM (valutare il disco interno per la velocità), quindi V1 e V6.
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
