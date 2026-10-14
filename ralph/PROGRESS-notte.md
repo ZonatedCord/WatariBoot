@@ -27,3 +27,11 @@ Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risu
 
 ## 2026-10-14 00:25: N2 in corso (verificato da Opus)
 - Lo screenshot `logs/screens/n2-0023.png` mostra "Installazione di Windows 11 in corso... Completamento operazione: 22%" con HVF, senza nessuna domanda: l'unattend funziona. QEMU ha PID 1173 (in `run/n2-qemu.pid`), è vivo e staccato dalla sessione.
+
+## 2026-10-14 02:30-02:45: N2 RIUSCITO (esecuzione notturna 1)
+- Ripresa: QEMU PID 1173 vivo dopo 2h15 di HVF. Lo screenshot `n2-0230.png` era **tutto nero**, il disco non scriveva più da minuti e la seriale era ferma dalle 01:29: sembrava un blocco.
+- Era invece lo **schermo spento per inattività** di Windows (nessun display driver reale, ramfb). Un `sendkey shift` dal monitor lo ha risvegliato: `n2-0236.png` (copia `n2-SUCCESSO-desktop.png`) mostra il **desktop di Windows 11 con Start aperto e utente `watari`**, ora 00:34 della VM, 14/10/2026. **Verificato da Opus guardando lo screenshot.**
+- Non verificato: l'esistenza di `C:\watari-ok.txt`, testsigning e debug seriale (non c'è accesso alla VM). Il file seriale `n2-serial.log` contiene solo il log di EDK2 (nessun output del kernel debugger, ipotesi: serve la verifica in V1/N4).
+- Spenta con `system_powerdown`: chiusura pulita, QEMU terminato. `vm/win11.qcow2` ≈ 14 GB = Windows installato e pronto da riavviare.
+- Durata totale installazione con HVF: circa 1h30-2h (da 00:14 a ~01:30 desktop pronto).
+- **N3 delegato a un agente Sonnet** (acpigen), in corso.

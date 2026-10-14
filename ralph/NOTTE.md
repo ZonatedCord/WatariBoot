@@ -19,7 +19,7 @@ Ogni esecuzione notturna parte **da zero**: legge questo file e lavora sul primo
   - controlla `tools/edk2-timer-imask.patch` e il log di eventuali tentativi in `WatariBoot-data/logs/`;
   - prova con il firmware EDK2 incluso in QEMU (`/opt/homebrew/share/qemu/edk2-aarch64-code.fd`), poi con una build RELEASE, poi con `gic-version=2`;
   - obiettivo: con HVF arrivare almeno all'avvio del CD di Windows. Se dopo un tentativo serio non si risolve, documenta in F-08 e passa avanti (si continua con TCG).
-- [ ] **N2. Installazione automatica di Windows (senza interazione).**
+- [x] **N2. Installazione automatica di Windows (senza interazione).** *(riuscita 2026-10-14 ~02:35, vedi PROGRESS-notte)*
   - Crea `tools/autounattend/autounattend.xml`:
     - lingua it-IT;
     - partizioni GPT sul disco NVMe;
