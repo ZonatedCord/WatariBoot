@@ -1,28 +1,28 @@
-# ADR-0007: Strada indipendente; NTASP solo come riferimento
+# ADR-0007: Independent path; NTASP only as a reference
 
-- Data: 2026-10-12 · Stato: **accettato** · Collegamenti: [re/ntasp-analysis.md](../../re/ntasp-analysis.md), [re/ntasp-quality-audit.md](../../re/ntasp-quality-audit.md), [ADR-0001](0001-native-boot-without-hypervisor.md)
+- Date: 2026-10-12 · Status: **accepted** · Links: [re/ntasp-analysis.md](../../re/ntasp-analysis.md), [re/ntasp-quality-audit.md](../../re/ntasp-quality-audit.md), [ADR-0001](0001-native-boot-without-hypervisor.md)
 
-## Contesto
-NT for Apple Silicon (NTASP, org `NT-for-ASi`) è l'unico progetto esistente con lo stesso obiettivo. Lo abbiamo analizzato (stato e architettura) e sottoposto a un audit di qualità del codice. Opus ha ricontrollato direttamente i difetti principali.
-- **Architettura:** Windows gira sotto l'hypervisor di m1n1 (`hv_vgic.c`, `hv_psci.c`). Non c'è un percorso nativo e non c'è il parking protocol.
-- **Estensione HAL AIC per Windows:** non esiste. Il README di `apple_silicon_nt_drivers` dice "Nothing's implemented yet".
-- **Driver AIC UEFI:** la parte AICv1, quella dell'M1, è uno stub (`AicV1/AppleAicV1Dxe.c`: `//TODO: this driver.`). Il codice AICv2 ha bug: `AIC_MASK_BIT` (`AppleAicLib.h:103`) annulla mask e unmask per gli IRQ dal 5 in su.
-- **Tabelle ACPI:** sono pensate per il vGIC, hanno valori inventati e alcuni indirizzi e IRQ non coincidono con il DTS di Asahi.
-- **Qualità del processo:** test e CI sono assenti, i commit sono poco descrittivi e mancano header SPDX su alcuni file.
+## Context
+NT for Apple Silicon (NTASP, org `NT-for-ASi`) is the only existing project with the same goal. We analyzed it (state and architecture) and subjected it to a code quality audit. Opus rechecked the main defects directly.
+- **Architecture:** Windows runs under the m1n1 hypervisor (`hv_vgic.c`, `hv_psci.c`). There is no native path and no parking protocol.
+- **AIC HAL extension for Windows:** does not exist. The README of `apple_silicon_nt_drivers` says "Nothing's implemented yet".
+- **UEFI AIC driver:** the AICv1 part, the one for the M1, is a stub (`AicV1/AppleAicV1Dxe.c`: `//TODO: this driver.`). The AICv2 code has bugs: `AIC_MASK_BIT` (`AppleAicLib.h:103`) cancels mask and unmask for IRQs from 5 upward.
+- **ACPI tables:** they are designed for the vGIC, have invented values, and some addresses and IRQs do not match the Asahi DTS.
+- **Process quality:** tests and CI are absent, commits are barely descriptive, and some files lack SPDX headers.
 
-L'utente vuole riusare codice esterno solo se è di buona qualità, non solo per risparmiare tempo.
+The user wants to reuse external code only if it is of good quality, not just to save time.
 
-## Decisione
-Watari Boot è **indipendente** e si scrive da zero.
-- **Asahi Linux** (m1n1, driver Linux, DTS) è la fonte di verità sull'hardware.
-- **NTASP** si usa solo come riferimento: per capire dove si sono bloccati e da quali dati partire. Nessun loro file viene copiato. I loro dati (per esempio la topologia CPU/PPTT, gli MPIDR) si usano solo dopo averli verificati con il DTS o l'ADT.
-- I bug trovati si segnalano a NTASP. Primo: [apple_silicon_platforms_mu#23](https://github.com/NT-for-ASi/apple_silicon_platforms_mu/issues/23).
+## Decision
+Watari Boot is **independent** and is written from scratch.
+- **Asahi Linux** (m1n1, Linux drivers, DTS) is the source of truth about the hardware.
+- **NTASP** is used only as a reference: to understand where they got stuck and which data to start from. None of their files is copied. Their data (for example the CPU/PPTT topology, the MPIDRs) is used only after verifying it against the DTS or the ADT.
+- Bugs found are reported to NTASP. First one: [apple_silicon_platforms_mu#23](https://github.com/NT-for-ASi/apple_silicon_platforms_mu/issues/23).
 
-## Alternative scartate
-- **Contribuire a NTASP:** porterebbe alla loro strada con hypervisor, in contrasto con ADR-0001, e su una base da riscrivere per circa il 70%.
-- **Forkare NTASP:** erediteremmo i loro difetti, il debito e i problemi di provenienza delle licenze.
+## Alternatives (rejected)
+- **Contribute to NTASP:** it would lead to their hypervisor path, in conflict with ADR-0001, on a base that is about 70% to be rewritten.
+- **Fork NTASP:** we would inherit their defects, debt and license provenance problems.
 
-## Conseguenze
-- Più lavoro iniziale sul firmware (EDK2/Mu nostro), in cambio di codice nostro, testato e con licenze pulite fin dall'inizio.
-- Da subito: unit test su host, CI, commit piccoli e header SPDX su ogni file.
-- Piano B (ADR-0001): l'hypervisor di NTASP resta un'alternativa esistente nel caso in cui lo spike nativo fallisca.
+## Consequences
+- More up-front work on the firmware (our own EDK2/Mu), in exchange for code that is ours, tested and with clean licenses from the start.
+- From day one: host unit tests, CI, small commits and SPDX headers on every file.
+- Plan B (ADR-0001): the NTASP hypervisor remains an existing alternative in case the native spike fails.

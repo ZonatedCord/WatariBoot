@@ -1,36 +1,36 @@
 # DESIGN-STATUS: Watari EL2
 
-- Progetto: Watari Boot, sottosistema Watari EL2 · Data: 2026-10-14 · Versione: 0.1 · Stato: draft
-- Documenti: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
-- ADR (bozze): `docs/adr/draft-el2-base-m1n1-or-new.md`, `docs/adr/draft-el2-license.md`; stack in `ARCHITECTURE.md` §2 (C11 freestanding + clang) e `draft-el2-base-m1n1-or-new.md` (nessun ADR-0001 separato: lo stack è imposto dal contesto del progetto).
+- Project: Watari Boot, subsystem Watari EL2 · Date: 2026-10-14 · Version: 0.1 · Status: draft
+- Documents: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
+- ADRs (drafts): `docs/adr/draft-el2-base-m1n1-or-new.md`, `docs/adr/draft-el2-license.md`; stack in `ARCHITECTURE.md` §2 (C11 freestanding + clang) and `draft-el2-base-m1n1-or-new.md` (no separate ADR-0001: the stack is imposed by the project context).
 
-## Fasi
-- [x] 1. Discovery — done (lettura dei documenti del repository; greenfield per il sottosistema, `edk2-apple/WatariQemuPkg/` esiste ma contiene solo driver di prova per QEMU)
-- [x] 2. Analysis — done (fatti, rischi e valutazione dei 4 requisiti in RISKS.md; ANALYSIS non è un file separato per scelta del committente: i contenuti sono in RISKS §2-§6)
-- [x] 3. Stack recommendation — done (ADR base)
+## Phases
+- [x] 1. Discovery — done (reading of the repository documents; greenfield for the subsystem, `edk2-apple/WatariQemuPkg/` exists but contains only test drivers for QEMU)
+- [x] 2. Analysis — done (facts, risks and assessment of the 4 requirements in RISKS.md; ANALYSIS is not a separate file by the commissioner's choice: the contents are in RISKS §2-§6)
+- [x] 3. Stack recommendation — done (base ADR)
 - [x] 4. Architecture — done
 - [x] 5. Design patterns — done (ARCHITECTURE §4.1)
 - [x] 6. Design-in-the-small — done (INTERFACES)
 - [x] 7. Test strategy — done
 - [x] 8. PRD assembly — done
-- [~] 9. Self-review — done con riserve (vedi sotto)
+- [~] 9. Self-review — done with reservations (see below)
 - [x] 10. Report — done
 
 ## Quality gate
-- Mantenibilità — pass (responsabilità singole, errori, naming in INTERFACES §10)
-- Riproducibilità — pass (TEST_STRATEGY §7)
-- Modularità — pass (grafo aciclico, backend dietro `*_ops`)
-- Estensibilità — pass (ARCHITECTURE §9)
+- Maintainability — pass (single responsibilities, errors, naming in INTERFACES §10)
+- Reproducibility — pass (TEST_STRATEGY §7)
+- Modularity — pass (acyclic graph, backends behind `*_ops`)
+- Extensibility — pass (ARCHITECTURE §9)
 
-## Esito dei controlli meccanici
-- Nessun `TBD`/`TODO` residuo nei documenti (le parole compaiono solo come regole di stile o nel riferimento a NTASP).
-- Tracciabilità FR/NFR → moduli: ARCHITECTURE §10.
-- Codifiche dei registri e valori numerici di GICv3/PSCI/SMCCC sono **[I]** (manuale ARM non disponibile in locale): conferma obbligatoria in M0 prima di scrivere codice.
-- Fonti verificate in sessione: licenze m1n1 (README, `LICENSE`, `hv_vm.c`, `main.c`), conduit PSCI di QEMU `virt.c`, workaround SEIS di KVM (commit `d11a327ed9`, `df652bcf1136`), E2H bloccato (titolo patch Linux), VTCR di m1n1. Non verificato: licenza di `irq-apple-aic.c` (HTTP 429), EL e registri di consegna di m1n1.
-- Non eseguiti per vincolo di ruolo: creazione del branch `marco/design-watari-el2` (Bash limitato a `mkdir -p` e `git add`) — va creato da Opus; i file sono in `git add` sul ramo corrente.
+## Outcome of the mechanical checks
+- No residual `TBD`/`TODO` in the documents (the words appear only as style rules or in the reference to NTASP).
+- FR/NFR → module traceability: ARCHITECTURE §10.
+- Register encodings and numeric values of GICv3/PSCI/SMCCC are **[hypothesis]** (ARM manual not available locally): confirmation is mandatory in M0 before writing code.
+- Sources verified in session: m1n1 licenses (README, `LICENSE`, `hv_vm.c`, `main.c`), QEMU `virt.c` PSCI conduit, KVM SEIS workaround (commits `d11a327ed9`, `df652bcf1136`), E2H locked (Linux patch title), m1n1 VTCR. Not verified: license of `irq-apple-aic.c` (HTTP 429), m1n1's EL and hand-off registers.
+- Not executed due to role constraint: creation of the branch `marco/design-watari-el2` (Bash limited to `mkdir -p` and `git add`) — must be created by Opus; the files are in `git add` on the current branch.
 
 ## Blocking questions
-- (nessuna)
+- (none)
 
 ## Non-blocking questions
 - Q-1 … Q-6 in `RISKS.md` §5.

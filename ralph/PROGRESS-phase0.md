@@ -1,122 +1,122 @@
-# Fase 0: diario di Ralph
+# Phase 0: Ralph's diary
 
-Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verificato Opus, dubbi aperti.
+Ralph adds an entry for each task: date, task, files produced, what Opus verified, open doubts.
 
-## Voci
+## Entries
 
-### 2026-10-12: A3 completato (issue #6)
+### 2026-10-12: A3 completed (issue #6)
 - File: `re/f0-m1-fiq-irq.md` (Asahi linux@asahi 77cb8f24c2, m1n1 main fbec52a81f).
-- **Verificato da Opus** sul DTS `t8103.dtsi@asahi`:
-  - (1) il timer `arm,armv8-timer` ha i 4 interrupt tutti `AIC_FIQ` (righe 369-375);
-  - (2) il watchdog `watchdog@23d2b0000` ha `AIC_IRQ 338` (righe 1223-1228).
-- **Scoperta critica:** il timer architetturale è **solo FIQ**, e non c'è nessun modo documentato di instradarlo in IRQ. Tutte le altre sorgenti FIQ (Fast IPI, PMU, uncore) si possono spegnere alla fonte. Se Windows richiede il timer architetturale, la strategia "niente FIQ" (ADR-0004) cade. Piste da verificare:
-  - (a) bit `ACC_OVRD` "CONVERT_SIQ_TO_IRQ", definito in m1n1 ma mai usato [ipotesi];
-  - (b) il watchdog come timer di sistema tramite un'estensione HAL timer: un solo comparatore per tutto il SoC, contatore a 32 bit che fa il giro in circa 179 s [ipotesi].
-- **IPI:** quelle legacy dell'AIC in IRQ funzionano su AICv1 (codice storico di Linux), ma **AICv2 (M1 Pro/Max e successivi) non le ha**, quindi la strategia non vale per tutti gli Apple Silicon.
-- **Dubbi aperti:** discrepanze sui campi di IPI_RR tra Linux e la doc Asahi; nessuna misura di latenza.
+- **Verified by Opus** on the DTS `t8103.dtsi@asahi`:
+  - (1) the `arm,armv8-timer` timer has all 4 interrupts as `AIC_FIQ` (lines 369-375);
+  - (2) the watchdog `watchdog@23d2b0000` has `AIC_IRQ 338` (lines 1223-1228).
+- **Critical discovery:** the architectural timer is **FIQ only**, and there is no documented way to route it to IRQ. All the other FIQ sources (Fast IPI, PMU, uncore) can be turned off at the source. If Windows requires the architectural timer, the "no FIQ" strategy (ADR-0004) falls. Leads to verify:
+  - (a) the `ACC_OVRD` bit "CONVERT_SIQ_TO_IRQ", defined in m1n1 but never used [hypothesis];
+  - (b) the watchdog as the system timer through a timer HAL extension: a single comparator for the whole SoC, a 32-bit counter that wraps in about 179 s [hypothesis].
+- **IPI:** the AIC's legacy ones in IRQ work on AICv1 (historic Linux code), but **AICv2 (M1 Pro/Max and later) does not have them**, so the strategy does not hold for all Apple Silicon.
+- **Open doubts:** discrepancies on the IPI_RR fields between Linux and the Asahi doc; no latency measurement.
 
-### 2026-10-12: A6 completato (issue #9)
-- File: `tools/acpigen/` (libreria C11 + CLI + test). Genera MADT (GICC/GICD), GTDT, PPTT e CSRT.
-- **Verificato da Opus:** `make -C tools/acpigen test` → `TUTTI I TEST OK` (rieseguito); GICC da 82 byte coerente con ACPI 6.5.
-- **Ipotesi** (marcate nei sorgenti): parked address/version = 0, classi di efficienza, GSIV dei timer (segnaposto PPI), ID CSRT "APLE"/0x8103, MPIDR = `reg` del DTS.
-- **Nota:** il layout CSRT viene dal PDF della specifica Microsoft (link da learn.microsoft.com), letto dall'agente. Non è rimasta nessuna copia del PDF nel repository.
+### 2026-10-12: A6 completed (issue #9)
+- File: `tools/acpigen/` (C11 library + CLI + tests). Generates MADT (GICC/GICD), GTDT, PPTT and CSRT.
+- **Verified by Opus:** `make -C tools/acpigen test` → `TUTTI I TEST OK` (re-run); 82-byte GICC consistent with ACPI 6.5.
+- **Hypotheses** (marked in the sources): parked address/version = 0, efficiency classes, timer GSIVs (PPI placeholders), CSRT ID "APLE"/0x8103, MPIDR = DTS `reg`.
+- **Note:** the CSRT layout comes from the PDF of the Microsoft specification (link from learn.microsoft.com), read by the agent. No copy of the PDF was left in the repository.
 
-### 2026-10-12: A5 completato (issue #8)
-- File: `docs/design/watariboot/EXPERIMENT-F0.md` (matrice V0–V5, debug, prerequisiti, rischi).
-- **Verificato da Opus** sulla documentazione QEMU:
-  - (1) `gic-version` accetta solo 2/3/4/x-5/host/max: il GIC non si può rimuovere, e il "non-GIC" si simula solo nelle tabelle ACPI (qemu.org, system/arm/virt);
-  - (2) `-acpitable` vale solo per il target i386 (qemu.org, system/invocation). Le nostre tabelle vanno iniettate con un driver DXE in EDK2.
-- **Conseguenze:**
-  - `acpigen` va esteso (modello `qemu-virt`, `--no-gicd`, `--parking`, GICR, FADT, SSDT): nuovo lavoro per il Gate B;
-  - lo spazio stimato per il Gate B è di 75–115 GiB (oggi ne sono liberi circa 53–56);
-  - QEMU dà un verdetto negativo forte ma solo un positivo debole: non prova niente su AIC, FIQ o risveglio reale del M1.
-- **Ipotesi aperte:** sintassi `-serial`/`-chardev`/`-netdev`, e se `e1000e` di QEMU sia compatibile con KDNET.
+### 2026-10-12: A5 completed (issue #8)
+- File: `docs/design/watariboot/EXPERIMENT-F0.md` (matrix V0–V5, debug, prerequisites, risks).
+- **Verified by Opus** on the QEMU documentation:
+  - (1) `gic-version` accepts only 2/3/4/x-5/host/max: the GIC cannot be removed, and "non-GIC" can only be simulated in the ACPI tables (qemu.org, system/arm/virt);
+  - (2) `-acpitable` applies only to the i386 target (qemu.org, system/invocation). Our tables must be injected with a DXE driver in EDK2.
+- **Consequences:**
+  - `acpigen` must be extended (`qemu-virt` model, `--no-gicd`, `--parking`, GICR, FADT, SSDT): new work for Gate B;
+  - the estimated space for Gate B is 75–115 GiB (today about 53–56 are free);
+  - QEMU gives a strong negative verdict but only a weak positive one: it proves nothing about the AIC, FIQ or the real wake-up of the M1.
+- **Open hypotheses:** syntax of `-serial`/`-chardev`/`-netdev`, and whether QEMU's `e1000e` is compatible with KDNET.
 
-### 2026-10-12: A7 bloccato (issue #10)
-- Motivo: **in attesa di Ciani**. `re/f0-halext-public-docs.md`, `re/f0-acpi-windows-requirements.md` e `re/f0-rpi3-precedent.md` non sono ancora su `main` (controllato su `origin/main`).
-- Si riprende in una nuova sessione o con un nuovo loop, dopo il merge delle PR di Ciani.
+### 2026-10-12: A7 blocked (issue #10)
+- Reason: **waiting for Ciani**. `re/f0-halext-public-docs.md`, `re/f0-acpi-windows-requirements.md` and `re/f0-rpi3-precedent.md` are not yet on `main` (checked on `origin/main`).
+- Resume in a new session or with a new loop, after the merge of Ciani's PRs.
 
-## Riepilogo finale del Gate A (questo giro di Ralph)
-- Completati: **A3** (#6), **A5** (#8), **A6** (#9).
-- Bloccato: **A7** (#10), in attesa di A1, A2 e A4 (Ciani: #4, #5, #7).
-- **Scoperte principali:**
-  1. Il timer architetturale del M1 è solo FIQ. È un rischio critico per ADR-0004 e va verificato con V5 in QEMU e con A1 (le estensioni HAL timer).
-  2. In QEMU il GIC non si può rimuovere: gli esperimenti danno solo un "no" affidabile, non un "sì".
-  3. Per il Gate B servono 75–115 GiB e le estensioni ad `acpigen` (modello qemu-virt, FADT/SSDT, `--no-gicd`, `--parking`).
+## Final summary of Gate A (this Ralph round)
+- Completed: **A3** (#6), **A5** (#8), **A6** (#9).
+- Blocked: **A7** (#10), waiting for A1, A2 and A4 (Ciani: #4, #5, #7).
+- **Main discoveries:**
+  1. The M1's architectural timer is FIQ only. It is a critical risk for ADR-0004 and must be verified with V5 in QEMU and with A1 (timer HAL extensions).
+  2. In QEMU the GIC cannot be removed: the experiments give only a reliable "no", not a "yes".
+  3. Gate B needs 75–115 GiB and the extensions to `acpigen` (qemu-virt model, FADT/SSDT, `--no-gicd`, `--parking`).
 
-## Secondo giro (branch `ralph/f0-gate-a2`, dal 2026-10-13)
-- Task: A8 (#16), A9 (#17), A10 (#18). A7 resta `[!]` in attesa di Ciani.
+## Second round (branch `ralph/f0-gate-a2`, from 2026-10-13)
+- Tasks: A8 (#16), A9 (#17), A10 (#18). A7 stays `[!]` waiting for Ciani.
 
-### 2026-10-13: A8 completato (#16), modelli AIC in QEMU
+### 2026-10-13: A8 completed (#16), AIC models in QEMU
 - File: `re/f0-qemu-aic-models.md`.
-- **Verificato da Opus:**
-  - `TrungNguyen1909/qemu-t8030` esiste (archiviato, 2204 stelle, ultimo push 2022-10). Il suo `hw/intc/apple_aic.c` usa gli offset di AICv1 (0x2004 IACK, 0x3000 DEST, 0x4100 MASK_SET).
-  - `ChefKissInc/Inferno` è attivo (push 2026-09).
-  - La licenza del repo t8030 risulta "NOASSERTION" su GitHub.
-- **Raccomandazione:** scrivere da zero un modello AICv1 minimo (250–350 righe) per una macchina QEMU "watari-virt" senza GIC, con il timer cablato direttamente in FIQ come sul vero M1. Stima: circa 8–9 giorni [ipotesi]. Inferno non si riusa (il suo file AIC è AGPL).
-- **Nota sulle regole:** l'agente ha salvato una copia del sorgente Linux `aic.c` nello scratchpad della sessione. È testo GPL pubblico e il backup era confermato, ma è contro la regola "niente download senza conferma". Segnalato all'utente.
+- **Verified by Opus:**
+  - `TrungNguyen1909/qemu-t8030` exists (archived, 2204 stars, last push 2022-10). Its `hw/intc/apple_aic.c` uses the AICv1 offsets (0x2004 IACK, 0x3000 DEST, 0x4100 MASK_SET).
+  - `ChefKissInc/Inferno` is active (push 2026-09).
+  - The t8030 repo's license shows as "NOASSERTION" on GitHub.
+- **Recommendation:** write from scratch a minimal AICv1 model (250–350 lines) for a QEMU "watari-virt" machine without a GIC, with the timer wired directly to FIQ as on the real M1. Estimate: about 8–9 days [hypothesis]. Inferno is not reused (its AIC file is AGPL).
+- **Note on the rules:** the agent saved a copy of the Linux source `aic.c` in the session's scratchpad. It is public GPL text and the backup was confirmed, but it goes against the rule "no downloads without confirmation". Reported to the user.
 
-### 2026-10-13: A9 completato (#17), il bit SIQ e le vie hardware
-- File: `re/f0-timer-irq-hw.md`, con il protocollo di HW-1 (#20).
-- **Verificato da Opus:**
-  - `ACC_OVRD_CONVERT_SIQ_TO_IRQ` = BIT(22) di `SYS_IMP_APL_ACC_OVRD` sys_reg(3,5,15,6,0) in m1n1 `src/cpu_regs.h:541,563`;
-  - nell'organizzazione AsahiLinux l'unico file che lo contiene è `src/cpu_regs.h` (ricerca nel codice), quindi non è usato da nessuna parte;
-  - XNU ha `osfmk/arm/rtclock.c`.
-- **Conclusioni:** macOS stesso usa il timer in FIQ (fleh_fiq → rtclock_intr) e non tocca il bit. La probabilità che HW-1 funzioni è bassa (circa 10%, stima dell'agente), ma il test costa poco e si annulla facilmente. Il watchdog resta la pista IRQ più concreta.
+### 2026-10-13: A9 completed (#17), the SIQ bit and the hardware routes
+- File: `re/f0-timer-irq-hw.md`, with the HW-1 protocol (#20).
+- **Verified by Opus:**
+  - `ACC_OVRD_CONVERT_SIQ_TO_IRQ` = BIT(22) of `SYS_IMP_APL_ACC_OVRD` sys_reg(3,5,15,6,0) in m1n1 `src/cpu_regs.h:541,563`;
+  - in the AsahiLinux organization the only file that contains it is `src/cpu_regs.h` (code search), so it is not used anywhere;
+  - XNU has `osfmk/arm/rtclock.c`.
+- **Conclusions:** macOS itself uses the timer as FIQ (fleh_fiq → rtclock_intr) and does not touch the bit. The probability that HW-1 works is low (about 10%, the agent's estimate), but the test costs little and is easily undone. The watchdog remains the most concrete IRQ lead.
 
-### 2026-10-13: A10 completato (#18), variante V6 in QEMU
-- Sezione 4.4 aggiunta in `EXPERIMENT-F0.md`.
-- **Verificato da Opus:** in QEMU `hw/intc/arm_gicv3_cpuif.c` il Group 0 (`GICV3_G0`) ha un percorso dedicato (FIQ).
-- **Metodo:**
-  - prima prova: un driver DXE nel nostro EDK2 che mette i PPI del timer in Group 0;
-  - metodo di riferimento: una patch di circa 10 righe a QEMU `virt.c` che collega l'uscita del timer direttamente a `ARM_CPU_FIQ`, come sul M1.
-  Con HVF va forzato `kernel-irqchip=off` [ipotesi].
-- **Esito decisivo:** se Windows si avvia e l'orologio avanza con il timer in FIQ, il problema del timer è risolto.
+### 2026-10-13: A10 completed (#18), variant V6 in QEMU
+- Section 4.4 added to `EXPERIMENT-F0.md`.
+- **Verified by Opus:** in QEMU `hw/intc/arm_gicv3_cpuif.c` Group 0 (`GICV3_G0`) has a dedicated path (FIQ).
+- **Method:**
+  - first attempt: a DXE driver in our EDK2 that puts the timer PPIs in Group 0;
+  - reference method: a patch of about 10 lines to QEMU `virt.c` that connects the timer output directly to `ARM_CPU_FIQ`, as on the M1.
+  With HVF, `kernel-irqchip=off` must be forced [hypothesis].
+- **Decisive outcome:** if Windows boots and the clock advances with the timer as FIQ, the timer problem is solved.
 
-## Riepilogo del secondo giro
-- Completati: A8, A9, A10. A7 resta bloccato (in attesa di Ciani).
-- **Il quadro sul timer:**
-  1. Via hardware: improbabile (HW-1, circa 10%).
-  2. **Windows che gestisce la FIQ (V6): la pista più importante**, testabile in QEMU con una patch piccola.
-  3. Watchdog + estensione HAL timer: concreta, ma dipende da A1/A11 (Ciani).
-  4. Banco di prova senza GIC: modello AICv1 in QEMU, da scrivere da zero (circa 8–9 giorni).
+## Summary of the second round
+- Completed: A8, A9, A10. A7 stays blocked (waiting for Ciani).
+- **The timer picture:**
+  1. Hardware route: unlikely (HW-1, about 10%).
+  2. **Windows handling the FIQ (V6): the most important lead**, testable in QEMU with a small patch.
+  3. Watchdog + timer HAL extension: concrete, but depends on A1/A11 (Ciani).
+  4. Test bench without a GIC: AICv1 model in QEMU, to be written from scratch (about 8–9 days).
 
-## Terzo giro (branch `ralph/f0-gate-a3`, 2026-10-13)
-- Marco ha riassegnato a Ralph i task di Ciani (A1, A2, A4, A11) per non bloccare la Fase 0. Ordine: A1, A2 e A4 in parallelo → A11 → A7.
+## Third round (branch `ralph/f0-gate-a3`, 2026-10-13)
+- Marco reassigned Ciani's tasks (A1, A2, A4, A11) to Ralph so as not to block Phase 0. Order: A1, A2 and A4 in parallel → A11 → A7.
 
-### 2026-10-13: A1 completato (#4), estensioni HAL
+### 2026-10-13: A1 completed (#4), HAL extensions
 - File: `re/f0-halext-public-docs.md`.
-- **Verdetto: "non determinabile dalle fonti pubbliche"** (circa 30% sì / 20% no / 50% incerto).
-- **Verificato da Opus:** l'unico esempio pubblico di estensioni HAL (`ms-iot/imx-iotcore@public_preview hals/halext`) contiene solo `HalExtiMX6Timers`, `HalExtiMX7Timers` e `HalExtiMXDma`, cioè timer e DMA, nessun controller di interrupt.
-- La specifica CSRT prevede il sottotipo "Interrupt Controller", ma non c'è nessun esempio pubblico che lo usi.
-- **Nota positiva:** esistono estensioni HAL per i **timer** (i.MX), una base concreta per A11.
+- **Verdict: "not determinable from public sources"** (about 30% yes / 20% no / 50% uncertain).
+- **Verified by Opus:** the only public example of HAL extensions (`ms-iot/imx-iotcore@public_preview hals/halext`) contains only `HalExtiMX6Timers`, `HalExtiMX7Timers` and `HalExtiMXDma`, i.e. timer and DMA, no interrupt controller.
+- The CSRT specification provides the "Interrupt Controller" subtype, but there is no public example that uses it.
+- **Positive note:** HAL extensions for **timers** exist (i.MX), a concrete basis for A11.
 
-### 2026-10-13: A2 completato (#5), requisiti ACPI e parking protocol
+### 2026-10-13: A2 completed (#5), ACPI requirements and parking protocol
 - File: `re/f0-acpi-windows-requirements.md`.
-- Tabelle obbligatorie: FADT (HW_REDUCED), MADT, DSDT, DBG2. Il GICD non è dichiarato obbligatorio da Microsoft.
-- Parking protocol v1 (2014): mailbox da 4 KB; risveglio con "an interrupt" non specificato; un loop WFE/polling è compatibile [ipotesi].
-- **Discrepanze bloccanti in `acpigen`:** parking version/address = 0 (va messo 1 + un indirizzo); niente GICD segnaposto; la CPU di boot deve essere la prima; GICR base = 1 come nel Pi3; mancano FADT, DBG2, SPCR e DSDT.
-- **Nota sulle regole:** WebFetch ha salvato il PDF della specifica nella cartella interna dei risultati dei tool di Claude, non nella repository.
+- Mandatory tables: FADT (HW_REDUCED), MADT, DSDT, DBG2. The GICD is not declared mandatory by Microsoft.
+- Parking protocol v1 (2014): 4 KB mailbox; wake-up with "an interrupt" unspecified; a WFE/polling loop is compatible [hypothesis].
+- **Blocking discrepancies in `acpigen`:** parking version/address = 0 (must be set to 1 + an address); no placeholder GICD; the boot CPU must be first; GICR base = 1 as in the Pi3; FADT, DBG2, SPCR and DSDT are missing.
+- **Note on the rules:** WebFetch saved the specification PDF in Claude's internal tool-results folder, not in the repository.
 
-### 2026-10-13: A4 completato (#7), il precedente del Raspberry Pi 3 (**risultato critico**)
+### 2026-10-13: A4 completed (#7), the Raspberry Pi 3 precedent (**critical result**)
 - File: `re/f0-rpi3-precedent.md`.
-- **Verificato da Opus:** in `tianocore/edk2-platforms` `Platform/RaspberryPi/AcpiTables/Madt.aslc:51-52` c'è il commento: "Use 1 for GICR Base Address below, since Windows 10 on Raspberry Pi 3 does not boot otherwise, and this is the value that Microsoft had in their IoT blobs."
-- **Conclusione:** sul Pi 3 **nessuna terza parte** forniva il controller di interrupt. Il supporto al BCM2836 era **dentro l'HAL di Windows** (e nelle prime build ARM64 serviva perfino una patch). Il precedente quindi **non dimostra** che un'estensione HAL possa fornire un controller di interrupt.
-- Il Pi 3 ARM64 avviava i core con PSCI (tramite ATF), non con il parking protocol.
+- **Verified by Opus:** in `tianocore/edk2-platforms` `Platform/RaspberryPi/AcpiTables/Madt.aslc:51-52` there is the comment: "Use 1 for GICR Base Address below, since Windows 10 on Raspberry Pi 3 does not boot otherwise, and this is the value that Microsoft had in their IoT blobs."
+- **Conclusion:** on the Pi 3 **no third party** provided the interrupt controller. The BCM2836 support was **inside Windows' HAL** (and the first ARM64 builds even needed a patch). The precedent therefore **does not prove** that a HAL extension can provide an interrupt controller.
+- The ARM64 Pi 3 started the cores with PSCI (through ATF), not with the parking protocol.
 
-### 2026-10-13: A11 completato (#19), estensione HAL timer sul watchdog
+### 2026-10-13: A11 completed (#19), timer HAL extension on the watchdog
 - File: `docs/design/watariboot/HALEXT-TIMER-WDT.md`.
-- **Verificato da Opus:** `ms-iot/imx-iotcore@public_preview hals/halext/HalExtiMX7Timers` esiste (`HalExtension.c`, `.inf`, `.def`).
-- L'interfaccia timer osservata nell'esempio i.MX: `RegisterResourceDescriptor` + `TIMER_INITIALIZATION_BLOCK` + 5 callback. Il GSI dell'interrupt viene consegnato da un controller che va fornito a parte.
-- **Dipendenza critica:** l'IRQ 338 del watchdog è dell'AIC. Senza un controller non-GIC riconosciuto da Windows il timer non scatta mai. Il "bark" di WD0 non è mai stato usato in codice pubblico (test hardware H1).
-- **NUOVA PISTA (verificata da Opus):** `Wack0/NtHalExts` (Unlicense, push 2024-09, "Windows 8.x HAL extensions") contiene **`halextbcm2709`**, un'estensione HAL di terze parti per il controller di interrupt del BCM2709 (Raspberry Pi 2, **senza GIC**) su Windows 8.x ARM32. **Se confermato, è la prova che un controller di interrupt può essere fornito da un'estensione HAL** (almeno su Windows 8 ARM32). Da studiare per prima cosa. Attenzione: include header DDK Microsoft, quindi si legge senza copiare niente.
+- **Verified by Opus:** `ms-iot/imx-iotcore@public_preview hals/halext/HalExtiMX7Timers` exists (`HalExtension.c`, `.inf`, `.def`).
+- The timer interface observed in the i.MX example: `RegisterResourceDescriptor` + `TIMER_INITIALIZATION_BLOCK` + 5 callbacks. The interrupt's GSI is delivered by a controller that must be provided separately.
+- **Critical dependency:** the watchdog's IRQ 338 belongs to the AIC. Without a non-GIC controller recognized by Windows the timer never fires. WD0's "bark" has never been used in public code (hardware test H1).
+- **NEW LEAD (verified by Opus):** `Wack0/NtHalExts` (Unlicense, push 2024-09, "Windows 8.x HAL extensions") contains **`halextbcm2709`**, a third-party HAL extension for the BCM2709 interrupt controller (Raspberry Pi 2, **without GIC**) on Windows 8.x ARM32. **If confirmed, it is proof that an interrupt controller can be provided by a HAL extension** (at least on Windows 8 ARM32). To be studied first. Warning: it includes Microsoft DDK headers, so it is read without copying anything.
 
-### 2026-10-13: A7 completato (#10), verdetto preliminare
+### 2026-10-13: A7 completed (#10), preliminary verdict
 - File: `re/f0-preliminary-verdict.md`, `docs/adr/draft-phase0-preliminary-outcome.md`.
-- Stime (solo interrupt, timer e core): nativo puro **circa 12%**, piano B EL2 circa 53%, altro circa 35%.
-- **Nota di Opus:** le stime sono state fatte **prima** della scoperta di `halextbcm2709`, che alza la probabilità del ramo "controller registrabile via estensione HAL" (stimato al 20% in A7). Vanno ricalcolate dopo averlo studiato.
-- Raccomandazione: Gate B a basso costo con priorità a V4 e V6; leggere l'header del WDK `nthalext.h` (serve l'ok dell'utente per il download); soglia del piano B decisa dall'utente.
+- Estimates (interrupts, timer and cores only): pure native **about 12%**, Plan B EL2 about 53%, other about 35%.
+- **Opus's note:** the estimates were made **before** the discovery of `halextbcm2709`, which raises the probability of the branch "controller registrable via HAL extension" (estimated at 20% in A7). They must be recalculated after studying it.
+- Recommendation: low-cost Gate B with priority on V4 and V6; read the WDK header `nthalext.h` (the user's OK is needed for the download); Plan B threshold decided by the user.
 
-## Riepilogo del terzo giro
-- Gate A **completo**: A1–A11 tutti `[x]`.
-- Prossimo passo: studiare `Wack0/NtHalExts/halextbcm2709`, poi il Gate B.
+## Summary of the third round
+- Gate A **complete**: A1–A11 all `[x]`.
+- Next step: study `Wack0/NtHalExts/halextbcm2709`, then Gate B.

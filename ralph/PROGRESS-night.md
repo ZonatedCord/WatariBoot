@@ -1,76 +1,76 @@
-# Notte 2026-10-14: diario
+# Night 2026-10-14: diary
 
-Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risultati verificati e i fallimenti (questi anche in docs/FAILURES.md).
+Every overnight run adds here the date and time, the task, what it did, the verified results and the failures (these also in docs/FAILURES.md).
 
-## 2026-10-14 00:15, sessione principale (prima dei task notturni)
-- **N2, preparazione completata** (non ancora eseguita):
-  - `tools/autounattend/autounattend.xml` + README, `tools/make-unattend-iso.sh`, opzione `--unattend` in `tools/run-qemu-windows.sh`;
+## 2026-10-14 00:15, main session (before the overnight tasks)
+- **N2, preparation completed** (not yet executed):
+  - `tools/autounattend/autounattend.xml` + README, `tools/make-unattend-iso.sh`, option `--unattend` in `tools/run-qemu-windows.sh`;
   - ISO `WATARI_DATA/vm/unattend.iso` (900 KB).
-  - **Verificato da Opus:** `xmllint` OK; 6 componenti con `processorArchitecture="arm64"`; la ISO esiste.
-  - Ipotesi: chiavi LabConfig/BypassNRO (non documentate da Microsoft), GVLK di Windows 11 Pro solo per scegliere l'edizione.
-  - Credenziali della VM di test: `watari` / `watari`.
-- **N1, in corso:** un agente della sessione principale stava ancora diagnosticando HVF (log `WatariBoot-data/logs/dbg-*.log`, `tools/edk2-timer-imask.patch`). Se non trovi un risultato in questo diario, rifai N1 da capo.
-- **Prossimo:** lanciare N2 con `tools/run-qemu-windows.sh --unattend` (HVF se N1 è riuscito, altrimenti `--tcg`).
+  - **Verified by Opus:** `xmllint` OK; 6 components with `processorArchitecture="arm64"`; the ISO exists.
+  - Hypothesis: LabConfig/BypassNRO keys (not documented by Microsoft), GVLK of Windows 11 Pro only to choose the edition.
+  - Test VM credentials: `watari` / `watari`.
+- **N1, in progress:** an agent of the main session was still diagnosing HVF (log `WatariBoot-data/logs/dbg-*.log`, `tools/edk2-timer-imask.patch`). If you do not find a result in this diary, redo N1 from scratch.
+- **Next:** launch N2 with `tools/run-qemu-windows.sh --unattend` (HVF if N1 succeeded, otherwise `--tcg`).
 
-## 2026-10-14 ~00:10: N1 RISOLTO (sessione principale)
-- Causa: `ID_AA64PFR0_EL1.GIC=0` sotto HVF, per cui EDK2 sceglieva il driver GICv2 (dettagli in F-08). Patch: `tools/edk2-hvf-gicv3.patch`, applicata da `build-edk2.sh`.
-- **Verificato da Opus:** screenshot `win-hvf-180s.png` = Setup di Windows 11, "Seleziona le impostazioni della lingua", con HVF.
-- Corretto anche `run-qemu-windows.sh` (array vuoto con `set -u` su bash 3.2).
+## 2026-10-14 ~00:10: N1 SOLVED (main session)
+- Cause: `ID_AA64PFR0_EL1.GIC=0` under HVF, so EDK2 chose the GICv2 driver (details in F-08). Patch: `tools/edk2-hvf-gicv3.patch`, applied by `build-edk2.sh`.
+- **Verified by Opus:** screenshot `win-hvf-180s.png` = Windows 11 Setup, "Select language settings", with HVF.
+- Also fixed `run-qemu-windows.sh` (empty array with `set -u` on bash 3.2).
 
-## N2: installazione automatica Windows 11 (HVF + unattend) - avviata 00:14
-- Stato alle 00:23: **in corso**, senza domande. Il testo di Setup è "Installazione di Windows 11 in corso", 13% (00:18) e poi 22% (00:23). L'unattend è stato letto: partizionamento e chiave accettati (**verificato** dagli screenshot).
-- QEMU PID **1173** (file `run/n2-qemu.pid`), headless, HVF, monitor `run/qemu-mon.sock`, seriale `logs/n2-serial.log`, comando in `logs/n2-cmd.txt`. Il disco `vm/win11.qcow2` era già quasi vuoto (384 KB), non è stato ricreato.
-- Screenshot: `logs/screens/n2-boot.png` (00:18, 13%), `logs/screens/n2-0023.png` (00:23, 22%) in `/tmp/watari-data/` (= WatariBoot-data).
-- Come controllare: `echo "screendump /tmp/watari-data/logs/screens/n2-HHMM.ppm" | nc -U /tmp/watari-data/run/qemu-mon.sock -w1`, poi `sips -s format png ... --out ...png`.
-- Finita quando: schermata di login/desktop dell'utente `watari` (password `watari`, solo VM) e `C:\watari-ok.txt` creato dai FirstLogonCommands (dalla VM; non c'è rete). Riavvii multipli attesi. Se resta su "Press any key" dopo un riavvio, non premere nulla: parte dal disco.
-- Se si rompe: ferma con `echo quit | nc -U /tmp/watari-data/run/qemu-mon.sock -w1` e documenta lo screenshot in `docs/FAILURES.md`.
+## N2: automatic Windows 11 installation (HVF + unattend) - started 00:14
+- State at 00:23: **in progress**, without questions. Setup's text is "Installing Windows 11", 13% (00:18) and then 22% (00:23). The unattend was read: partitioning and key accepted (**verified** from the screenshots).
+- QEMU PID **1173** (file `run/n2-qemu.pid`), headless, HVF, monitor `run/qemu-mon.sock`, serial `logs/n2-serial.log`, command in `logs/n2-cmd.txt`. The disk `vm/win11.qcow2` was already almost empty (384 KB), it was not recreated.
+- Screenshots: `logs/screens/n2-boot.png` (00:18, 13%), `logs/screens/n2-0023.png` (00:23, 22%) in `/tmp/watari-data/` (= WatariBoot-data).
+- How to check: `echo "screendump /tmp/watari-data/logs/screens/n2-HHMM.ppm" | nc -U /tmp/watari-data/run/qemu-mon.sock -w1`, then `sips -s format png ... --out ...png`.
+- Done when: login screen/desktop of user `watari` (password `watari`, VM only) and `C:\watari-ok.txt` created by the FirstLogonCommands (from inside the VM; there is no network). Multiple reboots expected. If it stays on "Press any key" after a reboot, press nothing: it boots from the disk.
+- If it breaks: stop with `echo quit | nc -U /tmp/watari-data/run/qemu-mon.sock -w1` and document the screenshot in `docs/FAILURES.md`.
 
-## 2026-10-14 00:25: N2 in corso (verificato da Opus)
-- Lo screenshot `logs/screens/n2-0023.png` mostra "Installazione di Windows 11 in corso... Completamento operazione: 22%" con HVF, senza nessuna domanda: l'unattend funziona. QEMU ha PID 1173 (in `run/n2-qemu.pid`), è vivo e staccato dalla sessione.
+## 2026-10-14 00:25: N2 in progress (verified by Opus)
+- The screenshot `logs/screens/n2-0023.png` shows "Installing Windows 11... Completing operation: 22%" with HVF, without any question: the unattend works. QEMU has PID 1173 (in `run/n2-qemu.pid`), is alive and detached from the session.
 
-## 2026-10-14 02:30-02:45: N2 RIUSCITO (esecuzione notturna 1)
-- Ripresa: QEMU PID 1173 vivo dopo 2h15 di HVF. Lo screenshot `n2-0230.png` era **tutto nero**, il disco non scriveva più da minuti e la seriale era ferma dalle 01:29: sembrava un blocco.
-- Era invece lo **schermo spento per inattività** di Windows (nessun display driver reale, ramfb). Un `sendkey shift` dal monitor lo ha risvegliato: `n2-0236.png` (copia `n2-SUCCESSO-desktop.png`) mostra il **desktop di Windows 11 con Start aperto e utente `watari`**, ora 00:34 della VM, 14/10/2026. **Verificato da Opus guardando lo screenshot.**
-- Non verificato: l'esistenza di `C:\watari-ok.txt`, testsigning e debug seriale (non c'è accesso alla VM). Il file seriale `n2-serial.log` contiene solo il log di EDK2 (nessun output del kernel debugger, ipotesi: serve la verifica in V1/N4).
-- Spenta con `system_powerdown`: chiusura pulita, QEMU terminato. `vm/win11.qcow2` ≈ 14 GB = Windows installato e pronto da riavviare.
-- Durata totale installazione con HVF: circa 1h30-2h (da 00:14 a ~01:30 desktop pronto).
-- **N3 delegato a un agente Sonnet** (acpigen), in corso.
+## 2026-10-14 02:30-02:45: N2 SUCCEEDED (overnight run 1)
+- Resumption: QEMU PID 1173 alive after 2h15 of HVF. The screenshot `n2-0230.png` was **completely black**, the disk had not been written for minutes and the serial had been still since 01:29: it looked like a hang.
+- It was instead Windows' **screen turned off for inactivity** (no real display driver, ramfb). A `sendkey shift` from the monitor woke it up: `n2-0236.png` (copy `n2-SUCCESSO-desktop.png`) shows the **Windows 11 desktop with Start open and user `watari`**, VM time 00:34, 14/10/2026. **Verified by Opus by looking at the screenshot.**
+- Not verified: the existence of `C:\watari-ok.txt`, testsigning and serial debugging (there is no access to the VM). The serial file `n2-serial.log` contains only the EDK2 log (no kernel debugger output, hypothesis: verification needed in V1/N4).
+- Shut down with `system_powerdown`: clean shutdown, QEMU terminated. `vm/win11.qcow2` ≈ 14 GB = Windows installed and ready to reboot.
+- Total installation duration with HVF: about 1h30-2h (from 00:14 to ~01:30 desktop ready).
+- **N3 delegated to a Sonnet agent** (acpigen), in progress.
 
-## 2026-10-14 ~02:55: N3 FATTO (agente Sonnet, verificato da Opus)
-- `make -C tools/acpigen clean && make test` rifatto da Opus: **TUTTI I TEST OK** (7 test). Nuovi: FADT (HW_REDUCED_ACPI, PSCI=0), DBG2 (PL011), modello `qemu-virt` (CLI `-m`), parking v1 con pagine distinte, boot CPU per prima, GICR=1, niente GICD segnaposto.
-- Verificato dall'agente con `-machine dumpdtb`+`dtc`: MPIDR 0..3, GICD 0x08000000, GICR 0x080A0000, timer GSIV 29/30/27/26, PL011 0x09000000.
-- **Ipotesi aperte:** layout FADT/DBG2/GICR Structure scritto a memoria dalla spec ACPI 6.5 (`Acpi65.h` non confrontato); flag GTDT qemu-virt solo ALWAYS_ON (non active-low come chiesto: il DT dice active-high); parking con PSCI=0 su qemu-virt anche se QEMU usa PSCI.
-- Passi falsi dell'agente: `find /` troppo ampia (nessun danno), un `sed` fallito e rifatto.
-- **Prossimo: N4** (driver DXE WatariAcpiOverride in `edk2-apple/WatariQemuPkg`).
+## 2026-10-14 ~02:55: N3 DONE (Sonnet agent, verified by Opus)
+- `make -C tools/acpigen clean && make test` re-run by Opus: **ALL TESTS OK** (7 tests). New: FADT (HW_REDUCED_ACPI, PSCI=0), DBG2 (PL011), `qemu-virt` model (CLI `-m`), parking v1 with distinct pages, boot CPU first, GICR=1, no placeholder GICD.
+- Verified by the agent with `-machine dumpdtb`+`dtc`: MPIDR 0..3, GICD 0x08000000, GICR 0x080A0000, timer GSIV 29/30/27/26, PL011 0x09000000.
+- **Open hypotheses:** FADT/DBG2/GICR Structure layout written from memory from the ACPI 6.5 spec (`Acpi65.h` not compared); qemu-virt GTDT flags only ALWAYS_ON (not active-low as requested: the DT says active-high); parking with PSCI=0 on qemu-virt even though QEMU uses PSCI.
+- Agent's missteps: an overly broad `find /` (no damage), a failed `sed` that was redone.
+- **Next: N4** (DXE driver WatariAcpiOverride in `edk2-apple/WatariQemuPkg`).
 
-## 2026-10-14 ~03:30: N4 FATTO a metà (agente Sonnet + verifica Opus)
-- **Build riuscita (verificato):** `edk2-apple/WatariQemuPkg` + `tools/build-edk2-watari.sh`; firmware `WATARI_DATA/vm/QEMU_EFI-watari.fd`. Il driver compila i sorgenti di acpigen senza copiarli (shim `string.h`). Log del driver verificato di persona nel seriale.
-- **Windows con le nostre tabelle: NON parte** (F-11), mentre con il firmware originale arriva al desktop (verificato con screenshot). Non è stato modificato il disco (`snapshot=on`).
-- Incidente dell'agente: ha sovrascritto per errore la build di `build-edk2.sh` e l'ha rigenerata (nessun danno, la VM usa copie).
-- Il seriale mostra righe con `\SystemRoot\system32\ntoskrnl.exe` ripetute: ipotesi, traffico del debug del kernel su seriale (testsigning/debug quindi attivi); non verificato.
-- **Ripartire da:** F-11, ipotesi 1 (parking disattivato nel modello qemu-virt).
-- Tutti i QEMU sono chiusi. Nessun download/installazione. `INSTALLED.md`: nuovi file in `edk2-apple/`, `tools/build-edk2-watari.sh`, `WATARI_DATA/build-watari/` e `vm/QEMU_EFI-watari.fd`.
+## 2026-10-14 ~03:30: N4 HALF DONE (Sonnet agent + Opus verification)
+- **Build succeeded (verified):** `edk2-apple/WatariQemuPkg` + `tools/build-edk2-watari.sh`; firmware `WATARI_DATA/vm/QEMU_EFI-watari.fd`. The driver compiles acpigen's sources without copying them (`string.h` shim). Driver log verified in person in the serial.
+- **Windows with our tables: does NOT boot** (F-11), while with the original firmware it reaches the desktop (verified with screenshots). The disk was not modified (`snapshot=on`).
+- Agent incident: it accidentally overwrote the `build-edk2.sh` build and regenerated it (no damage, the VM uses copies).
+- The serial shows repeated lines with `\SystemRoot\system32\ntoskrnl.exe`: hypothesis, kernel debug traffic over serial (testsigning/debug therefore active); not verified.
+- **Resume from:** F-11, hypothesis 1 (parking disabled in the qemu-virt model).
+- All QEMUs are closed. No downloads/installations. `INSTALLED.md`: new files in `edk2-apple/`, `tools/build-edk2-watari.sh`, `WATARI_DATA/build-watari/` and `vm/QEMU_EFI-watari.fd`.
 
-## 2026-10-14 (esecuzione notturna 2): nessun task aperto
-- N1-N4 tutti spuntati in NIGHT.md; branch già pushato, PR #27 già aperta, nessun QEMU attivo. Nessuna azione. Ripartire da F-11 (ipotesi 1: parking disattivato in qemu-virt) in una sessione con Marco.
+## 2026-10-14 (overnight run 2): no open tasks
+- N1-N4 all ticked in NIGHT.md; branch already pushed, PR #27 already open, no active QEMU. No action. Resume from F-11 (hypothesis 1: parking disabled in qemu-virt) in a session with Marco.
 
-## 2026-10-14, esecuzione notturna 3 (chiusura): RIEPILOGO PER MARCO
-Nessun task aperto, nessun QEMU acceso (verificato con `pgrep`). Nessun download.
+## 2026-10-14, overnight run 3 (closing): SUMMARY FOR MARCO
+No open tasks, no QEMU running (verified with `pgrep`). No downloads.
 
-**Cosa è riuscito (con evidenza)**
-- N1, HVF funzionante: causa `ID_AA64PFR0_EL1.GIC=0` sotto HVF, patch `tools/edk2-hvf-gicv3.patch` (F-08). Screenshot `logs/screens/win-hvf-180s.png` (Setup di Windows 11).
-- N2, installazione automatica di Windows 11 ARM64 con HVF, senza domande, ~1h30. Screenshot `n2-0023.png` (22%) e `n2-SUCCESSO-desktop.png` (desktop, utente `watari`). Disco: `vm/win11.qcow2` (~14 GB).
-- N3, `tools/acpigen` corretto (parking v1, boot CPU, GICR, FADT, DBG2, modello `qemu-virt`): `make -C tools/acpigen test` verde, 7 test.
-- N4, build del driver `WatariAcpiOverride` (`edk2-apple/WatariQemuPkg`, `tools/build-edk2-watari.sh`): compila e gira (log seriale).
+**What succeeded (with evidence)**
+- N1, HVF working: cause `ID_AA64PFR0_EL1.GIC=0` under HVF, patch `tools/edk2-hvf-gicv3.patch` (F-08). Screenshot `logs/screens/win-hvf-180s.png` (Windows 11 Setup).
+- N2, automatic installation of Windows 11 ARM64 with HVF, without questions, ~1h30. Screenshots `n2-0023.png` (22%) and `n2-SUCCESSO-desktop.png` (desktop, user `watari`). Disk: `vm/win11.qcow2` (~14 GB).
+- N3, `tools/acpigen` fixed (parking v1, boot CPU, GICR, FADT, DBG2, `qemu-virt` model): `make -C tools/acpigen test` green, 7 tests.
+- N4, build of the `WatariAcpiOverride` driver (`edk2-apple/WatariQemuPkg`, `tools/build-edk2-watari.sh`): it compiles and runs (serial log).
 
-**Cosa è fallito / non verificato**
-- **F-11:** con le nostre MADT+GTDT Windows si blocca dopo `ntoskrnl.exe` (screenshot `n4w-c.png`); con il firmware originale arriva al desktop (`n4w-base.png`). Sospetto principale: parking protocol senza FADT nostra.
-- **F-10:** schermo nero scambiato per blocco (era lo schermo spento per inattività). **F-09:** download fuori regola degli agenti.
-- Non verificati: `C:\watari-ok.txt`, testsigning, debug seriale del kernel; layout FADT/DBG2/GICR scritto dalla spec a memoria.
+**What failed / was not verified**
+- **F-11:** with our MADT+GTDT Windows hangs after `ntoskrnl.exe` (screenshot `n4w-c.png`); with the original firmware it reaches the desktop (`n4w-base.png`). Main suspicion: parking protocol without our own FADT.
+- **F-10:** black screen mistaken for a hang (it was the screen turned off for inactivity). **F-09:** agents' downloads outside the rules.
+- Not verified: `C:\watari-ok.txt`, testsigning, kernel serial debugging; FADT/DBG2/GICR layout written from memory from the spec.
 
-**Decisioni per Marco**
-1. Merge della PR #27 (non fatto da me).
-2. Quale ipotesi di F-11 provare per prima (consiglio: parking disattivato, poi FADT nostra).
-3. Tenere o togliere `vm/win11.qcow2` (14 GB) e `WATARI_DATA/build-watari/`: elenco in `docs/INSTALLED.md`.
+**Decisions for Marco**
+1. Merge of PR #27 (not done by me).
+2. Which F-11 hypothesis to try first (advice: parking disabled, then our own FADT).
+3. Keep or remove `vm/win11.qcow2` (14 GB) and `WATARI_DATA/build-watari/`: list in `docs/INSTALLED.md`.
 
-**Da dove ripartire:** F-11, ipotesi 1, con `tools/build-edk2-watari.sh` e il disco di N2 (usare `snapshot=on`).
+**Where to resume:** F-11, hypothesis 1, with `tools/build-edk2-watari.sh` and the N2 disk (use `snapshot=on`).

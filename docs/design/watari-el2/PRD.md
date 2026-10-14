@@ -1,123 +1,123 @@
-# PRD: Watari EL2 (strato EL2 minimo per Windows 11 ARM64 su Apple M1)
+# PRD: Watari EL2 (minimal EL2 layer for Windows 11 ARM64 on Apple M1)
 
-- Progetto: Watari Boot, sottosistema **Watari EL2** · Data: 2026-10-14 · Versione: 0.1 · Stato: draft
-- Documenti collegati: [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · [DESIGN-STATUS](DESIGN-STATUS.md)
-- ADR di riferimento: `docs/adr/draft-plan-b-el2-layer.md` (decisione di Marco), `docs/adr/draft-el2-base-m1n1-or-new.md`, `docs/adr/draft-el2-license.md`
-- Marcatura: ogni affermazione tecnica è **[verificato: fonte]** oppure **[ipotesi]**. Le fonti `re/*` sono quelle del repository; le fonti web sono state lette in sola lettura il 2026-10-14.
+- Project: Watari Boot, subsystem **Watari EL2** · Date: 2026-10-14 · Version: 0.1 · Status: draft
+- Linked documents: [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · [DESIGN-STATUS](DESIGN-STATUS.md)
+- Reference ADRs: `docs/adr/draft-plan-b-el2-layer.md` (Marco's decision), `docs/adr/draft-el2-base-m1n1-or-new.md`, `docs/adr/draft-el2-license.md`
+- Marking: every technical statement is either **[verified: source]** or **[hypothesis]**. The `re/*` sources are those of the repository; the web sources were read read-only on 2026-10-14.
 
-## 1. Problema
-Windows 11 ARM64 non parte sul M1 in modo nativo: richiede un GIC nella MADT (V2, F-14), non esiste un modo ufficiale per fornire un controller non-GIC (F-04, F-05), l'avvio dei core secondari col parking protocol va in deadlock (V3, F-15) e il timer è solo FIQ (F-03, F-13). Il piano B (bozza ADR) sposta il problema sotto Windows: uno strato a EL2 presenta a Windows un sistema "standard" (GICv3 + PSCI + timer come interrupt) e lascia tutto il resto nativo.
+## 1. Problem
+Windows 11 ARM64 does not start natively on the M1: it requires a GIC in the MADT (V2, F-14), there is no official way to provide a non-GIC controller (F-04, F-05), secondary core bring-up with the parking protocol deadlocks (V3, F-15) and the timer is FIQ-only (F-03, F-13). Plan B (draft ADR) moves the problem under Windows: an EL2 layer presents Windows with a "standard" system (GICv3 + PSCI + timer as an interrupt) and leaves everything else native.
 
-Questo documento definisce **cosa deve fare e come si misura** quello strato. Non tratta i driver Windows (ANS, DART, PEP, SPI-HID), che sono un altro sottosistema.
+This document defines **what that layer must do and how it is measured**. It does not cover the Windows drivers (ANS, DART, PEP, SPI-HID), which are another subsystem.
 
-## 2. Obiettivi
-- **O-1** Far partire Windows 11 ARM64 a EL1 sul MacBook Pro 13" M1 (t8103, j293) in dual boot, senza macOS sotto.
-- **O-2** Presentare a Windows un **GICv3 virtuale** abbastanza fedele da non causare hang silenziosi (lezione F-14).
-- **O-3** Fornire **PSCI via HVC** per l'accensione dei core.
-- **O-4** Consegnare il **timer** ARM come interrupt virtuale (PPI) anche se l'hardware lo espone come FIQ.
-- **O-5** Tradurre gli interrupt **AIC → SPI virtuali** e le **SGI → IPI AIC**.
-- **O-6** Restare **minimi**: stage-2 identità, periferiche reali, 1 vCPU = 1 core fisico, nessuno scheduler.
-- **O-7** Poter **sviluppare e testare quasi tutto fuori dal MacBook**: nucleo portabile, backend sostituibili, prototipo in QEMU TCG con `virtualization=on`.
-- **O-8** Rispettare i quattro requisiti trasversali: mantenibilità, riproducibilità, modularità, estensibilità (sezione 7).
+## 2. Goals
+- **O-1** Boot Windows 11 ARM64 at EL1 on the 13" M1 MacBook Pro (t8103, j293) in dual boot, with no macOS underneath.
+- **O-2** Present Windows with a **virtual GICv3** faithful enough not to cause silent hangs (lesson F-14).
+- **O-3** Provide **PSCI via HVC** for core bring-up.
+- **O-4** Deliver the ARM **timer** as a virtual interrupt (PPI) even if the hardware exposes it as a FIQ.
+- **O-5** Translate **AIC → virtual SPI** interrupts and **SGI → AIC IPI**.
+- **O-6** Stay **minimal**: identity stage-2, real peripherals, 1 vCPU = 1 physical core, no scheduler.
+- **O-7** Be able to **develop and test almost everything off the MacBook**: portable core, replaceable backends, prototype in QEMU TCG with `virtualization=on`.
+- **O-8** Meet the four cross-cutting requirements: maintainability, reproducibility, modularity, extensibility (section 7).
 
-## 3. Non-obiettivi
-- Nessun macOS o Linux sotto Windows. Nessun secondo guest. Nessuna migrazione, nessuno snapshot.
-- Nessuna virtualizzazione annidata: Windows non deve usare Hyper-V/VBS/HVCI (non vedrà EL2) [ipotesi: da confermare in M2 che Windows non lo richieda].
-- Nessun ITS, nessun LPI, nessun GICv4, nessun GICv2 legacy. MSI PCIe → SPI è fuori scopo della v1 (c'è solo la MSI Frame "vestigiale" richiesta da F-11).
-- Nessun emulatore di periferiche (virtio, disco, rete, GPU): le periferiche sono reali e pilotate dai driver Windows.
-- Nessun mondo secure / EL3.
-- Nessun supporto a M1 Pro/Max/M2 (AICv2, errata diverse) nella v1: è un **punto di estensione**, non un obiettivo.
-- Nessuna gestione energetica avanzata (sleep profondo, `CPU_SUSPEND` reale): `CPU_SUSPEND` si risolve come WFI.
-- Nessun debugger interattivo (non si riscrive il proxy di m1n1).
-- Il firmware EDK2 per M1 (piattaforma `AppleSiliconPkg`) e `acpigen` sono sottosistemi separati: qui se ne definiscono solo i **contratti** (INTERFACES, sezioni 2 e 9).
+## 3. Non-goals
+- No macOS or Linux under Windows. No second guest. No migration, no snapshots.
+- No nested virtualization: Windows must not use Hyper-V/VBS/HVCI (it will not see EL2) [hypothesis: to be confirmed in M2 that Windows does not require it].
+- No ITS, no LPI, no GICv4, no legacy GICv2. PCIe MSI → SPI is out of scope for v1 (only the "vestigial" MSI Frame required by F-11 is present).
+- No peripheral emulator (virtio, disk, network, GPU): the peripherals are real and driven by the Windows drivers.
+- No secure world / EL3.
+- No support for M1 Pro/Max/M2 (AICv2, different errata) in v1: it is an **extension point**, not a goal.
+- No advanced power management (deep sleep, real `CPU_SUSPEND`): `CPU_SUSPEND` resolves as WFI.
+- No interactive debugger (the m1n1 proxy is not rewritten).
+- The EDK2 firmware for M1 (platform `AppleSiliconPkg`) and `acpigen` are separate subsystems: only their **contracts** are defined here (INTERFACES, sections 2 and 9).
 
-## 4. Utenti e attori
-| Attore | Interesse |
+## 4. Users and actors
+| Actor | Interest |
 |---|---|
-| Marco (sviluppatore, utente finale iniziale) | avviare Windows sul proprio MacBook; sviluppo in QEMU sul Mac host |
-| Ciani (secondo sviluppatore) | lavorare sui moduli indipendenti (vGIC, host test) |
-| Ralph / agenti Sonnet | eseguire task piccoli con test automatici; richiedono test deterministici |
-| Windows 11 ARM64 (attore di sistema) | consumatore dell'interfaccia GICv3/PSCI/timer |
-| EDK2 (attore di sistema) | consumatore dell'handoff a EL1 |
-| m1n1 (attore di sistema) | loader che consegna il controllo a EL2 |
-| Utenti futuri di altri Apple Silicon | estendere con nuovi backend |
+| Marco (developer, initial end user) | boot Windows on his own MacBook; development in QEMU on the host Mac |
+| Ciani (second developer) | work on the independent modules (vGIC, host tests) |
+| Ralph / Sonnet agents | execute small tasks with automated tests; require deterministic tests |
+| Windows 11 ARM64 (system actor) | consumer of the GICv3/PSCI/timer interface |
+| EDK2 (system actor) | consumer of the EL1 hand-off |
+| m1n1 (system actor) | loader that hands control over at EL2 |
+| Future users of other Apple Silicon | extend with new backends |
 
 ## 5. User stories
-- **US-1** Come sviluppatore voglio avviare lo strato in QEMU TCG e vedere sulla seriale il banner, `CurrentEL=2` e la mappa stage-2, per sapere che le fondamenta funzionano.
-- **US-2** Come sviluppatore voglio eseguire i test del vGIC sul Mac host (senza QEMU) in meno di 10 secondi, per fare TDD.
-- **US-3** Come sviluppatore voglio che EDK2 arrivi al boot manager sopra lo strato in QEMU, per validare GICD/GICR/timer/PSCI con un guest vero.
-- **US-4** Come sviluppatore voglio che Windows 11 arrivi alla schermata di blocco sopra lo strato in QEMU TCG con 4 vCPU, per validare la fedeltà.
-- **US-5** Come utente voglio scegliere "Windows" all'avvio del MacBook e arrivare alla schermata di blocco (con tastiera/disco USB), per il traguardo finale della v1.
-- **US-6** Come sviluppatore voglio un log dello strato leggibile anche dopo un blocco, per fare debug dove l'host non c'è.
-- **US-7** Come sviluppatore futuro voglio aggiungere un SoC o un controller (AICv2) scrivendo solo un backend.
+- **US-1** As a developer I want to boot the layer in QEMU TCG and see on the serial port the banner, `CurrentEL=2` and the stage-2 map, so I know the foundations work.
+- **US-2** As a developer I want to run the vGIC tests on the host Mac (without QEMU) in under 10 seconds, to do TDD.
+- **US-3** As a developer I want EDK2 to reach the boot manager on top of the layer in QEMU, to validate GICD/GICR/timer/PSCI with a real guest.
+- **US-4** As a developer I want Windows 11 to reach the lock screen on top of the layer in QEMU TCG with 4 vCPUs, to validate fidelity.
+- **US-5** As a user I want to choose "Windows" when the MacBook boots and reach the lock screen (with a USB keyboard/disk), for the final milestone of v1.
+- **US-6** As a developer I want a layer log that is readable even after a hang, to debug where there is no host.
+- **US-7** As a future developer I want to add an SoC or a controller (AICv2) by writing only a backend.
 
-## 6. Requisiti funzionali
-| ID | Requisito | Modulo (ARCHITECTURE) |
+## 6. Functional requirements
+| ID | Requirement | Module (ARCHITECTURE) |
 |---|---|---|
-| FR-1 | Avviarsi a EL2 sia da m1n1 (payload in stile Linux Image + FDT) sia da QEMU (`-kernel`), inizializzare le CPU e consegnare EDK2 a EL1 con `x0` = FDT | `wel2-boot`, `wel2-fdt` |
-| FR-2 | Stage-2 in identità per RAM e MMIO, con: regione dello strato non mappata, regioni GICD/GICR/MSI virtuali intercettate, attributi MMIO forzati a Device-nGnRnE | `wel2-s2` |
-| FR-3 | Emulare il distributor GICv3 (GICD) con trap di stage-2, con i registri elencati in INTERFACES §4 | `wel2-vgic` |
-| FR-4 | Emulare i redistributor GICv3 (GICR, 2 frame da 64 KB per vCPU) | `wel2-vgic` |
-| FR-5 | Gestire l'interfaccia CPU virtuale: list register `ICH_LR<n>_EL2`, `ICH_HCR_EL2`, `ICH_VMCR_EL2`, maintenance interrupt, in due modalità selezionabili (`HW` e `TRAP_EMULATE`) | `wel2-vgic`, `wel2-cpuif` |
-| FR-6 | Convertire gli interrupt fisici dell'AIC in SPI virtuali (INTID = 32 + n AIC), con mask/unmask coerenti con la semantica level | `wel2-pirq` |
-| FR-7 | Intercettare i timer del guest (FIQ su M1, PPI su QEMU) e iniettarli come PPI virtuali 27 (virtual) e 30 (physical) a livello coerente | `wel2-vtimer` |
-| FR-8 | Tradurre `ICC_SGI1R_EL1`/`ICC_ASGI1R_EL1`/`ICC_SGI0R_EL1` in SGI virtuali pendenti sulle vCPU destinatarie e in IPI fisiche | `wel2-vgic`, `wel2-ipi` |
-| FR-9 | PSCI 1.x via HVC (`VERSION`, `FEATURES`, `CPU_ON`, `CPU_OFF`, `AFFINITY_INFO`, `MIGRATE_INFO_TYPE`, `SYSTEM_OFF`, `SYSTEM_RESET`, `CPU_SUSPEND` come WFI) e SMCCC base; ogni altra funzione risponde `NOT_SUPPORTED` | `wel2-psci` |
-| FR-10 | SMP fino a 8 vCPU, 1 vCPU = 1 core fisico; avvio dei core secondari con meccanismo del backend (spin-table su M1, PSCI SMC di QEMU in TCG) | `wel2-psci`, `wel2-plat-*` |
-| FR-11 | Gestire i trap dei registri di sistema con tabella dichiarativa; `ID_AA64PFR0_EL1.GIC` visto come 1; registri non in tabella: politica default-deny con log (RAZ/WI solo se in lista) | `wel2-trap` |
-| FR-12 | Gestire SError routati a EL2 (errata SEIS del M1): classificare, registrare, e non propagare al guest salvo dichiarazione esplicita | `wel2-trap` |
-| FR-13 | Esporre una MSI Frame (GICv2m) vestigiale, richiesta da Windows (F-11) | `wel2-vgic` (frame MSI) |
-| FR-14 | Log a ring buffer in RAM riservata + seriale + framebuffer opzionale; panic con dump di registri, stato LR e ultimi N eventi | `wel2-log` |
-| FR-15 | Contatori di uscite per causa (EC, sysreg, MMIO, IRQ, FIQ, SGI, MI) leggibili via HVC vendor e stampati periodicamente | `wel2-trap`, `wel2-log` |
-| FR-16 | Backend sostituibili a build-time e a run-time dove possibile: `pirq` (aic-t8103, gic-qemu, fake), `ipi`, `timer-src`, `plat` (qemu-virt, t8103) | `wel2-plat-*` |
+| FR-1 | Boot at EL2 both from m1n1 (payload in the style of Linux Image + FDT) and from QEMU (`-kernel`), initialize the CPUs and hand EDK2 over at EL1 with `x0` = FDT | `wel2-boot`, `wel2-fdt` |
+| FR-2 | Identity stage-2 for RAM and MMIO, with: layer region unmapped, virtual GICD/GICR/MSI regions trapped, MMIO attributes forced to Device-nGnRnE | `wel2-s2` |
+| FR-3 | Emulate the GICv3 distributor (GICD) with stage-2 traps, with the registers listed in INTERFACES §4 | `wel2-vgic` |
+| FR-4 | Emulate the GICv3 redistributors (GICR, 2 frames of 64 KB per vCPU) | `wel2-vgic` |
+| FR-5 | Manage the virtual CPU interface: list registers `ICH_LR<n>_EL2`, `ICH_HCR_EL2`, `ICH_VMCR_EL2`, maintenance interrupt, in two selectable modes (`HW` and `TRAP_EMULATE`) | `wel2-vgic`, `wel2-cpuif` |
+| FR-6 | Convert the physical AIC interrupts into virtual SPIs (INTID = 32 + AIC n), with mask/unmask consistent with level semantics | `wel2-pirq` |
+| FR-7 | Intercept the guest timers (FIQ on M1, PPI on QEMU) and inject them as virtual PPIs 27 (virtual) and 30 (physical) at a consistent level | `wel2-vtimer` |
+| FR-8 | Translate `ICC_SGI1R_EL1`/`ICC_ASGI1R_EL1`/`ICC_SGI0R_EL1` into pending virtual SGIs on the destination vCPUs and into physical IPIs | `wel2-vgic`, `wel2-ipi` |
+| FR-9 | PSCI 1.x via HVC (`VERSION`, `FEATURES`, `CPU_ON`, `CPU_OFF`, `AFFINITY_INFO`, `MIGRATE_INFO_TYPE`, `SYSTEM_OFF`, `SYSTEM_RESET`, `CPU_SUSPEND` as WFI) and base SMCCC; every other function answers `NOT_SUPPORTED` | `wel2-psci` |
+| FR-10 | SMP up to 8 vCPUs, 1 vCPU = 1 physical core; secondary cores started with the backend mechanism (spin-table on M1, QEMU PSCI SMC in TCG) | `wel2-psci`, `wel2-plat-*` |
+| FR-11 | Handle system-register traps with a declarative table; `ID_AA64PFR0_EL1.GIC` seen as 1; registers not in the table: default-deny policy with log (RAZ/WI only if listed) | `wel2-trap` |
+| FR-12 | Handle SErrors routed to EL2 (M1 SEIS errata): classify, record, and do not propagate to the guest unless explicitly declared | `wel2-trap` |
+| FR-13 | Expose a vestigial MSI Frame (GICv2m), required by Windows (F-11) | `wel2-vgic` (MSI frame) |
+| FR-14 | Ring-buffer log in reserved RAM + serial + optional framebuffer; panic with register dump, LR state and last N events | `wel2-log` |
+| FR-15 | Exit counters by cause (EC, sysreg, MMIO, IRQ, FIQ, SGI, MI) readable via vendor HVC and printed periodically | `wel2-trap`, `wel2-log` |
+| FR-16 | Backends replaceable at build time and, where possible, at run time: `pirq` (aic-t8103, gic-qemu, fake), `ipi`, `timer-src`, `plat` (qemu-virt, t8103) | `wel2-plat-*` |
 
-## 7. Requisiti non funzionali
-| ID | Requisito | Misura |
+## 7. Non-functional requirements
+| ID | Requirement | Measure |
 |---|---|---|
-| NFR-1 Prestazioni | Overhead del CPU-bound ≤ 3% rispetto allo stesso guest senza interrupt; ≤ 300 uscite/s/vCPU a Windows inattivo; latenza interrupt periferica (IRQ fisico → ISR del guest) ≤ 20 µs mediana su M1 | misurate in M3 con guest di controllo; soglie **[ipotesi]**, da ricalibrare dopo le misure di M2 (contatori FR-15) |
-| NFR-2 Mantenibilità | ogni modulo ha responsabilità singola dichiarata; funzioni ≤ 80 righe; nessun `TODO` nel ramo principale; errori con codice e log; naming uniforme (INTERFACES §10) | revisione di Opus sul diff; lint (`-Wall -Wextra -Werror`, `clang-tidy` se già presente) |
-| NFR-3 Riproducibilità | build identica bit-a-bit a parità di sorgenti: clang pinnato (versione scritta nel repo), `-ffile-prefix-map`, niente `__DATE__`; test con seed fisso; QEMU 11.1.2 e EDK2 `edk2-stable202608` pinnati; immagini identificate da SHA-256 | `make repro-check` costruisce due volte e confronta gli hash |
-| NFR-4 Modularità | il vGIC non include header di piattaforma; dipendenze solo verso interfacce (`*_ops`); grafo aciclico verificato da script (`tools/check-deps.sh`) | script in CI locale |
-| NFR-5 Estensibilità | aggiungere un SoC = nuova cartella `plat/<soc>` + voce in tabella; aggiungere un dispositivo emulato = registrare una regione MMIO; aggiungere un registro sysreg = una riga di tabella; nessuna modifica a dispatcher o vGIC | esercizio di prova in M3 (aggiunta di un handler fittizio) |
-| NFR-6 Sicurezza hardware | nessuna scrittura al disco o al boot policy dallo strato; solo lettura di ciò che non serve; ogni accesso MMIO fuori mappa → fault registrato, non propagato | revisione + test "accesso non mappato" |
-| NFR-7 Dimensione | ≤ 12.000 righe di C (esclusi test) e immagine ≤ 256 KB senza EDK2 **[ipotesi: KVM vgic ≈ 4-5 mila righe, m1n1 hv ≈ 3.700, `re/planB-feasibility.md` §1-2]** | `cloc` |
-| NFR-8 Licenze | nessun codice copiato da KVM/m1n1/NTASP; header di provenienza sui file che citano fonti (vedi `draft-el2-license.md`) | scansione di similarità + revisione |
-| NFR-9 Osservabilità | ogni hang deve lasciare una traccia: watchdog software per vCPU e dump al timeout | test di fault injection |
+| NFR-1 Performance | CPU-bound overhead ≤ 3% compared to the same guest without interrupts; ≤ 300 exits/s/vCPU with Windows idle; peripheral interrupt latency (physical IRQ → guest ISR) ≤ 20 µs median on M1 | measured in M3 with a control guest; thresholds **[hypothesis]**, to be recalibrated after the M2 measurements (FR-15 counters) |
+| NFR-2 Maintainability | each module has a declared single responsibility; functions ≤ 80 lines; no `TODO` in the main branch; errors with code and log; uniform naming (INTERFACES §10) | Opus review of the diff; lint (`-Wall -Wextra -Werror`, `clang-tidy` if already present) |
+| NFR-3 Reproducibility | bit-for-bit identical build given identical sources: pinned clang (version written in the repo), `-ffile-prefix-map`, no `__DATE__`; tests with fixed seed; QEMU 11.1.2 and EDK2 `edk2-stable202608` pinned; images identified by SHA-256 | `make repro-check` builds twice and compares the hashes |
+| NFR-4 Modularity | the vGIC does not include platform headers; dependencies only toward interfaces (`*_ops`); acyclic graph verified by script (`tools/check-deps.sh`) | script in local CI |
+| NFR-5 Extensibility | adding an SoC = new `plat/<soc>` folder + entry in a table; adding an emulated device = registering an MMIO region; adding a sysreg = one table row; no change to the dispatcher or the vGIC | trial exercise in M3 (adding a dummy handler) |
+| NFR-6 Hardware safety | no write to the disk or boot policy from the layer; read only what is needed; every out-of-map MMIO access → recorded fault, not propagated | review + "unmapped access" test |
+| NFR-7 Size | ≤ 12,000 lines of C (excluding tests) and image ≤ 256 KB without EDK2 **[hypothesis: KVM vgic ≈ 4-5 thousand lines, m1n1 hv ≈ 3,700, `re/planB-feasibility.md` §1-2]** | `cloc` |
+| NFR-8 Licenses | no code copied from KVM/m1n1/NTASP; provenance headers on files that cite sources (see `draft-el2-license.md`) | similarity scan + review |
+| NFR-9 Observability | every hang must leave a trace: per-vCPU software watchdog and dump at timeout | fault-injection test |
 
-## 8. Criteri di successo per milestone (misurabili)
-Stime di calendario: **[ipotesi]**, un sviluppatore con agenti (vedi `re/planB-feasibility.md` §9: prototipo QEMU 8-12 settimane, hardware altre 14-24).
+## 8. Success criteria per milestone (measurable)
+Calendar estimates: **[hypothesis]**, one developer with agents (see `re/planB-feasibility.md` §9: QEMU prototype 8-12 weeks, hardware another 14-24).
 
-| Milestone | Cosa | Criterio di superamento (tutti) | Stima |
+| Milestone | What | Pass criterion (all) | Estimate |
 |---|---|---|---|
-| **M0 (spike)** | Fondamenta in QEMU TCG | (a) `qemu-system-aarch64 -M virt,virtualization=on,gic-version=3 -cpu max -kernel wel2.elf` stampa banner e `CurrentEL=2`; (b) stage-2 attivo; (c) un payload EL1 di prova (≤ 200 righe asm/C, nel repo) riceve 1 PPI 30 iniettato e fa `ICC_IAR1`/`ICC_EOIR1`; (d) test host del vGIC: ≥ 40 test, 100% verdi, < 10 s | 1-2 sett. |
-| **M1** | EDK2 a EL1 sopra lo strato in QEMU TCG | (a) il nostro EDK2 (`WatariQemuPkg`) arriva al Boot Manager UEFI con `-smp 4`; (b) seriale: `ArmGicDxe` rileva GICv3, `[Bds]BdsWait` termina (regressione F-08); (c) EDK2 esegue `PSCI SYSTEM_RESET` e lo strato lo gestisce; (d) 0 trap non gestiti nel log; (e) 3 esecuzioni consecutive identiche negli eventi chiave | 3-5 sett. |
-| **M2** | Windows 11 ARM64 sopra lo strato in QEMU TCG | (a) il Windows installato (N2/V1) arriva alla schermata di blocco con `-smp 4` (screenshot + log); (b) 4 vCPU accese via `CPU_ON` (4 voci nel log) e nessuna spenta per errore; (c) 0 SError non classificati, 0 trap di sysreg sconosciuti non-RAZ; (d) 30 minuti di inattività senza panic né `0x5C`; (e) tempo di boot ≤ 1,5× quello dello stesso Windows su TCG senza strato (baseline misurata con lo stesso script); (f) test di fedeltà vGIC (TEST_STRATEGY §4) 100% | 5-8 sett. |
-| **M3a** | Strato su M1 con m1n1 e EDK2 | (a) autotest su hardware (SW_SET AIC → vSPI, IPI veloce, timer FIQ → vPPI 30 e 27, `CPU_ON` degli 8 core) 100% verde; (b) EDK2 arriva al UEFI con framebuffer; (c) overhead misurato con guest di controllo | 6-10 sett. |
-| **M3b** | Windows sul MacBook | Windows 11 ARM64 da USB-C arriva alla schermata di blocco, con 8 CPU visibili; 0 panic in 30 minuti | 8-14 sett. |
+| **M0 (spike)** | Foundations in QEMU TCG | (a) `qemu-system-aarch64 -M virt,virtualization=on,gic-version=3 -cpu max -kernel wel2.elf` prints the banner and `CurrentEL=2`; (b) stage-2 active; (c) a test EL1 payload (≤ 200 lines asm/C, in the repo) receives 1 injected PPI 30 and performs `ICC_IAR1`/`ICC_EOIR1`; (d) vGIC host tests: ≥ 40 tests, 100% green, < 10 s | 1-2 wks |
+| **M1** | EDK2 at EL1 on top of the layer in QEMU TCG | (a) our EDK2 (`WatariQemuPkg`) reaches the UEFI Boot Manager with `-smp 4`; (b) serial: `ArmGicDxe` detects GICv3, `[Bds]BdsWait` terminates (F-08 regression); (c) EDK2 executes `PSCI SYSTEM_RESET` and the layer handles it; (d) 0 unhandled traps in the log; (e) 3 consecutive runs identical in the key events | 3-5 wks |
+| **M2** | Windows 11 ARM64 on top of the layer in QEMU TCG | (a) the installed Windows (N2/V1) reaches the lock screen with `-smp 4` (screenshot + log); (b) 4 vCPUs powered on via `CPU_ON` (4 entries in the log) and none turned off by mistake; (c) 0 unclassified SErrors, 0 unknown non-RAZ sysreg traps; (d) 30 minutes of idling with no panic or `0x5C`; (e) boot time ≤ 1.5× that of the same Windows on TCG without the layer (baseline measured with the same script); (f) vGIC fidelity tests (TEST_STRATEGY §4) 100% | 5-8 wks |
+| **M3a** | Layer on M1 with m1n1 and EDK2 | (a) on-hardware self-tests (AIC SW_SET → vSPI, fast IPI, timer FIQ → vPPI 30 and 27, `CPU_ON` of the 8 cores) 100% green; (b) EDK2 reaches UEFI with framebuffer; (c) overhead measured with a control guest | 6-10 wks |
+| **M3b** | Windows on the MacBook | Windows 11 ARM64 from USB-C reaches the lock screen, with 8 CPUs visible; 0 panics in 30 minutes | 8-14 wks |
 
-Il passaggio da una milestone alla successiva richiede la revisione di Opus e la conferma di Marco per qualsiasi operazione sul disco/boot (M3 in poi).
+Moving from one milestone to the next requires Opus's review and Marco's confirmation for any disk/boot operation (M3 onward).
 
-## 9. Success metrics (oltre ai criteri)
-- Fedeltà: percentuale di letture MMIO dell'oracolo (trace di QEMU GICv3) riprodotte correttamente = 100% sui registri statici.
-- Stabilità: ore di Windows senza panic dello strato (obiettivo M3b: ≥ 2 h).
-- Diagnosticabilità: ogni panic fornisce causa, PC, EC, ultimi 64 eventi (verificato con fault injection).
-- Tracciabilità: ogni FR/NFR ha almeno un modulo e un test (tabella in ARCHITECTURE §10).
+## 9. Success metrics (beyond the criteria)
+- Fidelity: percentage of oracle MMIO reads (QEMU GICv3 trace) reproduced correctly = 100% on static registers.
+- Stability: hours of Windows without a layer panic (M3b target: ≥ 2 h).
+- Diagnosability: every panic provides cause, PC, EC, last 64 events (verified with fault injection).
+- Traceability: every FR/NFR has at least one module and one test (table in ARCHITECTURE §10).
 
-## 10. Scope e out-of-scope (riepilogo)
-- **In scope:** un solo SoC (t8103), un solo guest, GICv3 senza ITS, PSCI, timer, SGI, SMP fino a 8, banco QEMU TCG.
-- **Fuori scope:** vedi §3; in più ANS/DART/PEP/SPI-HID e la piattaforma EDK2 per M1.
+## 10. Scope and out-of-scope (summary)
+- **In scope:** a single SoC (t8103), a single guest, GICv3 without ITS, PSCI, timer, SGI, SMP up to 8, QEMU TCG bench.
+- **Out of scope:** see §3; additionally ANS/DART/PEP/SPI-HID and the EDK2 platform for M1.
 
-## 11. Dipendenze con gli altri sottosistemi
-| Da | Cosa serve | Stato |
+## 11. Dependencies on the other subsystems
+| From | What is needed | Status |
 |---|---|---|
-| `tools/acpigen` | modello `qemu-virt` con FADT PSCI+HVC (già in uso nel controllo T1 di F-15); modello nuovo `t8103-el2` per M3 | parziale |
-| `edk2-apple/WatariQemuPkg` | firmware che accetti `x0 = FDT` e parta a EL1 | esiste per QEMU |
-| EDK2 per M1 | lettura FDT (non ADT) per la mappa di piattaforma | da fare (domanda non bloccante Q-1 in RISKS §8) |
-| Asahi installer / m1n1 | caricare lo strato come payload | da verificare in M3a |
+| `tools/acpigen` | `qemu-virt` model with FADT PSCI+HVC (already in use in the T1 control of F-15); new `t8103-el2` model for M3 | partial |
+| `edk2-apple/WatariQemuPkg` | firmware that accepts `x0 = FDT` and starts at EL1 | exists for QEMU |
+| EDK2 for M1 | FDT reading (not ADT) for the platform map | to do (non-blocking question Q-1 in RISKS §8) |
+| Asahi installer / m1n1 | load the layer as a payload | to be verified in M3a |
 
-## 12. Rischi
-Sintesi (dettaglio in [RISKS](RISKS.md)): errata SEIS del M1; fedeltà del vGIC; E2H bloccato a 1 sul M1; percorso FIQ del timer non testabile in QEMU; prestazioni del trap-emulate; debug senza host; licenze (m1n1 ≥ 2.0.0 è GPL).
+## 12. Risks
+Summary (detail in [RISKS](RISKS.md)): M1 SEIS errata; vGIC fidelity; E2H locked to 1 on the M1; timer FIQ path not testable in QEMU; trap-emulate performance; debugging without a host; licenses (m1n1 ≥ 2.0.0 is GPL).
 
-## 13. Riferimenti agli ADR
-- `docs/adr/draft-plan-b-el2-layer.md` (accettato da Marco) · `docs/adr/draft-el2-base-m1n1-or-new.md` · `docs/adr/draft-el2-license.md`.
-- ADR-0001 (nativo senza hypervisor) è modificato dalla bozza del piano B; ADR-0007 (strada indipendente da NTASP) resta valido.
+## 13. References to the ADRs
+- `docs/adr/draft-plan-b-el2-layer.md` (accepted by Marco) · `docs/adr/draft-el2-base-m1n1-or-new.md` · `docs/adr/draft-el2-license.md`.
+- ADR-0001 (native without hypervisor) is amended by the plan B draft; ADR-0007 (path independent from NTASP) remains valid.

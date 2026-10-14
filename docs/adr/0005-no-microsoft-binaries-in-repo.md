@@ -1,19 +1,19 @@
-# ADR-0005: Nessun binario o codice Microsoft nel repository
+# ADR-0005: No Microsoft binaries or code in the repository
 
-- Stato: Accettata (vincolo in `CLAUDE.md`)
-- Data: 2026-10-12 · Collegamenti: [PRD NFR-6](../design/watariboot/PRD.md), [RISKS R-13](../design/watariboot/RISKS.md)
+- Status: Accepted (constraint in `CLAUDE.md`)
+- Date: 2026-10-12 · Links: [PRD NFR-6](../design/watariboot/PRD.md), [RISKS R-13](../design/watariboot/RISKS.md)
 
-## Contesto
-Servono ntoskrnl ARM64, PDB pubblici, ISO e dump per analisi e test. Il piano cita la liceita' del reverse engineering per interoperabilita' nell'UE (Dir. 2009/24/CE, art. 6) [non verificato qui; non e' consulenza legale]. Il repository e' pensato per diventare pubblico.
+## Context
+ARM64 ntoskrnl, public PDBs, ISOs and dumps are needed for analysis and testing. The plan cites the lawfulness of reverse engineering for interoperability in the EU (Dir. 2009/24/EC, art. 6) [not verified here; this is not legal advice]. The repository is intended to become public.
 
-## Decisione
-Nessun binario, PDB, ISO, dump o grandi blocchi di codice decompilato Microsoft nel repo. I file stanno in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato). `re/` contiene note con parole nostre e indirizzi. `.gitignore` esclude tali file. Si registrano nome, versione e SHA-256 (non il contenuto) per la riproducibilita'.
+## Decision
+No Microsoft binaries, PDBs, ISOs, dumps or large blocks of decompiled code in the repo. The files live in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (external disk; it must be connected). `re/` contains notes in our own words, with addresses. `.gitignore` excludes such files. Name, version and SHA-256 (not the content) are recorded for reproducibility.
 
-## Alternative
-- Includere i binari in un repo privato: scartato, rischio di diffusione accidentale e problemi di redistribuzione.
-- Git LFS privato: stesso rischio.
+## Alternatives (rejected)
+- Include the binaries in a private repo: rejected, risk of accidental distribution and redistribution problems.
+- Private Git LFS: same risk.
 
-## Conseguenze
-- Riproducibilita' richiede che chi ricostruisce scarichi i file da fonti ufficiali: serve script e hash.
-- Le prove di Fase 0 sono solo descritte, non allegate; i report citano indirizzi e funzioni.
-- Possibile perdita di dettaglio nelle prove: compensata da note precise e versione/hash.
+## Consequences
+- Reproducibility requires whoever rebuilds to download the files from official sources: a script and hashes are needed.
+- Phase 0 evidence is only described, not attached; reports cite addresses and functions.
+- Possible loss of detail in the evidence: offset by precise notes and version/hash.

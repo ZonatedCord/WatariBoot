@@ -1,61 +1,61 @@
-# Fase 0: task per Ralph
+# Phase 0: tasks for Ralph
 
-Questa lista la modifica solo Ralph, sul branch `ralph/f0-gate-a`. Si procede in ordine: si prende il primo task non spuntato. Terzo giro: A1, A2 e A4 in parallelo, poi A11 e infine A7 (che dipendono da loro).
-Formato: `- [ ]` da fare, `- [x]` fatto e verificato da Opus, `- [!]` bloccato (motivo in `ralph/PROGRESS-phase0.md`), `- [→]` assegnato a Ciani: **Ralph non lo tocca**.
+This list is edited only by Ralph, on the `ralph/f0-gate-a` branch. Proceed in order: take the first task that is not ticked. Third round: A1, A2 and A4 in parallel, then A11 and finally A7 (which depend on them).
+Format: `- [ ]` to do, `- [x]` done and verified by Opus, `- [!]` blocked (reason in `ralph/PROGRESS-phase0.md`), `- [→]` assigned to Ciani: **Ralph does not touch it**.
 
-## Gate A: niente download, niente installazioni (si possono fare SUBITO)
-Strumenti ammessi: lettura web (WebSearch e WebFetch), `gh api` in sola lettura, scrittura di file nella repo, e gli strumenti già installati (`clang`, `make`, `python3 -I`, `git`).
+## Gate A: no downloads, no installations (can be done RIGHT NOW)
+Allowed tools: web reading (WebSearch and WebFetch), read-only `gh api`, writing files in the repo, and the tools already installed (`clang`, `make`, `python3 -I`, `git`).
 
-- [x] *(issue #4, riassegnata a Ralph)* **A1. Estensioni HAL: documentazione pubblica Microsoft.**
-  Cosa sono, come vengono caricate (tabella CSRT, ID delle risorse), quali interfacce esistono (timer, DMA, *interrupt controller?*), requisiti di firma e test-signing.
-  Fonti ammesse: Microsoft Learn, specifica CSRT, WDK docs, HLK.
+- [x] *(issue #4, reassigned to Ralph)* **A1. HAL extensions: Microsoft public documentation.**
+  What they are, how they are loaded (CSRT table, resource IDs), which interfaces exist (timer, DMA, *interrupt controller?*), signing and test-signing requirements.
+  Allowed sources: Microsoft Learn, CSRT specification, WDK docs, HLK.
   Output: `re/f0-halext-public-docs.md`.
-  Criterio di completamento: ogni affermazione ha una fonte. La domanda *"un'estensione HAL può fornire un controller di interrupt?"* ha una risposta [verificato] oppure è dichiarata non risolta da documentazione pubblica.
-- [x] *(issue #5, riassegnata a Ralph)* **A2. Requisiti ACPI di Windows ARM64.**
-  Tabelle obbligatorie e campi minimi: MADT/GICC, GTDT, FADT, DBG2, SPCR, PPTT. Requisiti BSA/SBSA che Windows impone. Specifica Microsoft del *Multiprocessor Parking Protocol* (versione, layout della mailbox, come si sveglia un core).
+  Completion criterion: every claim has a source. The question *"can a HAL extension provide an interrupt controller?"* has a [verified] answer or is declared unresolved by public documentation.
+- [x] *(issue #5, reassigned to Ralph)* **A2. Windows ARM64 ACPI requirements.**
+  Mandatory tables and minimum fields: MADT/GICC, GTDT, FADT, DBG2, SPCR, PPTT. BSA/SBSA requirements that Windows imposes. Microsoft's specification of the *Multiprocessor Parking Protocol* (version, mailbox layout, how a core is woken).
   Output: `re/f0-acpi-windows-requirements.md`.
-- [x] *(issue #6)* **A3. M1: sorgenti FIQ e alternative in IRQ.**
-  Dal codice Asahi (`irq-apple-aic.c`, m1n1 `aic.c`/`hv_*`, `arch_timer`): elenco di tutte le sorgenti FIQ del t8103 (timer fisico e virtuale, Fast IPI, PMU, uncore). Per ognuna: si può disabilitare o instradare in IRQ? Esistono timer in MMIO alternativi sul SoC? Come funzionano le IPI AIC in IRQ?
-  Output: `re/f0-m1-fiq-irq.md`, con file e righe Asahi citati.
-- [x] *(issue #7, riassegnata a Ralph)* **A4. Il precedente Raspberry Pi 3 (senza GIC).**
-  Come girava Windows (IoT Core / ARM64) sul BCM2836/7 senza GIC, ricostruito da fonti pubbliche: `ms-iot/rpi-iotcore`, `raspberrypi/windows-drivers`, `pftf/RPi3`, `worproject`, forum, ACPI pubblicate (MADT/CSRT del Pi 3).
+- [x] *(issue #6)* **A3. M1: FIQ sources and IRQ alternatives.**
+  From the Asahi code (`irq-apple-aic.c`, m1n1 `aic.c`/`hv_*`, `arch_timer`): list of all the FIQ sources of the t8103 (physical and virtual timer, Fast IPI, PMU, uncore). For each: can it be disabled or routed to IRQ? Are there alternative MMIO timers on the SoC? How do the AIC IPIs work in IRQ?
+  Output: `re/f0-m1-fiq-irq.md`, citing the Asahi files and lines.
+- [x] *(issue #7, reassigned to Ralph)* **A4. The Raspberry Pi 3 precedent (no GIC).**
+  How Windows (IoT Core / ARM64) ran on the BCM2836/7 without a GIC, reconstructed from public sources: `ms-iot/rpi-iotcore`, `raspberrypi/windows-drivers`, `pftf/RPi3`, `worproject`, forums, published ACPI tables (the Pi 3's MADT/CSRT).
   Output: `re/f0-rpi3-precedent.md`.
-  Criterio di completamento: è chiaro, con fonti, se esisteva un'estensione HAL per il controller di interrupt, oppure è dichiarato non determinabile.
-- [x] *(issue #8)* **A5. Progetto dell'esperimento in QEMU (Gate B).**
-  Matrice delle varianti ACPI da provare: (1) baseline con GIC; (2) MADT senza GICD; (3) GICC con il parking protocol; (4) CSRT con un gruppo di risorse nostro. Per ogni variante: cosa si osserva (bugcheck code, output del debugger, se l'estensione viene caricata) e cosa si conclude. Includere il setup di debug (KDNET/seriale) e l'ambiente per compilare un'estensione HAL di prova (WDK in una VM Windows ARM, solo come strumento di sviluppo).
+  Completion criterion: it is clear, with sources, whether a HAL extension for the interrupt controller existed, or it is declared undeterminable.
+- [x] *(issue #8)* **A5. Design of the experiment in QEMU (Gate B).**
+  Matrix of the ACPI variants to try: (1) baseline with GIC; (2) MADT without GICD; (3) GICC with the parking protocol; (4) CSRT with a resource group of our own. For each variant: what is observed (bugcheck code, debugger output, whether the extension is loaded) and what is concluded. Include the debug setup (KDNET/serial) and the environment to build a test HAL extension (WDK in a Windows ARM VM, only as a development tool).
   Output: `docs/design/watariboot/EXPERIMENT-F0.md`.
-  Se i file di A1, A2 e A4 (di Ciani) non sono ancora su `main`, scrivi l'esperimento basandoti su `docs/PLAN.md` e su `docs/design/watariboot/INTERFACES.md`, e segna come [ipotesi] i punti che dipendono da loro.
-- [x] *(issue #9)* **A6. `tools/acpigen`: generatore di tabelle ACPI su host, con test.**
-  Libreria C11 + CLI che, a partire da un modello dati (C o JSON), produce MADT (GICC con i campi del parking protocol), GTDT, PPTT e CSRT in binario, con checksum corretti.
-  - Unit test compilati con `clang` + `make`, già presenti sul sistema: layout e offset dei campi verificati contro la specifica, checksum, casi limite.
-  - Dati t8103 (cluster, MPIDR) presi dal DTS di Asahi via `gh api` e citati.
-  - Header SPDX su ogni file.
-  Criterio di completamento: `make -C tools/acpigen test` verde.
-- [x] *(issue #10)* **A7. Verdetto preliminare.** **Prerequisito:** `re/f0-halext-public-docs.md`, `re/f0-acpi-windows-requirements.md` e `re/f0-rpi3-precedent.md` devono esistere nel branch corrente (dopo A1, A2 e A4). Se mancano, segna `[!]` con il motivo "in attesa di A1/A2/A4" e non scrivere niente.
-  Sintesi di A1–A4 in `re/f0-preliminary-verdict.md`: cosa si può già concludere, cosa resta da dimostrare solo con l'esperimento A5, con quali probabilità. Proposta di ADR in `docs/adr/draft-phase0-preliminary-outcome.md`.
+  If the files of A1, A2 and A4 (Ciani's) are not yet on `main`, write the experiment based on `docs/PLAN.md` and on `docs/design/watariboot/INTERFACES.md`, and mark as [hypothesis] the points that depend on them.
+- [x] *(issue #9)* **A6. `tools/acpigen`: host-side ACPI table generator, with tests.**
+  C11 library + CLI that, starting from a data model (C or JSON), produces MADT (GICC with the parking protocol fields), GTDT, PPTT and CSRT in binary, with correct checksums.
+  - Unit tests built with `clang` + `make`, already on the system: layout and field offsets verified against the specification, checksum, edge cases.
+  - t8103 data (cluster, MPIDR) taken from Asahi's DTS via `gh api` and cited.
+  - SPDX header on every file.
+  Completion criterion: `make -C tools/acpigen test` green.
+- [x] *(issue #10)* **A7. Preliminary verdict.** **Prerequisite:** `re/f0-halext-public-docs.md`, `re/f0-acpi-windows-requirements.md` and `re/f0-rpi3-precedent.md` must exist in the current branch (after A1, A2 and A4). If missing, mark `[!]` with the reason "waiting for A1/A2/A4" and write nothing.
+  Synthesis of A1–A4 in `re/f0-preliminary-verdict.md`: what can already be concluded, what remains to be shown only through the A5 experiment, with what probabilities. ADR proposal in `docs/adr/draft-phase0-preliminary-outcome.md`.
 
-## Gate A, secondo giro: le piste sul timer FIQ (dopo A3)
-Stesse regole del Gate A: niente download e niente installazioni.
+## Gate A, second round: the FIQ timer leads (after A3)
+Same rules as Gate A: no downloads and no installations.
 
-- [x] *(issue #16)* **A8. Un modello AIC in QEMU: esiste già?**
-  Cerca e valuta i fork pubblici di QEMU che emulano un SoC Apple con AIC (per esempio progetti che emulano gli iPhone come t8030). Per ciascuno: repository, licenza, ultimo commit, quanto AIC emulano (IRQ, IPI, FIQ del timer), versione di QEMU di base, possibilità di innestare l'AIC sulla macchina `virt` aarch64 al posto del GIC.
-  Fonti: `gh api` e web.
-  Output: `re/f0-qemu-aic-models.md`, con una raccomandazione: riusare, prendere solo l'AIC, oppure scrivere da zero, e una stima del lavoro.
-- [x] *(issue #17)* **A9. Il bit "CONVERT_SIQ_TO_IRQ" e altre vie hardware per il timer in IRQ.**
-  Dove è definito in m1n1 (file e righe), se compare nel codice open source di Apple (XNU, repo `apple-oss-distributions/xnu`, solo lettura via `gh api`) o in altro codice pubblico (Asahi, Corellium, documentazione). Cerca anche altri meccanismi IMP-DEF di Apple per instradare o virtualizzare il timer (per esempio i registri che XNU usa per il timer).
-  Output: `re/f0-timer-irq-hw.md`, con il protocollo di un **test hardware** da fare con il proxy m1n1 (HW-1, issue #20): registri da scrivere, cosa osservare e come tornare indietro in sicurezza.
-- [x] *(issue #18)* **A10. Esperimento V6: Windows con il timer consegnato come FIQ.**
-  Aggiungi a `docs/design/watariboot/EXPERIMENT-F0.md` la variante V6. In QEMU `virt`, come si configura il PPI del timer come Group 0 / FIQ (GICv3 con security, oppure il bit nel GTDT o nell'emulazione), con le fonti dalla documentazione QEMU, Arm e Linux. Cosa osservare: Windows gestisce la FIQ, va in bugcheck o si blocca. Cosa concludere per ogni esito.
-  Modifica SOLO la sezione nuova V6 e la tabella della matrice.
+- [x] *(issue #16)* **A8. An AIC model in QEMU: does one already exist?**
+  Search for and evaluate the public QEMU forks that emulate an Apple SoC with AIC (for example projects that emulate iPhones such as t8030). For each: repository, license, last commit, how much of the AIC they emulate (IRQ, IPI, timer FIQ), base QEMU version, possibility of grafting the AIC onto the aarch64 `virt` machine in place of the GIC.
+  Sources: `gh api` and web.
+  Output: `re/f0-qemu-aic-models.md`, with a recommendation: reuse, take only the AIC, or write from scratch, and an estimate of the work.
+- [x] *(issue #17)* **A9. The "CONVERT_SIQ_TO_IRQ" bit and other hardware routes for the timer as IRQ.**
+  Where it is defined in m1n1 (file and lines), whether it appears in Apple's open source code (XNU, repo `apple-oss-distributions/xnu`, read-only via `gh api`) or in other public code (Asahi, Corellium, documentation). Also look for other Apple IMP-DEF mechanisms to route or virtualize the timer (for example the registers XNU uses for the timer).
+  Output: `re/f0-timer-irq-hw.md`, with the protocol of a **hardware test** to be done with the m1n1 proxy (HW-1, issue #20): registers to write, what to observe and how to safely go back.
+- [x] *(issue #18)* **A10. Experiment V6: Windows with the timer delivered as FIQ.**
+  Add the variant V6 to `docs/design/watariboot/EXPERIMENT-F0.md`. In QEMU `virt`, how to configure the timer PPI as Group 0 / FIQ (GICv3 with security, or the bit in the GTDT or in the emulation), with sources from the QEMU, Arm and Linux documentation. What to observe: Windows handles the FIQ, bugchecks or hangs. What to conclude for each outcome.
+  Modify ONLY the new V6 section and the matrix table.
 
-- [x] *(issue #19, riassegnata a Ralph)* **A11. Progetto dell'estensione HAL timer basata sul watchdog.**
-  Dipende da A1. Il watchdog `23d2b0000` (AIC IRQ 338, 24 MHz, contatore a 32 bit; vedi `re/f0-m1-fiq-irq.md`) come clock di sistema per Windows tramite un'estensione HAL timer, con distribuzione agli altri core via IPI.
+- [x] *(issue #19, reassigned to Ralph)* **A11. Design of the timer HAL extension based on the watchdog.**
+  Depends on A1. The watchdog `23d2b0000` (AIC IRQ 338, 24 MHz, 32-bit counter; see `re/f0-m1-fiq-irq.md`) as the system clock for Windows through a timer HAL extension, with distribution to the other cores via IPI.
   Output: `docs/design/watariboot/HALEXT-TIMER-WDT.md`.
 
-## Gate B: richiede backup confermato + almeno 100 GB liberi + l'ok umano (Ralph NON li esegue)
-- [x] B1. Installare qemu, acpica-tools e le dipendenze di EDK2. [UMANO conferma]
-- [x] B2. Build di EDK2 `ArmVirtQemu` e boot fino alla shell UEFI in QEMU.
-- [ ] B3. ISO ufficiale di Windows 11 ARM64 dal sito Microsoft. [UMANO: download dal browser]
-- [ ] B4. Baseline: Windows ARM64 avviato in QEMU con il nostro EDK2 e le tabelle di `acpigen`.
-- [ ] B5. Le varianti della matrice A5, con le evidenze raccolte.
-- [ ] B6. VM di sviluppo Windows ARM con Visual Studio + WDK. Estensione HAL di prova, test-signed. [UMANO: setup e licenze]
+## Gate B: requires a confirmed backup + at least 100 GB free + human approval (Ralph does NOT execute them)
+- [x] B1. Install qemu, acpica-tools and the EDK2 dependencies. [HUMAN confirms]
+- [x] B2. Build of EDK2 `ArmVirtQemu` and boot up to the UEFI shell in QEMU.
+- [ ] B3. Official Windows 11 ARM64 ISO from the Microsoft site. [HUMAN: download from the browser]
+- [ ] B4. Baseline: Windows ARM64 booted in QEMU with our EDK2 and the `acpigen` tables.
+- [ ] B5. The variants of the A5 matrix, with the evidence collected.
+- [ ] B6. Windows ARM development VM with Visual Studio + WDK. Test HAL extension, test-signed. [HUMAN: setup and licenses]

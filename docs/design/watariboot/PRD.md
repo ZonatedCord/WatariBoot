@@ -1,103 +1,103 @@
 # PRD: Watari Boot
 
-- Progetto: Watari Boot (Windows ARM64 nativo su Apple Silicon, primo target MacBook Pro 13" M1, SoC t8103, board j293)
-- Data: 2026-10-12 · Versione: 0.1 · Stato: draft
-- Documenti collegati: [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · ADR: [0001](../../adr/0001-native-boot-without-hypervisor.md), [0002](../../adr/0002-edk2-instead-of-uboot.md), [0003](../../adr/0003-parking-protocol-instead-of-psci.md), [0004](../../adr/0004-irq-instead-of-fiq.md), [0005](../../adr/0005-no-microsoft-binaries-in-repo.md)
+- Project: Watari Boot (native Windows ARM64 on Apple Silicon, first target MacBook Pro 13" M1, SoC t8103, board j293)
+- Date: 2026-10-12 · Version: 0.1 · Status: draft
+- Related documents: [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · ADR: [0001](../../adr/0001-native-boot-without-hypervisor.md), [0002](../../adr/0002-edk2-instead-of-uboot.md), [0003](../../adr/0003-parking-protocol-instead-of-psci.md), [0004](../../adr/0004-irq-instead-of-fiq.md), [0005](../../adr/0005-no-microsoft-binaries-in-repo.md)
 
-## Convenzione di marcatura
-Ogni affermazione hardware o su Windows e' marcata `[verificato: fonte]` oppure `[ipotesi]`. Le affermazioni che arrivano solo da `docs/PLAN.md` e non sono state riscontrate su fonti indipendenti sono `[ipotesi]` (anche se plausibili). Quasi tutto cio' che riguarda gli interni di Windows resta `[ipotesi]` finche' la Fase 0 non e' conclusa.
+## Marking convention
+Every hardware or Windows claim is marked `[verified: source]` or `[hypothesis]`. Claims that come only from `docs/PLAN.md` and have not been confirmed against independent sources are `[hypothesis]` (even if plausible). Almost everything concerning Windows internals remains `[hypothesis]` until Phase 0 is complete.
 
-## 1. Problema
-Un MacBook Pro M1 13" non puo' avviare Windows ARM64 in modo nativo. Le uniche strade esistenti usano una VM/hypervisor, che non da' accesso diretto all'hardware (GPU, tutti i core alle frequenze piene). Il progetto Asahi ha escluso il boot nativo di Windows perche' ritiene necessario modificare il kernel Windows [ipotesi: affermazione riportata dal piano, fonte primaria non verificata]. Il progetto verifica se esiste un percorso senza modificare Windows, usando solo i meccanismi di estensione previsti dalla piattaforma.
+## 1. Problem
+A 13" M1 MacBook Pro cannot boot Windows ARM64 natively. The only existing approaches use a VM/hypervisor, which does not give direct access to the hardware (GPU, all cores at full frequency). The Asahi project has ruled out native Windows boot because it considers modifying the Windows kernel necessary [hypothesis: claim reported by the plan, primary source not verified]. The project checks whether a path exists without modifying Windows, using only the extension mechanisms provided by the platform.
 
-## 2. Obiettivi
-- O1. Boot nativo di Windows ARM64 non modificato sul M1 (catena m1n1 -> EDK2 -> Windows), senza hypervisor ne' emulatore ([ADR-0001](../../adr/0001-native-boot-without-hypervisor.md)).
-- O2. Uso di tutti gli 8 core (4 P + 4 E) con scheduler consapevole delle classi di efficienza.
-- O3. Installazione e avvio da SSD interno (ANS2) con desktop utilizzabile con periferiche USB.
-- O4. Gestione energetica (frequenze, sleep) e periferiche interne (tastiera/trackpad, Wi-Fi, audio, batteria).
-- O5. A lungo termine: GPU tramite driver WDDM.
-- O6. Generalizzazione ad altri Apple Silicon (ACPI generate dall'ADT a ogni avvio).
-- O7. Riproducibilita': ogni traguardo e' ricostruibile da repo + istruzioni, con dati Microsoft fuori dal repo ([ADR-0005](../../adr/0005-no-microsoft-binaries-in-repo.md)).
+## 2. Goals
+- O1. Native boot of unmodified Windows ARM64 on the M1 (m1n1 -> EDK2 -> Windows chain), without a hypervisor or emulator ([ADR-0001](../../adr/0001-native-boot-without-hypervisor.md)).
+- O2. Use of all 8 cores (4 P + 4 E) with a scheduler aware of efficiency classes.
+- O3. Installation and boot from the internal SSD (ANS2) with a usable desktop with USB peripherals.
+- O4. Power management (frequencies, sleep) and internal peripherals (keyboard/trackpad, Wi-Fi, audio, battery).
+- O5. Long term: GPU through a WDDM driver.
+- O6. Generalization to other Apple Silicon (ACPI generated from the ADT at every boot).
+- O7. Reproducibility: every milestone can be rebuilt from repo + instructions, with Microsoft data outside the repo ([ADR-0005](../../adr/0005-no-microsoft-binaries-in-repo.md)).
 
-## 3. Non-obiettivi
-- NG1. Modificare ntoskrnl, HAL o altri binari Microsoft (patch del kernel solo come piano B di ricerca, non distribuibile, e solo per decisione esplicita dell'utente).
-- NG2. Hypervisor/VM come soluzione finale (salvo decisione esplicita dell'utente su piano B).
-- NG3. Redistribuire codice o binari Microsoft.
-- NG4. Toccare macOS o la recovery; operazioni sul disco fuori dall'installer Asahi.
-- NG5. Prestazioni GPU o Thunderbolt completo nelle prime fasi (GPU: solo framebuffer/Basic Display fino a Fase 5).
-- NG6. Supporto di Windows x64 o di versioni di Windows diverse da quella usata per la Fase 0 (Windows 11 24H2 ARM64) prima del completamento delle fasi 0-4.
+## 3. Non-goals
+- NG1. Modifying ntoskrnl, the HAL or other Microsoft binaries (kernel patching only as a research plan B, not distributable, and only by explicit user decision).
+- NG2. Hypervisor/VM as the final solution (except by explicit user decision on plan B).
+- NG3. Redistributing Microsoft code or binaries.
+- NG4. Touching macOS or the recovery; disk operations outside the Asahi installer.
+- NG5. GPU performance or full Thunderbolt in the early phases (GPU: only framebuffer/Basic Display until Phase 5).
+- NG6. Support for Windows x64 or Windows versions other than the one used for Phase 0 (Windows 11 24H2 ARM64) before phases 0-4 are completed.
 
-## 4. Utenti e attori
-| Attore | Descrizione |
+## 4. Users and actors
+| Actor | Description |
 |---|---|
-| Sviluppatore/proprietario | Marco: conosce C/C++, non firmware; esegue sull'hardware, decide piano B |
-| Agente capo (Opus) | Progetta, verifica, riferisce |
-| Agenti esecutori (Sonnet) | Scrivono codice e documenti su task definiti |
-| Debug host | Raspberry Pi 5 o portatile, necessario da Fase 2 |
-| Utenti futuri (comunita') | Possessori di Apple Silicon interessati; rilevanti solo da Fase 6 e dalla firma dei driver |
+| Developer/owner | Marco: knows C/C++, not firmware; runs on the hardware, decides plan B |
+| Lead agent (Opus) | Designs, verifies, reports |
+| Executor agents (Sonnet) | Write code and documents on defined tasks |
+| Debug host | Raspberry Pi 5 or laptop, required from Phase 2 |
+| Future users (community) | Apple Silicon owners who are interested; relevant only from Phase 6 and from driver signing |
 
 ## 5. User stories
-- US1. Come sviluppatore voglio un verdetto si'/no con prove sulla possibilita' di registrare un controller non-GIC via estensione HAL, per decidere la strada prima di scrivere firmware.
-- US2. Come sviluppatore voglio provare l'estensione HAL in QEMU con WinDbg, per validarla senza rischiare l'hardware.
-- US3. Come sviluppatore voglio una shell UEFI sul MacBook con 8 core visibili, per avere una base stabile.
-- US4. Come sviluppatore voglio che il kernel Windows giri nativo e arrivi al caricamento dei driver, per provare l'ipotesi centrale.
-- US5. Come utente voglio installare Windows sull'SSD interno e usare tastiera/mouse USB, per avere un desktop.
-- US6. Come utente voglio frequenze piene, tastiera/trackpad interni e sospensione, per usare il Mac come portatile.
-- US7. Come sviluppatore voglio che macOS resti avviabile in ogni momento, per non rischiare il dispositivo.
+- US1. As a developer I want a yes/no verdict with proof on whether a non-GIC controller can be registered via an HAL extension, so that I can decide the path before writing firmware.
+- US2. As a developer I want to try the HAL extension in QEMU with WinDbg, so that I can validate it without risking the hardware.
+- US3. As a developer I want a UEFI shell on the MacBook with 8 cores visible, so that I have a stable base.
+- US4. As a developer I want the Windows kernel to run natively and reach driver loading, so that I can test the central hypothesis.
+- US5. As a user I want to install Windows on the internal SSD and use a USB keyboard/mouse, so that I have a desktop.
+- US6. As a user I want full frequencies, internal keyboard/trackpad and suspend, so that I can use the Mac as a laptop.
+- US7. As a developer I want macOS to remain bootable at all times, so that I do not put the device at risk.
 
-## 6. Requisiti funzionali
-| ID | Requisito | Fase | Modulo ([ARCHITECTURE](ARCHITECTURE.md)) |
+## 6. Functional requirements
+| ID | Requirement | Phase | Module ([ARCHITECTURE](ARCHITECTURE.md)) |
 |---|---|---|---|
-| FR-1 | Report Fase 0 con verdetto si'/no e prove (indirizzi, funzioni, pseudocodice Ghidra) | 0 | M-RE |
-| FR-2 | EDK2 espone tabelle ACPI (MADT, GTDT, CSRT, PPTT, DSDT, DBG2, ...) generate dall'ADT | 1-2 | M-ACPI-GEN, M-EDK2 |
-| FR-3 | Core secondari avviabili via ACPI Multiprocessor Parking Protocol | 2 | M-PARK |
-| FR-4 | GOP su framebuffer fornito da m1n1 | 2 | M-EDK2 |
-| FR-5 | Estensione HAL AIC: registrazione controller, mask/unmask, EOI, routing, IPI | 3 | M-HALEXT |
-| FR-6 | Sorgente timer in IRQ (estensione HAL timer); FIQ mascherate | 3 | M-HALEXT |
-| FR-7 | Boot da USB fino al caricamento dei driver | 3 | tutti i precedenti + M-XHCI |
-| FR-8 | Miniport StorPort ANS2 (con SART) per installazione e boot da SSD interno | 4 | M-ANS |
-| FR-9 | xHCI descritto in ACPI, gestito dal driver standard Windows | 4 | M-XHCI, M-ACPI-GEN |
-| FR-10 | Gestione IOMMU (DART): bypass dove possibile, altrimenti mappature nei driver | 3-4 | M-DART |
-| FR-11 | PEP + `_CPC` per DVFS; classi di efficienza P/E via PPTT | 5 | M-PEP, M-ACPI-GEN |
-| FR-12 | Driver KMDF HID per tastiera e trackpad interni | 5 | M-SPIHID |
-| FR-13 | Wi-Fi, audio, batteria (SMC), sospensione | 5 | moduli futuri (vedi ARCHITECTURE, punti di estensione) |
-| FR-14 | Avvio progetto WDDM per GPU AGX | 5+ | M-GPU (solo avvio) |
-| FR-15 | Generazione ACPI da ADT a ogni avvio, supporto AIC2 | 6 | M-ACPI-GEN, M-HALEXT |
-| FR-16 | Installazione non distruttiva: macOS e recovery intatti | 2+ | procedura (installer Asahi) |
+| FR-1 | Phase 0 report with a yes/no verdict and proof (addresses, functions, Ghidra pseudocode) | 0 | M-RE |
+| FR-2 | EDK2 exposes ACPI tables (MADT, GTDT, CSRT, PPTT, DSDT, DBG2, ...) generated from the ADT | 1-2 | M-ACPI-GEN, M-EDK2 |
+| FR-3 | Secondary cores bootable via the ACPI Multiprocessor Parking Protocol | 2 | M-PARK |
+| FR-4 | GOP on the framebuffer provided by m1n1 | 2 | M-EDK2 |
+| FR-5 | AIC HAL extension: controller registration, mask/unmask, EOI, routing, IPI | 3 | M-HALEXT |
+| FR-6 | Timer source on IRQ (timer HAL extension); FIQ masked | 3 | M-HALEXT |
+| FR-7 | Boot from USB up to driver loading | 3 | all of the above + M-XHCI |
+| FR-8 | ANS2 StorPort miniport (with SART) for installation and boot from the internal SSD | 4 | M-ANS |
+| FR-9 | xHCI described in ACPI, handled by the standard Windows driver | 4 | M-XHCI, M-ACPI-GEN |
+| FR-10 | IOMMU (DART) handling: bypass where possible, otherwise mappings in the drivers | 3-4 | M-DART |
+| FR-11 | PEP + `_CPC` for DVFS; P/E efficiency classes via PPTT | 5 | M-PEP, M-ACPI-GEN |
+| FR-12 | KMDF HID driver for the internal keyboard and trackpad | 5 | M-SPIHID |
+| FR-13 | Wi-Fi, audio, battery (SMC), suspend | 5 | future modules (see ARCHITECTURE, extension points) |
+| FR-14 | Start of a WDDM project for the AGX GPU | 5+ | M-GPU (start only) |
+| FR-15 | ACPI generation from the ADT at every boot, AIC2 support | 6 | M-ACPI-GEN, M-HALEXT |
+| FR-16 | Non-destructive installation: macOS and recovery intact | 2+ | procedure (Asahi installer) |
 
-## 7. Requisiti non funzionali
-- NFR-1 Mantenibilita': un modulo = una responsabilita'; header di provenienza su codice Asahi; ogni decisione in un ADR. Moduli: tutti.
-- NFR-2 Riproducibilita': toolchain con versioni pinnate, build in container/script in `tools/`, hash dei binari Microsoft usati registrati (non i binari), seed e fixture dei test fissati. Moduli: tools, tutti.
-- NFR-3 Modularita': interfacce esplicite (INTERFACES.md), grafo delle dipendenze aciclico, piattaforma separata dal modello di SoC (tabella dati ADT-driven). Moduli: tutti.
-- NFR-4 Estensibilita': nuovo SoC = nuova descrizione dati, non modifica di codice core; nuovo driver = nuovo modulo con ID ACPI. Moduli: M-ACPI-GEN, M-HALEXT.
-- NFR-5 Sicurezza hardware: nessuna operazione su disco/boot senza backup e conferma dell'utente; macOS/recovery non toccati.
-- NFR-6 Legale: nessun binario/codice Microsoft nel repo; codice Asahi riusato rispettando la licenza.
-- NFR-7 Tracciabilita': ogni affermazione tecnica marcata verificato/ipotesi; ogni conclusione di Fase 0 con evidenza.
-- NFR-8 Osservabilita': ogni fase espone un canale di log (seriale/framebuffer/m1n1 debug) indicato in TEST_STRATEGY.
+## 7. Non-functional requirements
+- NFR-1 Maintainability: one module = one responsibility; provenance header on Asahi code; every decision in an ADR. Modules: all.
+- NFR-2 Reproducibility: toolchains with pinned versions, build in containers/scripts in `tools/`, hashes of the Microsoft binaries used are recorded (not the binaries), test seeds and fixtures fixed. Modules: tools, all.
+- NFR-3 Modularity: explicit interfaces (INTERFACES.md), acyclic dependency graph, platform separated from the SoC model (ADT-driven data table). Modules: all.
+- NFR-4 Extensibility: new SoC = new data description, not a change to core code; new driver = new module with an ACPI ID. Modules: M-ACPI-GEN, M-HALEXT.
+- NFR-5 Hardware safety: no disk/boot operation without a backup and user confirmation; macOS/recovery not touched.
+- NFR-6 Legal: no Microsoft binaries/code in the repo; Asahi code reused in compliance with its license.
+- NFR-7 Traceability: every technical claim marked verified/hypothesis; every Phase 0 conclusion with evidence.
+- NFR-8 Observability: every phase exposes a log channel (serial/framebuffer/m1n1 debug) specified in TEST_STRATEGY.
 
-## 8. Criteri di successo misurabili per fase
-| Fase | Criterio | Evidenza |
+## 8. Measurable success criteria per phase
+| Phase | Criterion | Evidence |
 |---|---|---|
-| 0 | Documento in `re/` con verdetto si'/no sulla registrazione di un controller non-GIC via estensione HAL, e interfaccia; ogni conclusione con indirizzo/funzione/pseudocodice; esiti anche su: caricamento estensioni via CSRT, gestione FIQ nel vettore eccezioni, caso BCM2836 | File in `re/`, revisione di Opus |
-| 1 | In QEMU, con MADT senza GIC, la nostra estensione HAL viene caricata e invocata da Windows (non solo presente su disco) | Log WinDbg con modulo caricato e breakpoint raggiunto; 3 avvii consecutivi con stesso esito |
-| 2 | Shell UEFI sul MacBook che enumera 8 core (4 P + 4 E) con mailbox parking inizializzate; macOS ancora avviabile | Foto/video, log seriale/m1n1, verifica boot macOS |
-| 3 | Kernel Windows nativo arriva al caricamento dei driver (inizio fase 1 del boot kernel con driver boot-start) | Log debug host, foto; tempo di boot fino al punto X registrato; 3 avvii su 3 |
-| 4 | Installazione completata su SSD interno e desktop raggiunto con tastiera/mouse USB | Video installazione + desktop; riavvio da SSD riuscito 5 volte consecutive |
-| 5 | Geekbench e Cinebench eseguiti con tutti gli 8 core; risultati riportati in rapporto a macOS sullo stesso Mac (soglia di accettazione da definire dopo la prima misura: aperto) | Report benchmark con versione, condizioni termiche, ripetizioni |
-| 6 | Seconda piattaforma (es. M1 Pro/Max o M2) raggiunge shell UEFI con ACPI generate dall'ADT senza modifiche al codice di piattaforma | Log + diff che mostra solo dati nuovi |
+| 0 | Document in `re/` with a yes/no verdict on registering a non-GIC controller via an HAL extension, and the interface; every conclusion with address/function/pseudocode; findings also on: loading extensions via CSRT, FIQ handling in the exception vector, the BCM2836 case | File in `re/`, Opus review |
+| 1 | In QEMU, with a GIC-less MADT, our HAL extension is loaded and invoked by Windows (not merely present on disk) | WinDbg log with module loaded and breakpoint hit; 3 consecutive boots with the same outcome |
+| 2 | UEFI shell on the MacBook that enumerates 8 cores (4 P + 4 E) with parking mailboxes initialized; macOS still bootable | Photo/video, serial/m1n1 log, macOS boot check |
+| 3 | Native Windows kernel reaches driver loading (start of phase 1 of kernel boot with boot-start drivers) | Debug host log, photos; boot time up to point X recorded; 3 boots out of 3 |
+| 4 | Installation completed on the internal SSD and desktop reached with USB keyboard/mouse | Installation + desktop video; reboot from SSD succeeded 5 consecutive times |
+| 5 | Geekbench and Cinebench run with all 8 cores; results reported relative to macOS on the same Mac (acceptance threshold to be defined after the first measurement: open) | Benchmark report with version, thermal conditions, repetitions |
+| 6 | Second platform (e.g. M1 Pro/Max or M2) reaches the UEFI shell with ACPI generated from the ADT without changes to platform code | Log + diff showing only new data |
 
-Soglie numeriche di prestazione: non fissate in anticipo per non inventare cifre; verranno definite alla fine della Fase 4 su misure reali (domanda aperta).
+Numeric performance thresholds: not set in advance so as not to invent figures; they will be defined at the end of Phase 4 on real measurements (open question).
 
-## 9. Scope e out-of-scope
-In scope: fasi 0-6 del piano. Out-of-scope: distribuzione pubblica firmata (richiede Partner Center), Linux/altri OS, Windows x64, GPU accelerata completa prima della Fase 5+, Thunderbolt/DisplayPort alt-mode completo.
+## 9. Scope and out-of-scope
+In scope: phases 0-6 of the plan. Out of scope: signed public distribution (requires Partner Center), Linux/other OSes, Windows x64, full accelerated GPU before Phase 5+, full Thunderbolt/DisplayPort alt-mode.
 
-## 10. Rischi (sintesi)
-Dettaglio in [RISKS.md](RISKS.md). Principali: R-01 spike negativo (HAL non accetta controller non-GIC); R-02 Windows richiede GIC nella MADT; R-03 timer solo FIQ; R-04 debug senza secondo computer; R-05 brick.
+## 10. Risks (summary)
+Detail in [RISKS.md](RISKS.md). Main ones: R-01 negative spike (HAL does not accept a non-GIC controller); R-02 Windows requires a GIC in the MADT; R-03 FIQ-only timer; R-04 debugging without a second computer; R-05 brick.
 
-## 11. Riferimenti ADR
-ADR-0001 boot nativo senza hypervisor · ADR-0002 EDK2 invece di U-Boot · ADR-0003 parking protocol invece di PSCI · ADR-0004 IRQ invece di FIQ · ADR-0005 nessun binario Microsoft nel repo. Lo stack complessivo (C per firmware/driver, EDK2, WDK) e' imposto dal piano; la scelta del linguaggio per le parti non fissate (es. Rust per componenti host) non e' presa ed e' una domanda aperta.
+## 11. ADR references
+ADR-0001 native boot without hypervisor · ADR-0002 EDK2 instead of U-Boot · ADR-0003 parking protocol instead of PSCI · ADR-0004 IRQ instead of FIQ · ADR-0005 no Microsoft binaries in the repo. The overall stack (C for firmware/drivers, EDK2, WDK) is imposed by the plan; the language choice for the unfixed parts (e.g. Rust for host components) has not been made and is an open question.
 
-## 12. Domande aperte non bloccanti
-- Soglie di prestazione per Fase 5 (vedi sopra).
-- Versione esatta di Windows 11 ARM64 e build della Fase 0 da congelare (hash).
-- Tecnologia del canale di debug in Fase 3 (KDCOM su UART via DBG2 vs altro) - vedi RISKS R-04.
+## 12. Non-blocking open questions
+- Performance thresholds for Phase 5 (see above).
+- Exact Windows 11 ARM64 version and Phase 0 build to freeze (hash).
+- Debug channel technology in Phase 3 (KDCOM over UART via DBG2 vs other) - see RISKS R-04.

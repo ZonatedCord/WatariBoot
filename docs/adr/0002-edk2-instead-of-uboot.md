@@ -1,20 +1,20 @@
-# ADR-0002: EDK2 invece di U-Boot
+# ADR-0002: EDK2 instead of U-Boot
 
-- Stato: Accettata (dal piano)
-- Data: 2026-10-12 · Collegamenti: [ARCHITECTURE](../design/watariboot/ARCHITECTURE.md), [INTERFACES](../design/watariboot/INTERFACES.md)
+- Status: Accepted (from the plan)
+- Date: 2026-10-12 · Links: [ARCHITECTURE](../design/watariboot/ARCHITECTURE.md), [INTERFACES](../design/watariboot/INTERFACES.md)
 
-## Contesto
-Windows ARM64 richiede UEFI e ACPI [ipotesi: requisito dal piano, non ricontrollato su documentazione Microsoft]. Servono GOP, servizi runtime UEFI, ACPI, parking protocol e CSRT. Il piano indica `ArmVirtPkg` e `Platform/RaspberryPi` di edk2-platforms come modelli.
+## Context
+Windows ARM64 requires UEFI and ACPI [hypothesis: requirement from the plan, not rechecked against Microsoft documentation]. GOP, UEFI runtime services, ACPI, the parking protocol and CSRT are needed. The plan names `ArmVirtPkg` and `Platform/RaspberryPi` from edk2-platforms as models.
 
-## Decisione
-Usare una piattaforma EDK2 (`AppleSiliconPkg`) avviata da m1n1, con ACPI generate dall'ADT.
+## Decision
+Use an EDK2 platform (`AppleSiliconPkg`) started by m1n1, with ACPI generated from the ADT.
 
-## Alternative
-- U-Boot con UEFI: esiste un supporto UEFI e il parking protocol in patch U-Boot [verificato: lista U-Boot denx.de, "arm: cpu: Add ACPI parking protocol support"], ma il supporto UEFI/ACPI di U-Boot per avviare Windows non e' stato valutato qui [ipotesi]. Scartato nel piano; la motivazione dettagliata non e' documentata e va completata se si riapre la scelta.
-- Bootloader custom: scartato, costo di mantenimento alto.
-- Usare direttamente m1n1 come UEFI: non esistente.
+## Alternatives (rejected)
+- U-Boot with UEFI: UEFI support and the parking protocol exist in U-Boot patches [verified: U-Boot mailing list denx.de, "arm: cpu: Add ACPI parking protocol support"], but U-Boot's UEFI/ACPI support for booting Windows was not evaluated here [hypothesis]. Rejected in the plan; the detailed rationale is not documented and must be completed if the choice is reopened.
+- Custom bootloader: rejected, high maintenance cost.
+- Use m1n1 directly as UEFI: does not exist.
 
-## Conseguenze
-- Si eredita l'ecosistema EDK2 (build, driver USB/GOP/ACPI) e la sua complessita' di build.
-- Modello esistente per Windows su hardware non standard (Raspberry Pi) [verificato: citato nel piano, non riscontrato qui].
-- Il contratto m1n1 -> EDK2 va definito da noi (INTERFACES 1).
+## Consequences
+- We inherit the EDK2 ecosystem (build, USB/GOP/ACPI drivers) and its build complexity.
+- There is an existing model for Windows on non-standard hardware (Raspberry Pi) [verified: cited in the plan, not confirmed here].
+- The m1n1 -> EDK2 contract must be defined by us (INTERFACES 1).

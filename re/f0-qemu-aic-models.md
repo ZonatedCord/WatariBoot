@@ -1,89 +1,89 @@
-# A8 (issue #16): modelli QEMU di AIC esistenti e fattibilità di un banco di prova senza GIC
+# A8 (issue #16): existing QEMU AIC models and feasibility of a test bench without a GIC
 
-Data ricerca: 2026-10-13. Metodo: `gh api` in lettura (ricerca repository, albero dei file, contenuto di `hw/intc/apple_aic.c`) e lettura del driver Linux `drivers/irqchip/irq-apple-aic.c` (torvalds/linux, salvato solo in scratchpad). Nessun clone, nessun download su disco nel repo.
-Convenzione: [verificato: fonte] oppure [ipotesi].
+Research date: 2026-10-13. Method: read-only `gh api` (repository search, file tree, contents of `hw/intc/apple_aic.c`) and reading of the Linux driver `drivers/irqchip/irq-apple-aic.c` (torvalds/linux, saved only in the scratchpad). No clone, no download to disk in the repo.
+Convention: [verified: source] or [hypothesis].
 
-## 1. Progetti trovati
+## 1. Projects found
 
-| # | Progetto | Licenza dichiarata | Stelle | Ultimo commit | Base QEMU | Rilevanza |
+| # | Project | Declared license | Stars | Last commit | QEMU base | Relevance |
 |---|----------|--------------------|--------|---------------|-----------|-----------|
-| 1 | https://github.com/TrungNguyen1909/qemu-t8030 (iPhone 11, A13) | GitHub: NOASSERTION (repo = fork QEMU, `COPYING` GPL-2.0, 17992 byte) | 2204 | 2022-10-22, archiviato | 7.1.0 (`VERSION.QEMU`) | alta: modello AIC pulito, 683 righe |
-| 2 | https://github.com/ChefKissInc/Inferno (continuazione di #1, "QEMUAppleSilicon") | `COPYING` GPL-2.0 (17880 byte), ma **il file AIC ha header AGPL-3.0-or-later** | 3955 | 2026-07-29 (repo pushed 2026-09-20) | 10.2.2 / 10.1.3 "hybrid" (tag `ChefKissInferno-1.0.0rc1_QEMU-10.2.2_10.1.3_hybrid`) | alta per aggiornamento API, 636 righe |
-| 3 | https://github.com/jprx/qemu-sptm (macchina `-M darwin`, sottomodulo di `darwin-vm`) | NOASSERTION (QEMU GPL-2.0) | 52 | 2026-09-26 | 11.1.0 (`VERSION`) | media: AIC "finto", 280 righe |
-| 4 | https://github.com/alephsecurity/xnu-qemu-arm64 (iOS 12, s8000) | NOASSERTION | 1459 | 2021-09-16 | circa 4.x [ipotesi] | bassa: non letto, nessun AIC modellato per quanto so [ipotesi] |
-| 5 | https://github.com/imbushuo/qemu (patch HVF per host Apple Silicon) | NOASSERTION | 44 | 2026-09-27 | n/d | nessuna: non emula un SoC Apple, usa solo l'host M1 |
+| 1 | https://github.com/TrungNguyen1909/qemu-t8030 (iPhone 11, A13) | GitHub: NOASSERTION (repo = QEMU fork, `COPYING` GPL-2.0, 17992 bytes) | 2204 | 2022-10-22, archived | 7.1.0 (`VERSION.QEMU`) | high: clean AIC model, 683 lines |
+| 2 | https://github.com/ChefKissInc/Inferno (continuation of #1, "QEMUAppleSilicon") | `COPYING` GPL-2.0 (17880 bytes), but **the AIC file has an AGPL-3.0-or-later header** | 3955 | 2026-07-29 (repo pushed 2026-09-20) | 10.2.2 / 10.1.3 "hybrid" (tag `ChefKissInferno-1.0.0rc1_QEMU-10.2.2_10.1.3_hybrid`) | high for API updates, 636 lines |
+| 3 | https://github.com/jprx/qemu-sptm (`-M darwin` machine, submodule of `darwin-vm`) | NOASSERTION (QEMU GPL-2.0) | 52 | 2026-09-26 | 11.1.0 (`VERSION`) | medium: "fake" AIC, 280 lines |
+| 4 | https://github.com/alephsecurity/xnu-qemu-arm64 (iOS 12, s8000) | NOASSERTION | 1459 | 2021-09-16 | about 4.x [hypothesis] | low: not read, no AIC modeled as far as I know [hypothesis] |
+| 5 | https://github.com/imbushuo/qemu (HVF patches for Apple Silicon hosts) | NOASSERTION | 44 | 2026-09-27 | n/a | none: does not emulate an Apple SoC, only uses the M1 host |
 
-Tutti i dati di tabella: [verificato: `gh api repos/...` e `.../git/trees`]. Le righe sono quelle del file `hw/intc/apple_aic.c` [verificato: `wc -l` sul contenuto].
-Cercati senza risultati: query GitHub "qemu apple aic", "qemu t8030 aic", "apple aic qemu hw/intc" (0 risultati); nessun fork di Asahi per test con AIC emulato trovato [verificato: ricerche vuote]; non ho cercato Corellium open (non ha fonti pubbliche note, [ipotesi]).
+All table data: [verified: `gh api repos/...` and `.../git/trees`]. The line counts are those of the file `hw/intc/apple_aic.c` [verified: `wc -l` on the content].
+Searched without results: GitHub queries "qemu apple aic", "qemu t8030 aic", "apple aic qemu hw/intc" (0 results); no Asahi fork for tests with emulated AIC found [verified: empty searches]; I did not search Corellium open (no known public sources, [hypothesis]).
 
-## 2. Cosa fanno i tre modelli AIC
+## 2. What the three AIC models do
 
-### 2.1 qemu-t8030 (`hw/intc/apple_aic.c`, 683 righe, header 1033 byte)
-- Layout registri = **AIC "v1" come in Linux** [verificato: confronto con `irq-apple-aic.c`]: REV 0x0000, CAP0 0x0004, RST 0x000C, GLB_CFG 0x0010, WHOAMI 0x2000, IACK/EVENT 0x2004, IPI_SET 0x2008, IPI_CLR 0x200C, IPI_MASK_SET/CLR 0x2024/0x2028, DEFER_SET/CLR 0x202C/0x2030, EIR_DEST (target cpu) 0x3000, SW_SET 0x4000, SW_CLR 0x4080, MASK_SET 0x4100, MASK_CLR 0x4180, INT_RO 0x4200, alias per CPU a 0x5000 + n*0x80. In Linux il sw_set di AICv1 cade a 0x3000 + 4*0x400 = 0x4000 [verificato: aic.c righe ~1000-1033, calcolo mio].
-- Il codice dice `AIC_VERSION 2` e `REV` restituisce 2, ma la mappa è quella v1 di Linux. Non è AICv2 (che ha IRQ_CFG a 0x2000, mask a 0x6400 ecc. nel modello jprx) [verificato: codice].
-- IRQ: stato per linea (set_irq da gpio in), mascheramento via MASK_SET/CLR, destinazione per CPU via EIR_DEST, SW_SET/SW_CLR, INT_RO. Un'interruzione consegnata con IACK viene mascherata (comportamento come hardware, auto-mask). Codifica evento IACK: EXT = 0x10000 | num, IPI = 0x40001 (altri) / 0x40002 (self), 0 = spurio. Coincide con `AIC_EVENT_TYPE_IRQ=1`, `TYPE_IPI=4`, `IPI_OTHER=1`, `IPI_SELF=2` di Linux [verificato].
-- IPI legacy: SET/CLR/MASK/DEFER implementati [verificato: codice]. Le "fast IPI" (sysreg `IPI_RR_*`) NON stanno nell'AIC: sono nel modello CPU `apple_a13.c`, che espone un gpio `fast_ipi` verso FIQ [verificato: `apple_a13.c` realize].
-- Timer ARM -> FIQ: **non nell'AIC**. Nel modello CPU un `TYPE_OR_IRQ` a 16 linee è collegato a `ARM_CPU_FIQ`; `GTIMER_VIRT` va alla linea 0 e `fast_ipi` alla linea 1 [verificato: `apple_a13.c`, ~righe 564-588]. Questo è l'esatto schema che ci serve per il timer.
-- Costi/limiti: numero CPU/IRQ ricavato dal device tree Apple (`ipid-mask`, `#shared-timestamps`, nodo `aic-timebase`) tramite `hw/arm/xnu_dtb.h` (API specifiche del fork); thread `QEMUTimer` ogni 64 us (`kAICWT`) che richiama update (polling); `msi_nonbroken = true` (hack); `#define AIC_CPU_COUNT 6` e T8030 codificati a mano; offset timebase 0x20/0x28 (contatore 24 MHz emulato) nel registro AIC [verificato: codice].
-- Licenza: file senza header; contribuito da Trung Nguyen in un fork di QEMU 7.1 (GPL-2.0). Va trattato come GPL-2.0 [ipotesi, da controllare con autore se si vuole copia testuale].
+### 2.1 qemu-t8030 (`hw/intc/apple_aic.c`, 683 lines, 1033-byte header)
+- Register layout = **AIC "v1" as in Linux** [verified: comparison with `irq-apple-aic.c`]: REV 0x0000, CAP0 0x0004, RST 0x000C, GLB_CFG 0x0010, WHOAMI 0x2000, IACK/EVENT 0x2004, IPI_SET 0x2008, IPI_CLR 0x200C, IPI_MASK_SET/CLR 0x2024/0x2028, DEFER_SET/CLR 0x202C/0x2030, EIR_DEST (target cpu) 0x3000, SW_SET 0x4000, SW_CLR 0x4080, MASK_SET 0x4100, MASK_CLR 0x4180, INT_RO 0x4200, per-CPU alias at 0x5000 + n*0x80. In Linux the AICv1 sw_set falls at 0x3000 + 4*0x400 = 0x4000 [verified: aic.c lines ~1000-1033, my calculation].
+- The code says `AIC_VERSION 2` and `REV` returns 2, but the map is the Linux v1 one. It is not AICv2 (which has IRQ_CFG at 0x2000, mask at 0x6400 etc. in the jprx model) [verified: code].
+- IRQ: per-line state (set_irq from gpio in), masking via MASK_SET/CLR, per-CPU destination via EIR_DEST, SW_SET/SW_CLR, INT_RO. An interrupt delivered with IACK is masked (hardware-like behavior, auto-mask). IACK event encoding: EXT = 0x10000 | num, IPI = 0x40001 (other) / 0x40002 (self), 0 = spurious. Matches Linux's `AIC_EVENT_TYPE_IRQ=1`, `TYPE_IPI=4`, `IPI_OTHER=1`, `IPI_SELF=2` [verified].
+- Legacy IPI: SET/CLR/MASK/DEFER implemented [verified: code]. The "fast IPIs" (sysreg `IPI_RR_*`) are NOT in the AIC: they are in the CPU model `apple_a13.c`, which exposes a `fast_ipi` gpio towards FIQ [verified: `apple_a13.c` realize].
+- ARM timer -> FIQ: **not in the AIC**. In the CPU model a 16-line `TYPE_OR_IRQ` is connected to `ARM_CPU_FIQ`; `GTIMER_VIRT` goes to line 0 and `fast_ipi` to line 1 [verified: `apple_a13.c`, ~lines 564-588]. This is the exact scheme we need for the timer.
+- Costs/limits: CPU/IRQ count derived from the Apple device tree (`ipid-mask`, `#shared-timestamps`, node `aic-timebase`) via `hw/arm/xnu_dtb.h` (fork-specific APIs); a `QEMUTimer` thread every 64 us (`kAICWT`) that calls update (polling); `msi_nonbroken = true` (hack); `#define AIC_CPU_COUNT 6` and T8030 hand-coded; timebase offsets 0x20/0x28 (emulated 24 MHz counter) in the AIC register [verified: code].
+- License: file without header; contributed by Trung Nguyen in a fork of QEMU 7.1 (GPL-2.0). Must be treated as GPL-2.0 [hypothesis, to be checked with the author if verbatim copying is wanted].
 
-### 2.2 Inferno (`hw/intc/apple_aic.c`, 636 righe)
-- Stesso modello di #1 portato a QEMU 10.x: stesso layout registri, stessi codici evento, stessa struttura. Cambiano nomi (`REG_AIC_*`), `set_bit32`, API DT (`hw/arm/apple-silicon/dt.h`, `AppleDTNode`) [verificato: header e codice].
-- **Licenza del file: AGPL-3.0-or-later** (copyright 2024-2026 VisualEhrmanntraut e Christian Inci) [verificato: header del file]. Incorporarlo in un binario QEMU modificato è problematico: AGPL §13 impone l'offerta del sorgente anche per uso via rete, e la combinazione con QEMU GPL-2.0-only va verificata. Non copiare senza decisione esplicita.
-- È la fonte migliore per vedere come si adatta l'API QEMU 10.x, ma non per il riuso diretto.
+### 2.2 Inferno (`hw/intc/apple_aic.c`, 636 lines)
+- Same model as #1 ported to QEMU 10.x: same register layout, same event codes, same structure. Changed: names (`REG_AIC_*`), `set_bit32`, DT API (`hw/arm/apple-silicon/dt.h`, `AppleDTNode`) [verified: header and code].
+- **File license: AGPL-3.0-or-later** (copyright 2024-2026 VisualEhrmanntraut and Christian Inci) [verified: file header]. Incorporating it into a modified QEMU binary is problematic: AGPL §13 imposes the source offer even for network use, and the combination with GPL-2.0-only QEMU needs checking. Do not copy without an explicit decision.
+- It is the best source to see how the QEMU 10.x API is adapted, but not for direct reuse.
 
-### 2.3 qemu-sptm / darwin-vm (`hw/intc/apple_aic.c`, 280 righe)
-- Dichiaratamente "minimal": legge `compatible` "aic,N" e supporta v1, v2, v3; conosce il numero di IRQ, abilita/disabilita, ack, e **spedisce tutto a un'unica linea verso il core 0** [verificato: commento in testa e codice].
-- Per v1: IACK 0x2004, num ints 0x4, disable 0x4100, enable 0x4180, ack 0x4080 (nota: la loro denominazione è invertita rispetto a Linux dove 0x4100 è MASK_SET) [verificato: confronto con aic.c; suggerisce che usano "ENABLE=clear mask"; coerente].
-- **Niente IPI, niente DEST per CPU, niente SW_SET**, multicore non funziona; il README dichiara FIQ/UART ma l'AIC non gestisce il timer [verificato: README e codice].
-- API aggiornate a QEMU 11.1: `hw/core/sysbus.h`, `hw/core/irq.h` (include spostati nel nuovo albero), `OBJECT_DECLARE_SIMPLE_TYPE`, `class_init(..., const void *data)` [verificato: codice]. Utile come riferimento di API correnti.
-- Licenza non esplicita nel file [verificato: nessun header]; repo fork QEMU GPL-2.0.
+### 2.3 qemu-sptm / darwin-vm (`hw/intc/apple_aic.c`, 280 lines)
+- Declaredly "minimal": reads `compatible` "aic,N" and supports v1, v2, v3; knows the IRQ count, enables/disables, acks, and **routes everything to a single line towards core 0** [verified: header comment and code].
+- For v1: IACK 0x2004, num ints 0x4, disable 0x4100, enable 0x4180, ack 0x4080 (note: their naming is inverted relative to Linux where 0x4100 is MASK_SET) [verified: comparison with aic.c; suggests they use "ENABLE=clear mask"; consistent].
+- **No IPI, no per-CPU DEST, no SW_SET**, multicore does not work; the README declares FIQ/UART but the AIC does not handle the timer [verified: README and code].
+- APIs updated to QEMU 11.1: `hw/core/sysbus.h`, `hw/core/irq.h` (includes moved in the new tree), `OBJECT_DECLARE_SIMPLE_TYPE`, `class_init(..., const void *data)` [verified: code]. Useful as a reference for current APIs.
+- License not explicit in the file [verified: no header]; repo is a QEMU fork, GPL-2.0.
 
-## 3. Innesto su `virt` aarch64 o su una macchina "watari-virt"
+## 3. Grafting onto aarch64 `virt` or onto a "watari-virt" machine
 
-Cosa serve in QEMU (API stabili, indipendenti dai fork) [ipotesi, basata sul codice letto]:
-1. Nuovo dispositivo sysbus `watari-aic` (modello da #1/#3): `qdev_init_gpio_in(n_irq)`, un `sysbus_init_irq` per CPU, regione MMIO.
-2. Macchina nuova `hw/arm/watari-virt.c` (copia ridotta di `virt.c` senza `create_gic()`): CPU, RAM, PL011/UART, flash/UEFI, PCIe ecam, virtio-mmio. Le linee degli IRQ dei dispositivi (`virt` usa SPI del GIC: UART, PCIe INTx, virtio) vanno collegate a `qdev_get_gpio_in(aic, n)`.
-3. Per ogni CPU: `sysbus_connect_irq(aic, cpu, qdev_get_gpio_in(cpu, ARM_CPU_IRQ))` come in `t8030.c` (~righe 768-772) [verificato].
-4. Timer: collegare i `GTIMER_*` uscenti della CPU a `ARM_CPU_FIQ` (tramite `TYPE_OR_IRQ` come in `apple_a13.c`); sulla `virt` standard sono invece PPI del GIC. Questa è la parte che rende il banco un'imitazione fedele dell'M1, dove il timer arriva come FIQ e non via AIC [verificato per t8030; per M1: Linux crea FIQ AIC_TMR_EL0_PHYS/VIRT dentro l'AIC come domain separato, aic.c ~righe 552-600].
-5. Fast IPI di M1 (t8103 usa `aic1_local_fipi_info` in Linux, aic.c ~righe 308-312 [verificato]): richiedono sysreg IMP-DEF nella CPU (`IPI_RR_*`, `IPI_SR_EL1`, ecc.) che QEMU TCG non ha. Sulla `watari-virt` con CPU `max`/`cortex-a72` queste non esistono; per i nostri test è realistico usare solo IPI legacy (come l'AIC con `compatible` "apple,aic") [verificato: Linux supporta `apple,aic` = nessun fast IPI].
-6. Non serve il device tree Apple (ADT): si fornisce info come proprietà del dispositivo (`num-irq`, `num-cpu`) invece di leggere `ipid-mask`, così si elimina la dipendenza `xnu_dtb.h`.
+What is needed in QEMU (stable APIs, independent of the forks) [hypothesis, based on the code read]:
+1. New sysbus device `watari-aic` (modeled on #1/#3): `qdev_init_gpio_in(n_irq)`, one `sysbus_init_irq` per CPU, MMIO region.
+2. New machine `hw/arm/watari-virt.c` (reduced copy of `virt.c` without `create_gic()`): CPU, RAM, PL011/UART, flash/UEFI, PCIe ecam, virtio-mmio. The device IRQ lines (`virt` uses GIC SPIs: UART, PCIe INTx, virtio) must be connected to `qdev_get_gpio_in(aic, n)`.
+3. For each CPU: `sysbus_connect_irq(aic, cpu, qdev_get_gpio_in(cpu, ARM_CPU_IRQ))` as in `t8030.c` (~lines 768-772) [verified].
+4. Timer: connect the CPU's outgoing `GTIMER_*` to `ARM_CPU_FIQ` (via `TYPE_OR_IRQ` as in `apple_a13.c`); on the standard `virt` they are instead GIC PPIs. This is the part that makes the bench a faithful imitation of the M1, where the timer arrives as FIQ and not via the AIC [verified for t8030; for M1: Linux creates the AIC_TMR_EL0_PHYS/VIRT FIQs inside the AIC as a separate domain, aic.c ~lines 552-600].
+5. M1 fast IPIs (t8103 uses `aic1_local_fipi_info` in Linux, aic.c ~lines 308-312 [verified]): require IMP-DEF sysregs in the CPU (`IPI_RR_*`, `IPI_SR_EL1`, etc.) that QEMU TCG does not have. On `watari-virt` with CPU `max`/`cortex-a72` these do not exist; for our tests it is realistic to use only legacy IPIs (like the AIC with `compatible` "apple,aic") [verified: Linux supports `apple,aic` = no fast IPI].
+6. The Apple device tree (ADT) is not needed: the info is supplied as device properties (`num-irq`, `num-cpu`) instead of reading `ipid-mask`, thus eliminating the `xnu_dtb.h` dependency.
 
-Dipendenze di #1 da rimuovere: `hw/arm/xnu_dtb.h`, `msi_nonbroken`, il timer di polling a 64 us (sostituibile con calcolo immediato in `set_irq`), il timebase nel registro. API da aggiornare rispetto a QEMU attuale: `VMSTATE_*` array, `DEVICE_NATIVE_ENDIAN`, include `hw/core/*`, `class_init(const void *)`, `qemu_mutex_unlock` dentro `WITH_QEMU_LOCK_GUARD` (da riscrivere) [ipotesi].
+Dependencies of #1 to remove: `hw/arm/xnu_dtb.h`, `msi_nonbroken`, the 64 us polling timer (replaceable with immediate computation in `set_irq`), the timebase in the register. APIs to update relative to current QEMU: `VMSTATE_*` arrays, `DEVICE_NATIVE_ENDIAN`, `hw/core/*` includes, `class_init(const void *)`, `qemu_mutex_unlock` inside `WITH_QEMU_LOCK_GUARD` (to be rewritten) [hypothesis].
 
-Sforzo: portare #1 a una `watari-virt` su QEMU recente: 1-2 giorni per il dispositivo + 2-3 per la macchina e il cablaggio dei dispositivi.
+Effort: porting #1 to a `watari-virt` on recent QEMU: 1-2 days for the device + 2-3 for the machine and the device wiring.
 
-## 4. Raccomandazione
+## 4. Recommendation
 
-**Scrivere da zero un modello AICv1 minimo (circa 250-350 righe), usando #1 (qemu-t8030, GPL-2.0, 683 righe) come riferimento di struttura e il driver Linux come specifica dei registri, e #3 (qemu-sptm) come riferimento delle API QEMU attuali.**
-- Perché non riusare un progetto intero: Inferno/t8030 portano un'intera macchina iPhone (ADT, SEP, DART, ecc.) irrilevante per noi; Inferno ha AGPL sul file AIC; t8030 è su QEMU 7.1 e archiviato.
-- Perché non estrarre il file così com'è: dipende dal DT Apple, ha hack (`msi_nonbroken`, polling) e hardcode T8030; la pulizia costa quanto riscriverlo, e la licenza di #1 è implicita.
-- Se in futuro si preferisce copiare, usare solo #1 con header di provenienza GPL-2.0 e chiedere conferma all'autore [ipotesi su licenza].
+**Write a minimal AICv1 model from scratch (about 250-350 lines), using #1 (qemu-t8030, GPL-2.0, 683 lines) as a structure reference and the Linux driver as the register specification, and #3 (qemu-sptm) as a reference for current QEMU APIs.**
+- Why not reuse a whole project: Inferno/t8030 carry an entire iPhone machine (ADT, SEP, DART, etc.) irrelevant to us; Inferno has AGPL on the AIC file; t8030 is on QEMU 7.1 and archived.
+- Why not extract the file as is: it depends on the Apple DT, has hacks (`msi_nonbroken`, polling) and T8030 hardcodes; cleaning it costs as much as rewriting it, and the license of #1 is implicit.
+- If in the future copying is preferred, use only #1 with a GPL-2.0 provenance header and ask the author for confirmation [hypothesis on license].
 
-Stima in giorni [ipotesi]:
-| Attività | Giorni |
+Estimate in days [hypothesis]:
+| Activity | Days |
 |---|---|
-| Dispositivo AICv1 (IRQ, mask, dest, SW_SET/CLR, IACK, IPI legacy), test con driver Linux `irq-apple-aic` | 2 |
-| Macchina `watari-virt` (partenza da `virt.c` senza GIC, UART, PCIe, virtio, cablaggio IRQ ad AIC) | 3 |
-| Timer ARM -> FIQ (OR gate sulla CPU) e test | 1 |
-| Test bring-up con UEFI/Windows ARM64 + debug | 2-3 |
-| Totale | circa 8-9 |
+| AICv1 device (IRQ, mask, dest, SW_SET/CLR, IACK, legacy IPI), test with the Linux driver `irq-apple-aic` | 2 |
+| `watari-virt` machine (starting from `virt.c` without GIC, UART, PCIe, virtio, IRQ wiring to AIC) | 3 |
+| ARM timer -> FIQ (OR gate on the CPU) and test | 1 |
+| Bring-up test with UEFI/Windows ARM64 + debug | 2-3 |
+| Total | about 8-9 |
 
-## 5. Minimo che il modello deve fare per i nostri test
+## 5. Minimum the model must do for our tests
 
-Specificato dai driver m1n1/Linux (`irq-apple-aic.c`):
-1. Info: lettura `0x0004` con `NR_IRQ` nei 16 bit bassi (Linux `AIC_INFO_NR_IRQ`); `0x2000 WHOAMI` = id CPU.
-2. Maschere: `MASK_SET 0x4100 + 4*(n/32)`, `MASK_CLR 0x4180 + 4*(n/32)`, tutte mascherate dopo reset; lettura di `MASK_*` ritorna lo stato.
-3. Target: `TARGET_CPU 0x3000 + 4*n` (Linux scrive bitmask CPU); default CPU0.
-4. Sorgenti software: `SW_SET 0x4000`, `SW_CLR 0x4080` (usati per test e per `irq_set_irqchip_state`).
-5. `EVENT 0x2004`: ritorna `(1<<16)|n` per IRQ esterna pendente, non mascherata e destinata a quella CPU; 0 quando non ce ne sono (Linux cicla finché `event != 0`); l'IRQ consegnata resta mascherata finché `MASK_CLR` (eoi) [verificato: comportamento in Linux `aic_handle_irq` e `aic_irq_eoi`].
-6. IPI legacy: `IPI_SEND 0x2008` (bit per CPU e `BIT(31)` self), `IPI_ACK 0x200C`, `IPI_MASK_SET/CLR 0x2024/0x2028`; evento `(4<<16)|1` (other) o `(4<<16)|2` (self) [verificato: aic.c righe 82-96].
-7. Uscita: una linea IRQ per CPU verso `ARM_CPU_IRQ`, alzata se esiste almeno una causa non mascherata, abbassata dopo che l'evento è consumato.
-8. Timer: nessun registro AIC; i timer ARM (fisico e virtuale EL1/EL0) vanno cablati a `ARM_CPU_FIQ` nella macchina, con un FIQ mascherabile come in M1. Se ci serve anche il "FIQ via AIC" come domain separato (Linux `AIC_TMR_*`, `VM_TMR_FIQ_ENA_EL2`), servono sysreg Apple (`SYS_IMP_APL_VM_TMR_FIQ_ENA_EL2`) nella CPU: fuori dal minimo, da valutare con F0 FIQ (`re/f0-m1-fiq-irq.md`) [ipotesi].
-9. Non servono per il minimo: DEFER IPI, GLB_CFG, timestamp, fast IPI, PMU FIQ, multi-die, AICv2/v3.
+Specified by the m1n1/Linux drivers (`irq-apple-aic.c`):
+1. Info: read of `0x0004` with `NR_IRQ` in the low 16 bits (Linux `AIC_INFO_NR_IRQ`); `0x2000 WHOAMI` = CPU id.
+2. Masks: `MASK_SET 0x4100 + 4*(n/32)`, `MASK_CLR 0x4180 + 4*(n/32)`, all masked after reset; reading `MASK_*` returns the state.
+3. Target: `TARGET_CPU 0x3000 + 4*n` (Linux writes a CPU bitmask); default CPU0.
+4. Software sources: `SW_SET 0x4000`, `SW_CLR 0x4080` (used for tests and for `irq_set_irqchip_state`).
+5. `EVENT 0x2004`: returns `(1<<16)|n` for a pending, unmasked external IRQ destined for that CPU; 0 when there are none (Linux loops until `event != 0`); the delivered IRQ stays masked until `MASK_CLR` (eoi) [verified: behavior in Linux `aic_handle_irq` and `aic_irq_eoi`].
+6. Legacy IPI: `IPI_SEND 0x2008` (bit per CPU and `BIT(31)` self), `IPI_ACK 0x200C`, `IPI_MASK_SET/CLR 0x2024/0x2028`; event `(4<<16)|1` (other) or `(4<<16)|2` (self) [verified: aic.c lines 82-96].
+7. Output: one IRQ line per CPU towards `ARM_CPU_IRQ`, raised if at least one unmasked cause exists, lowered after the event is consumed.
+8. Timer: no AIC register; the ARM timers (physical and virtual EL1/EL0) must be wired to `ARM_CPU_FIQ` in the machine, with a maskable FIQ as on M1. If we also need the "FIQ via AIC" as a separate domain (Linux `AIC_TMR_*`, `VM_TMR_FIQ_ENA_EL2`), Apple sysregs (`SYS_IMP_APL_VM_TMR_FIQ_ENA_EL2`) are needed in the CPU: outside the minimum, to be evaluated with F0 FIQ (`re/f0-m1-fiq-irq.md`) [hypothesis].
+9. Not needed for the minimum: DEFER IPI, GLB_CFG, timestamps, fast IPI, PMU FIQ, multi-die, AICv2/v3.
 
-## 6. Cose non verificate / da fare
+## 6. Unverified items / to do
 
-- Non ho letto il driver m1n1 (`src/aic.c`) direttamente: la specifica dei registri è dedotta da Linux e dal modello t8030 [ipotesi per m1n1].
-- Licenza effettiva del file AIC di qemu-t8030 non dichiarata nel file [ipotesi: GPL-2.0].
-- Da verificare se QEMU 10.x/11.x ha già `hw/arm/virt` con opzione `gic-version=none` o simili: per la mia ricerca il QEMU ufficiale non permette di togliere il GIC [dato dalla consegna dell'utente, non riverificato].
+- I did not read the m1n1 driver (`src/aic.c`) directly: the register specification is deduced from Linux and the t8030 model [hypothesis for m1n1].
+- Actual license of the qemu-t8030 AIC file not declared in the file [hypothesis: GPL-2.0].
+- To verify whether QEMU 10.x/11.x already has `hw/arm/virt` with a `gic-version=none` option or similar: from my research official QEMU does not allow removing the GIC [data from the user's brief, not re-verified].

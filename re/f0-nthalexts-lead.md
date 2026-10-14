@@ -1,30 +1,30 @@
-# Pista: Wack0/NtHalExts (`halextbcm2709`)
+# Lead: Wack0/NtHalExts (`halextbcm2709`)
 
-- Data: 2026-10-13 · Fonte: https://github.com/Wack0/NtHalExts (README letto da Opus via `gh api`; Unlicense; ultimo push 2024-09).
-- **Attenzione:** il repo contiene header e librerie del DDK Microsoft (era Windows 8 M2). **Non si copiano** nella nostra repo (ADR-0005). Si leggono solo `README.md` e il codice originale dell'autore.
+- Date: 2026-10-13 · Source: https://github.com/Wack0/NtHalExts (README read by Opus via `gh api`; Unlicense; last push 2024-09).
+- **Warning:** the repo contains Microsoft DDK headers and libraries (Windows 8 M2 era). **They must not be copied** into our repo (ADR-0005). Only `README.md` and the author's original code are read.
 
-## Cosa dice il README [verificato]
-- Le estensioni HAL sono state scritte per **ARMv7 NT** (Windows 8.x ARM32) e si caricano tramite tabelle **CSRT**.
-- `halextgit`: estensione per il timer generico ARM.
-- `halextbcm2709`: estensione per i **controller di interrupt BCM2709** (Raspberry Pi 2, **senza GIC**), "backported from rs1-era HAL".
-- Dice anche: le estensioni HAL per i controller di interrupt *"were added in 789x but removed again in 799x"*. Per le build successive l'estensione **cerca per pattern le funzioni non più esportate** dall'HAL e riconosce le strutture dati che cambiano tra una build e l'altra (`halextapi.c`). Se qualcosa non torna, va in bugcheck.
-- Testata sulle build 7957–8400 (Windows 8 pre-release), "dovrebbe" arrivare fino a 9600 (8.1), ma non è stato provato.
+## What the README says [verified]
+- The HAL extensions were written for **ARMv7 NT** (Windows 8.x ARM32) and are loaded through **CSRT** tables.
+- `halextgit`: extension for the ARM generic timer.
+- `halextbcm2709`: extension for the **BCM2709 interrupt controllers** (Raspberry Pi 2, **without a GIC**), "backported from rs1-era HAL".
+- It also says: the HAL extensions for interrupt controllers *"were added in 789x but removed again in 799x"*. For later builds the extension **searches by pattern for the functions no longer exported** by the HAL and recognizes the data structures that change from build to build (`halextapi.c`). If something does not match, it bugchecks.
+- Tested on builds 7957–8400 (Windows 8 pre-release), "should" work up to 9600 (8.1), but this has not been tried.
 
-## Cosa significa per noi
-1. Il meccanismo **ufficiale** "estensione HAL = controller di interrupt" è esistito per poco ed è stato **rimosso** prima di Windows 8 RTM. È coerente con A1 (nessun esempio pubblico) e con A4 (il BCM era supportato dentro l'HAL).
-2. **Esiste però una terza via** (oltre a "nativo pulito" e "piano B"): un'estensione HAL che **non modifica nessun file di Windows**, ma trova e chiama funzioni interne non documentate per registrare un controller.
-   - Pro: niente hypervisor; Windows resta originale su disco.
-   - Contro: fragile, si può rompere a ogni build di Windows; richiede di conoscere le funzioni interne dell'HAL di Windows 11 ARM64, cioè **analisi dei binari**, che il nostro metodo oggi esclude (bozza ADR "Fase 0 sperimentale"); possibili problemi con PatchGuard o con HVCI [ipotesi]; collaudata solo su ARM32 e Windows 8.
-3. Il codice originale di `halextbcm2709.c`/`halextapi.c` va **studiato** (solo lettura): come si struttura un controller di interrupt per l'HAL di NT, quali callback servono, come si gestiscono IPI e priorità. Anche se le API sono cambiate, è il modello più vicino a ciò che serve per l'AIC.
+## What it means for us
+1. The **official** mechanism "HAL extension = interrupt controller" existed briefly and was **removed** before Windows 8 RTM. It is consistent with A1 (no public example) and with A4 (the BCM was supported inside the HAL).
+2. However **a third way exists** (besides "clean native" and "plan B"): a HAL extension that **modifies no Windows file**, but finds and calls undocumented internal functions to register a controller.
+   - Pro: no hypervisor; Windows stays original on disk.
+   - Con: fragile, may break with every Windows build; requires knowing the internal functions of the Windows 11 ARM64 HAL, i.e. **binary analysis**, which our method today excludes (ADR draft "Phase 0 experimental"); possible problems with PatchGuard or HVCI [hypothesis]; proven only on ARM32 and Windows 8.
+3. The original code of `halextbcm2709.c`/`halextapi.c` must be **studied** (read-only): how an interrupt controller is structured for the NT HAL, which callbacks are needed, how IPIs and priorities are handled. Even if the APIs have changed, it is the closest model to what is needed for the AIC.
 
-## Probabilità aggiornate (stime di Opus, non misure)
-| Strada | A7 (prima) | Ora |
+## Updated probabilities (Opus estimates, not measurements)
+| Path | A7 (before) | Now |
 |---|---|---|
-| Nativo "pulito" (solo meccanismi ufficiali) | ~12% | **~5%** |
-| Nativo "con funzioni interne" (stile NtHalExts) | non considerata | **~20%** |
-| Piano B (strato EL2 che presenta un GIC virtuale) | ~53% | **~50%** |
-| Altro / blocco | ~35% | **~25%** |
+| "Clean" native (official mechanisms only) | ~12% | **~5%** |
+| Native "with internal functions" (NtHalExts style) | not considered | **~20%** |
+| Plan B (EL2 layer presenting a virtual GIC) | ~53% | **~50%** |
+| Other / blocked | ~35% | **~25%** |
 
-## Decisioni che spettano all'utente
-- Accettare la terza via richiede di **rivedere la regola "niente analisi dei binari Microsoft"**: se, come e con quali limiti legali (interoperabilità UE, Dir. 2009/24/CE art. 6).
-- Fissare la soglia per il piano B.
+## Decisions that belong to the user
+- Accepting the third way requires **revisiting the rule "no analysis of Microsoft binaries"**: whether, how and with what legal limits (EU interoperability, Dir. 2009/24/EC art. 6).
+- Fixing the threshold for plan B.

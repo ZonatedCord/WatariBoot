@@ -1,22 +1,22 @@
-# ADR-0004: Evitare le FIQ, usare IRQ per IPI e timer
+# ADR-0004: Avoid FIQs, use IRQ for IPIs and timer
 
-- Stato: Accettata (dal piano), con ipotesi tecniche non verificate
-- Data: 2026-10-12 · Collegamenti: [ARCHITECTURE sez. 5](../design/watariboot/ARCHITECTURE.md), [RISKS R-03](../design/watariboot/RISKS.md)
+- Status: Accepted (from the plan), with unverified technical hypotheses
+- Date: 2026-10-12 · Links: [ARCHITECTURE sec. 5](../design/watariboot/ARCHITECTURE.md), [RISKS R-03](../design/watariboot/RISKS.md)
 
-## Contesto
-[verificato: `drivers/irqchip/irq-apple-aic.c` di Linux] L'AIC consegna come FIQ gli eventi hard-wired (timer ARM, Fast IPI, performance counter); ha anche due IPI per CPU e 896 IRQ level-triggered. Windows potrebbe non gestire FIQ [ipotesi: da analizzare nel vettore eccezioni in Fase 0].
+## Context
+[verified: Linux `drivers/irqchip/irq-apple-aic.c`] The AIC delivers hard-wired events (ARM timer, Fast IPI, performance counters) as FIQs; it also has two IPIs per CPU and 896 level-triggered IRQs. Windows may not handle FIQs [hypothesis: to be analyzed in the exception vector in Phase 0].
 
-## Decisione
-- IPI: tramite i registri IPI dell'AIC in modalita' IRQ (come faceva Linux all'inizio [ipotesi: dal piano]), non Fast IPI.
-- Timer: sorgente in IRQ fornita da un'estensione HAL timer (meccanismo ritenuto documentato da Microsoft [ipotesi]).
-- Le FIQ restano mascherate.
+## Decision
+- IPI: via the AIC IPI registers in IRQ mode (as Linux did at the beginning [hypothesis: from the plan]), not Fast IPI.
+- Timer: IRQ source provided by a timer HAL extension (a mechanism believed to be documented by Microsoft [hypothesis]).
+- FIQs stay masked.
 
-## Alternative
-- Gestire le FIQ in Windows: richiederebbe modifica del vettore eccezioni (non nativo).
-- Intercettare FIQ in uno shim EL2 e ri-iniettare IRQ: piano B, ritenuto hypervisor (ADR-0001).
-- Polling del timer: prestazioni insufficienti.
+## Alternatives (rejected)
+- Handle FIQs in Windows: would require modifying the exception vector (not native).
+- Intercept FIQs in an EL2 shim and re-inject IRQs: plan B, considered a hypervisor (ADR-0001).
+- Timer polling: insufficient performance.
 
-## Conseguenze
-- [ipotesi] Serve che il M1 possa instradare il timer come IRQ (non verificato; R-03).
-- Prestazioni IPI inferiori a Fast IPI (non misurate).
-- Un FIQ inatteso mascherato resta invisibile: serve diagnostica (contatori, test di Fase 3).
+## Consequences
+- [hypothesis] The M1 must be able to route the timer as an IRQ (not verified; R-03).
+- IPI performance lower than Fast IPI (not measured).
+- An unexpected masked FIQ stays invisible: diagnostics are needed (counters, Phase 3 tests).

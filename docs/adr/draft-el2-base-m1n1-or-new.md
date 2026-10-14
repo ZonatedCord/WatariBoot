@@ -1,32 +1,32 @@
-# ADR (bozza): Watari EL2 è uno strato nuovo; m1n1 resta solo il loader
+# ADR (draft): Watari EL2 is a new layer; m1n1 remains only the loader
 
-- Data: 2026-10-14 · Stato: **proposto** (da approvare da Marco). Il numero si assegna al merge.
-- Collegamenti: `docs/adr/draft-plan-b-el2-layer.md` (decisione di fondo), `docs/design/watari-el2/ARCHITECTURE.md` §2, `docs/adr/draft-el2-license.md`, ADR-0007 (strada indipendente da NTASP).
+- Date: 2026-10-14 · Status: **proposed** (to be approved by Marco). The number is assigned at merge.
+- Links: `docs/adr/draft-plan-b-el2-layer.md` (underlying decision), `docs/design/watari-el2/ARCHITECTURE.md` §2, `docs/adr/draft-el2-license.md`, ADR-0007 (path independent from NTASP).
 
-## Contesto
-Il piano B richiede uno strato a EL2 con vGICv3, PSCI, timer come interrupt e SGI→IPI. Esistono tre basi possibili: l'hypervisor di m1n1, il fork NTASP `m1n1_windows`, o codice nuovo. Fatti verificati il 2026-10-14:
-- m1n1 `hv` ha stage-2, trap MMIO, più vCPU e timer guest via FIQ virtuale, ma **non ha un vGIC**; ogni eccezione non gestita passa al proxy Python e il guest si ferma finché l'host risponde; il percorso eccezioni è lento e single-thread [V: `re/planB-feasibility.md` §2].
-- m1n1 dalla 2.0.0 è **GPL-2.0-or-later** (MIT fino a 1.9.9): README e file `src/hv/hv_vm.c`, `src/main.c` [V].
-- NTASP `hv_vgic.c` è incompleto (pending/active mancanti, 1 core, SGI "TODO"), ha un solo manutentore attivo e dichiara di ispirarsi a KVM [V: `re/ntasp-analysis.md`, `planB-feasibility.md` §3]; `re/ntasp-quality-audit.md` giudica "da riscrivere" il lato UEFI.
-- Un nucleo che gira solo su hardware Apple non si può testare nel banco QEMU TCG con `virtualization=on`, che è l'unico ambiente di sviluppo senza host di debug.
+## Context
+Plan B requires an EL2 layer with vGICv3, PSCI, timer as an interrupt, and SGI→IPI. Three bases are possible: the m1n1 hypervisor, the NTASP fork `m1n1_windows`, or new code. Facts verified on 2026-10-14:
+- m1n1 `hv` has stage-2, MMIO traps, multiple vCPUs and a guest timer via virtual FIQ, but **has no vGIC**; every unhandled exception goes to the Python proxy and the guest stops until the host answers; the exception path is slow and single-threaded [verified: `re/planB-feasibility.md` §2].
+- m1n1 since 2.0.0 is **GPL-2.0-or-later** (MIT up to 1.9.9): README and files `src/hv/hv_vm.c`, `src/main.c` [verified].
+- NTASP `hv_vgic.c` is incomplete (pending/active missing, 1 core, SGI "TODO"), has a single active maintainer and states it is inspired by KVM [verified: `re/ntasp-analysis.md`, `planB-feasibility.md` §3]; `re/ntasp-quality-audit.md` judges the UEFI side "to be rewritten".
+- A core that runs only on Apple hardware cannot be tested in the QEMU TCG bench with `virtualization=on`, which is the only development environment without a debug host.
 
-## Decisione
-Si scrive **Watari EL2 come progetto nuovo** (C freestanding + assembly AArch64, directory `el2/`), con:
-- un **nucleo portabile** (vGIC, PSCI, timer, stage-2, trap) senza dipendenze hardware, testabile su host;
-- **backend** sostituibili per la piattaforma (`qemu-virt`, `t8103`) e per le sorgenti di interrupt/IPI/timer;
-- **m1n1 come loader** (iBoot → m1n1 → Watari EL2 come payload in stile Linux `Image` con FDT in `x0`), non come hypervisor;
-- **m1n1 hv come strumento di misura** in sola lettura (osservare come macOS programma AIC/timer, verificare la semantica di registri IMP-DEF), mai nel percorso di produzione.
+## Decision
+**Watari EL2 is written as a new project** (freestanding C + AArch64 assembly, directory `el2/`), with:
+- a **portable core** (vGIC, PSCI, timer, stage-2, traps) with no hardware dependencies, testable on the host;
+- replaceable **backends** for the platform (`qemu-virt`, `t8103`) and for the interrupt/IPI/timer sources;
+- **m1n1 as loader** (iBoot → m1n1 → Watari EL2 as payload in the style of the Linux `Image` with the FDT in `x0`), not as hypervisor;
+- **m1n1 hv as a measurement tool**, read-only (observing how macOS programs the AIC/timer, verifying the semantics of IMP-DEF registers), never in the production path.
 
-## Conseguenze
-- Positivo: testabilità (L0-L3 senza MacBook), autonomia (nessun proxy), confini chiari, licenza controllata, coerenza con ADR-0007.
-- Negativo: si riscrivono stage-2 e trap (stima 600-900 righe [I]) che m1n1 ha già; il vGIC si scrive comunque (2.500-4.000 righe [I]).
-- Il formato di consegna da m1n1 e lo stato dei core secondari sono **assunzioni da verificare** in M3a (R-10).
-- Si crea un nuovo albero `el2/`: aggiornare "Struttura" di `CLAUDE.md` al merge.
-- Il vincolo di `CLAUDE.md` "niente hypervisor" diventa "dual boot, niente macOS sotto, strato EL2 minimo consentito" (già deciso nella bozza del piano B).
+## Consequences
+- Positive: testability (L0-L3 without the MacBook), autonomy (no proxy), clear boundaries, controlled license, consistency with ADR-0007.
+- Negative: stage-2 and traps that m1n1 already has are rewritten (estimate 600-900 lines [hypothesis]); the vGIC has to be written anyway (2,500-4,000 lines [hypothesis]).
+- The hand-off format from m1n1 and the state of the secondary cores are **assumptions to be verified** in M3a (R-10).
+- A new `el2/` tree is created: update the "Structure" section of `CLAUDE.md` at merge.
+- The `CLAUDE.md` constraint "no hypervisor" becomes "dual boot, no macOS underneath, minimal EL2 layer allowed" (already decided in the plan B draft).
 
-## Alternative
-1. **Estendere m1n1 hv aggiungendo il vGIC.** Scartata: GPL-2.0-or-later (vincola la licenza dell'immagine), proxy e percorso lento da ristrutturare (2-3 settimane [I, PB §2]) più un vGIC comunque da scrivere, nessun test automatico, impossibile da eseguire in QEMU.
-2. **Fork di NTASP `m1n1_windows`.** Scartata: incompleto, stato di licenza incerto (MIT dichiarato su codice derivato da m1n1 GPL e "ispirato" a KVM), contraddice ADR-0007, dipendenza da un manutentore.
-3. **Linux/KVM (Asahi) come host con Windows guest e periferiche in passthrough.** Scartata: un sistema operativo sotto Windows contraddice "dual boot, niente OS sotto"; resta come **controllo sperimentale** perché Windows 11 gira già come guest KVM su Asahi [V: `windows-11-vm.md`, via PB §0].
-4. **Rust `no_std`.** Scartata: richiede toolchain da installare (regola del backup) e non c'è esperienza nel repository; il C con test host e `-Werror` basta per le dimensioni previste. Riconsiderabile per il solo vGIC.
-5. **Strato come driver di EDK2 (UEFI a EL2).** Scartata: EDK2 deve girare a EL1 sotto lo strato; mescolare i due rende impossibile testare lo strato da solo.
+## Alternatives (rejected)
+1. **Extend m1n1 hv by adding the vGIC.** Rejected: GPL-2.0-or-later (binds the image license), proxy and slow path to be restructured (2-3 weeks [hypothesis, PB §2]) plus a vGIC to write anyway, no automated tests, impossible to run in QEMU.
+2. **Fork NTASP `m1n1_windows`.** Rejected: incomplete, uncertain license status (MIT declared on code derived from GPL m1n1 and "inspired" by KVM), contradicts ADR-0007, dependency on a maintainer.
+3. **Linux/KVM (Asahi) as host with a Windows guest and passthrough peripherals.** Rejected: an operating system underneath Windows contradicts "dual boot, no OS underneath"; it remains as an **experimental control** because Windows 11 already runs as a KVM guest on Asahi [verified: `windows-11-vm.md`, via PB §0].
+4. **Rust `no_std`.** Rejected: requires a toolchain to be installed (backup rule) and there is no experience in the repository; C with host tests and `-Werror` is enough for the expected size. Can be reconsidered for the vGIC alone.
+5. **Layer as an EDK2 driver (UEFI at EL2).** Rejected: EDK2 must run at EL1 under the layer; mixing the two makes it impossible to test the layer on its own.

@@ -1,37 +1,38 @@
 # Watari Boot
 
-**渡 (watari): attraversare, passare da una riva all'altra.**
+**渡 (watari): to cross over, to pass from one shore to the other.**
 
-> Watari Boot: Windows nativo su Apple Silicon
+> Watari Boot: Native Windows on Apple Silicon
 
-**Windows ARM64 in dual boot nativo su Apple Silicon.** Senza hypervisor, emulatore o VM, e senza modificare Windows.
+**Windows ARM64 dual boot on Apple Silicon, without macOS underneath.** No classic VM (Parallels/UTM), and no modification to Windows: Windows runs on top of a minimal EL2 layer (vGIC, PSCI, timer, IPI), while everything else stays native (full-speed cores, real peripherals). This is Plan B, adopted on 2026-10-14 after the pure native route turned out to be closed (see [docs/STATUS.md](docs/STATUS.md)).
 
-La catena di avvio: m1n1 (bootloader, da [Asahi Linux](https://github.com/AsahiLinux)) → EDK2 (UEFI + ACPI generate dall'ADT di Apple) → Windows ARM64. Windows impara a usare l'hardware Apple tramite i suoi meccanismi di estensione ufficiali: estensioni HAL, ACPI, driver KMDF/StorPort e PEP.
+The boot chain: m1n1 (bootloader, from [Asahi Linux](https://github.com/AsahiLinux)) → minimal EL2 layer → EDK2 (UEFI + ACPI generated from Apple's ADT) → Windows ARM64. Windows learns to use the Apple hardware through its official extension mechanisms: HAL extensions, ACPI, KMDF/StorPort drivers and PEP.
 
-Primo target: MacBook Pro 13" M1 (t8103).
+First target: MacBook Pro 13" M1 (t8103).
 
-## Stato
-Fase 0: lo spike sul HAL di Windows e i controller di interrupt non-GIC. Il dettaglio è in [docs/STATUS.md](docs/STATUS.md).
+## Status
+Phase 0: the spike on the Windows HAL and non-GIC interrupt controllers. Windows 11 ARM64 already installs and boots in QEMU on our own EDK2 and our own ACPI tables (V0/V1); the pure native route is closed (GIC required, parking protocol deadlocks), so Plan B is the way forward. Details in [docs/STATUS.md](docs/STATUS.md).
 
-## Token e costi
+## Tokens and costs
 <!-- TOKEN-COUNTER:START -->
-**Token totali: 230,549,593 · Costo stimato: $99.36** (aggiornato 2026-10-14; marco: 6 sessioni, $99.36)
+**Total tokens: 256,669,779 · Estimated cost: $109.79** (updated 2026-10-14; marco: 6 sessions, $109.79)
 
-| Modello | Input | Output | Cache scritta | Cache letta | Costo stimato |
+| Model | Input | Output | Cache written | Cache read | Estimated cost |
 |---|---:|---:|---:|---:|---:|
-| `claude-opus-5-5` | 944 | 389,069 | 4,313,065 | 148,028,728 | $71.90 |
-| `claude-sonnet-5-5` | 1,516 | 182,517 | 4,206,053 | 73,427,701 | $27.46 |
+| `claude-opus-5-5` | 1,006 | 406,659 | 4,350,727 | 164,643,061 | $75.87 |
+| `claude-sonnet-5-5` | 1,670 | 390,759 | 5,302,241 | 81,573,656 | $33.92 |
 
-<sub>Stima a prezzi API Anthropic, calcolata dai transcript locali di Claude Code con `tools/token-usage.py`. Con un abbonamento (Pro/Max) la spesa reale è il canone: questo è il costo equivalente a consumo. L'output dei subagenti può essere sottostimato nei log.</sub>
+<sub>Estimate at Anthropic API prices, computed from local Claude Code transcripts with `tools/token-usage.py`. With a subscription (Pro/Max) the real cost is the subscription fee: this is the equivalent pay-as-you-go cost. Subagent output may be under-reported in the logs.</sub>
 <!-- TOKEN-COUNTER:END -->
 
-## Documenti
-- [Piano](docs/PLAN.md)
-- [Stato](docs/STATUS.md)
-- [Diario delle sessioni](docs/sessions/)
-- [Come si collabora](docs/CONTRIBUTING.md) · [Avvio per un nuovo collaboratore](docs/ONBOARDING.md)
-- [Decisioni architetturali](docs/adr/)
-- [Design](docs/design/watariboot/)
+## Documents
+- [Plan](docs/PLAN.md)
+- [Status](docs/STATUS.md)
+- [Session diary](docs/sessions/)
+- [How we collaborate](docs/CONTRIBUTING.md) · [Onboarding for a new collaborator](docs/ONBOARDING.md)
+- [Architecture decisions](docs/adr/)
+- [Design](docs/design/watariboot/) · [EL2 layer design](docs/design/watari-el2/)
+- [Failures and lessons learned](docs/FAILURES.md)
 
-## Avvertenze
-Progetto di ricerca sperimentale. Nessun codice o binario Microsoft è incluso in questo repository.
+## Disclaimer
+Experimental research project. No Microsoft code or binaries are included in this repository.

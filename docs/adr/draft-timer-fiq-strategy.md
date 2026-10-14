@@ -1,19 +1,19 @@
-# ADR (bozza): Strategia per il timer del M1, che arriva solo come FIQ
+# ADR (draft): Strategy for the M1 timer, which arrives only as FIQ
 
-- Data: 2026-10-13 · Stato: **proposto**. Il numero si assegna al merge. Rivede ADR-0004.
+- Date: 2026-10-13 · Status: **proposed**. The number is assigned at merge. Revises ADR-0004.
 
-## Contesto
-In A3 (`re/f0-m1-fiq-irq.md`) abbiamo verificato che il timer architetturale ARM del t8103 arriva **solo come FIQ** (`t8103.dtsi`, `arm,armv8-timer`, `AIC_FIQ`). Non c'è nessuna via documentata per averlo in IRQ. ADR-0004 ("niente FIQ") regge solo se Windows può fare a meno del timer architetturale, oppure se troviamo un'alternativa.
+## Context
+In A3 (`re/f0-m1-fiq-irq.md`) we verified that the ARM architectural timer of the t8103 arrives **only as FIQ** (`t8103.dtsi`, `arm,armv8-timer`, `AIC_FIQ`). There is no documented way to get it as an IRQ. ADR-0004 ("no FIQ") holds only if Windows can do without the architectural timer, or if we find an alternative.
 
-## Decisione (proposta)
-Si esplorano in parallelo quattro piste, tutte realizzabili da noi e **senza hypervisor**:
-1. **Hardware (A9 → HW-1):** verificare sul M1 il bit IMP-DEF "CONVERT_SIQ_TO_IRQ" e altri meccanismi Apple.
-2. **Windows e le FIQ (A10 → V6 in QEMU):** se Windows ARM64 gestisce una FIQ del timer, il vincolo sparisce.
-3. **Estensione HAL timer sul watchdog (A11):** usare il watchdog `23d2b0000` (AIC IRQ 338) come sorgente del clock, distribuito agli altri core con le IPI.
-4. **Banco di prova senza GIC (A8):** un modello AIC in QEMU, per provare l'estensione HAL su un sistema realmente non-GIC.
+## Decision (proposed)
+Four tracks are explored in parallel, all achievable by us and **without a hypervisor**:
+1. **Hardware (A9 → HW-1):** verify on the M1 the IMP-DEF bit "CONVERT_SIQ_TO_IRQ" and other Apple mechanisms.
+2. **Windows and FIQs (A10 → V6 in QEMU):** if Windows ARM64 handles a timer FIQ, the constraint disappears.
+3. **Timer HAL extension on the watchdog (A11):** use the watchdog `23d2b0000` (AIC IRQ 338) as the clock source, distributed to the other cores with IPIs.
+4. **Test bench without a GIC (A8):** an AIC model in QEMU, to test the HAL extension on a genuinely non-GIC system.
 
-Il primo esito positivo, in quest'ordine di preferenza (1, 2, 3), decide. La pista 4 serve a tutte e tre.
+The first positive outcome, in this order of preference (1, 2, 3), decides. Track 4 serves all three.
 
-## Conseguenze
-- La Fase 0 si allunga con A8–A11 e con HW-1, che richiede il debug host.
-- Se le piste 1, 2 e 3 falliscono tutte, si torna al piano B di ADR-0001 e decide l'utente.
+## Consequences
+- Phase 0 gets longer with A8–A11 and with HW-1, which requires the debug host.
+- If tracks 1, 2 and 3 all fail, we go back to plan B of ADR-0001 and the user decides.

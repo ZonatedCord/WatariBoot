@@ -1,20 +1,20 @@
-# ADR-0001: Boot nativo senza hypervisor
+# ADR-0001: Native boot without a hypervisor
 
-- Stato: Accettata (dal piano approvato `docs/PLAN.md`); revocabile solo con decisione esplicita dell'utente
-- Data: 2026-10-12 · Collegamenti: [PRD](../design/watariboot/PRD.md), [RISKS R-01](../design/watariboot/RISKS.md)
+- Status: Accepted (from the approved plan `docs/PLAN.md`); revocable only by an explicit decision of the user
+- Date: 2026-10-12 · Links: [PRD](../design/watariboot/PRD.md), [RISKS R-01](../design/watariboot/RISKS.md)
 
-## Contesto
-L'obiettivo e' usare tutti gli 8 core, le frequenze piene e, a lungo termine, la GPU del M1, senza VM/emulatore. Asahi ha escluso Windows nativo ritenendo necessaria una modifica del kernel [ipotesi: affermazione riportata dal piano, fonte non verificata]. Si ritiene [ipotesi] che esistano estensioni ufficiali (HAL extension via CSRT, tabelle ACPI, driver) sufficienti.
+## Context
+The goal is to use all 8 cores, full frequencies and, in the long term, the M1 GPU, without a VM/emulator. Asahi ruled out native Windows, believing a kernel modification to be necessary [hypothesis: claim reported by the plan, source not verified]. It is believed [hypothesis] that official extensions (HAL extension via CSRT, ACPI tables, drivers) exist and are sufficient.
 
-## Decisione
-Windows ARM64 non modificato gira direttamente sull'hardware; la catena e' m1n1 -> EDK2 -> Windows. Nessun hypervisor, emulatore o VM come soluzione finale. QEMU e' solo banco di prova.
+## Decision
+Unmodified Windows ARM64 runs directly on the hardware; the chain is m1n1 -> EDK2 -> Windows. No hypervisor, emulator or VM as the final solution. QEMU is only a test bench.
 
-## Alternative
-- Hypervisor completo (stile Parallels/VM): scartato, contrario all'obiettivo.
-- Shim minimo a EL2 per i soli interrupt (interfaccia GIC di virtualizzazione): piano B (a), non scelto; decide l'utente se la Fase 0 e' negativa [ipotesi: fattibilita' non verificata].
-- Patch del kernel Windows: piano B (b), solo ricerca, non distribuibile.
+## Alternatives (rejected)
+- Full hypervisor (Parallels/VM style): rejected, contrary to the goal.
+- Minimal EL2 shim for interrupts only (virtualization GIC interface): plan B (a), not chosen; the user decides if Phase 0 is negative [hypothesis: feasibility not verified].
+- Windows kernel patch: plan B (b), research only, not distributable.
 
-## Conseguenze
-- Tutto dipende dallo spike di Fase 0 (R-01).
-- L'architettura e' tenuta a interfacce stabili cosi' che un eventuale piano B cambi solo il generatore ACPI e il firmware (ARCHITECTURE sez. 7).
-- Ogni deviazione dal nativo richiede un ADR nuovo e conferma dell'utente.
+## Consequences
+- Everything depends on the Phase 0 spike (R-01).
+- The architecture is kept behind stable interfaces so that a possible plan B changes only the ACPI generator and the firmware (ARCHITECTURE sec. 7).
+- Any deviation from native requires a new ADR and user confirmation.

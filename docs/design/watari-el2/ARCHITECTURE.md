@@ -1,54 +1,54 @@
 # ARCHITECTURE: Watari EL2
 
-- Progetto: Watari Boot, sottosistema Watari EL2 · Data: 2026-10-14 · Versione: 0.1 · Stato: draft
-- Documenti collegati: [PRD](PRD.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · [DESIGN-STATUS](DESIGN-STATUS.md)
-- Marcatura: **[V: fonte]** = verificato leggendo la fonte; **[I]** = ipotesi. Fonti brevi: `PB` = `re/planB-feasibility.md`; `F0` = `re/f0-m1-fiq-irq.md`; `FAL` = `docs/FAILURES.md`; `NTASP` = `re/ntasp-analysis.md`/`ntasp-quality-audit.md`.
+- Project: Watari Boot, subsystem Watari EL2 · Date: 2026-10-14 · Version: 0.1 · Status: draft
+- Linked documents: [PRD](PRD.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · [DESIGN-STATUS](DESIGN-STATUS.md)
+- Marking: **[verified: source]** = verified by reading the source; **[hypothesis]** = hypothesis. Short sources: `PB` = `re/planB-feasibility.md`; `F0` = `re/f0-m1-fiq-irq.md`; `FAL` = `docs/FAILURES.md`; `NTASP` = `re/ntasp-analysis.md`/`ntasp-quality-audit.md`.
 
-## 1. Fatti di base (e correzioni alle ipotesi di partenza)
-1. Il M1 implementa in hardware l'interfaccia CPU del GICv3 virtuale: 8 list register, 32 livelli di priorità, ID a 16 bit, TDIR, niente GICv4 [V: NTASP `hv_vgic.c` 51-62, via PB §1].
-2. **Correzione importante alla decisione del piano B.** Sul M1/M1 Pro/Max/M2 il vGIC ha l'errata SEIS: il guest può generare un SError fisico sull'host. KVM la aggira **intercettando tutti gli accessi del guest ai registri ICC di gruppo (`group0_trap`/`group1_trap`) e nascondendo `SEIS` in `ICC_CTLR_EL1`**, usando l'hardware solo per *segnalare* l'interrupt [V: commit torvalds/linux `d11a327ed9` e `df652bcf1136`, letti il 2026-10-14]. Quindi "interfaccia CPU tutta in hardware, senza uscite per ack/EOI" **non è l'assunzione di base su M1**: il modo di default è `TRAP_EMULATE` (2 trap in più per interrupt). Il modo `HW` resta per QEMU e per un'eventuale conferma futura di sicurezza. Poiché nella soluzione di KVM anche `ICC_CTLR_EL1` (e, con `TC`, forse `ICC_PMR_EL1`) è intercettato, le varianti di trap A (massima) e B (ridotta) e la misura della frequenza di `PMR` in Windows sono in INTERFACES §7.2. Impatto su prestazioni: RISKS R-05.
-3. Su M1 la CPU è **bloccata con `HCR_EL2.E2H=1`** (VHE): il kernel Linux ha una patch apposita "Cope with CPUs stuck in VHE mode" [V: titolo del patch, risultato di ricerca web 2026-10-14; il dettaglio è [I]]. Lo strato è quindi un *host VHE*: usa i registri `*_EL12`/`*_EL02` per leggere/scrivere lo stato EL1 del guest. In QEMU lo strato imposta `E2H=1` da solo per riprodurre la stessa modalità.
-4. Il timer ARM del M1 è solo FIQ; i timer del guest EL1 sono le sorgenti AIC "guest phys/virt" (hwirq 2/3), con maschera reale nel registro IMP-DEF `VM_TMR_FIQ_ENA_EL2` (bit 0 = V, bit 1 = P) [V: F0 §1 righe 4-5, da `irq-apple-aic.c` 187-189, 500-531]. Il maintenance interrupt del vGIC arriva come "FIQ finto" e si riconosce leggendo `ICH_MISR_EL2` [V: PB §1].
-5. m1n1 **dalla versione 2.0.0 è GPL-2.0-or-later** (MIT fino a 1.9.9): README e `src/hv/hv_vm.c` hanno `SPDX: GPL-2.0-or-later` [V: README e file letti il 2026-10-14]. Questo contraddice la nota "m1n1 MIT" del brief e pesa sulla scelta dell'ADR licenza.
-6. m1n1 consegna il controllo al "next stage" con 4 argomenti dopo aver spento NVMe, eccezioni, USB, display, framebuffer e **MMU** [V: `src/main.c`]. A che livello di eccezione e con quali registri è un'**[I]** da verificare (M3a): si assume EL2, `x0` = puntatore FDT come nel protocollo di boot Linux arm64.
-7. QEMU `virt`: con `virtualization=on` e senza `secure` il conduit PSCI di QEMU è **SMC**, altrimenti HVC [V: `hw/arm/virt.c`, `machvirt_init`]. Quindi in QEMU il PSCI "guest" lo fornisce **lo strato via HVC**, e lo strato usa a sua volta il PSCI SMC di QEMU per accendere i core fisici emulati.
+## 1. Base facts (and corrections to the starting hypotheses)
+1. The M1 implements in hardware the CPU interface of the virtual GICv3: 8 list registers, 32 priority levels, 16-bit IDs, TDIR, no GICv4 [verified: NTASP `hv_vgic.c` 51-62, via PB §1].
+2. **Important correction to the plan B decision.** On M1/M1 Pro/Max/M2 the vGIC has the SEIS errata: the guest can generate a physical SError on the host. KVM works around it by **intercepting all guest accesses to the group ICC registers (`group0_trap`/`group1_trap`) and hiding `SEIS` in `ICC_CTLR_EL1`**, using the hardware only to *signal* the interrupt [verified: commits torvalds/linux `d11a327ed9` and `df652bcf1136`, read on 2026-10-14]. Therefore "CPU interface entirely in hardware, with no exits for ack/EOI" **is not the baseline assumption on M1**: the default mode is `TRAP_EMULATE` (2 extra traps per interrupt). The `HW` mode remains for QEMU and for a possible future safety confirmation. Since in KVM's solution `ICC_CTLR_EL1` (and, with `TC`, possibly `ICC_PMR_EL1`) is also intercepted, the trap variants A (maximum) and B (reduced) and the measurement of the `PMR` frequency in Windows are in INTERFACES §7.2. Performance impact: RISKS R-05.
+3. On M1 the CPU is **stuck with `HCR_EL2.E2H=1`** (VHE): the Linux kernel has a dedicated patch "Cope with CPUs stuck in VHE mode" [verified: patch title, web search result 2026-10-14; the detail is a hypothesis]. The layer is therefore a *VHE host*: it uses the `*_EL12`/`*_EL02` registers to read/write the guest's EL1 state. In QEMU the layer sets `E2H=1` itself to reproduce the same mode.
+4. The M1 ARM timer is FIQ-only; the guest EL1 timers are the AIC "guest phys/virt" sources (hwirq 2/3), with the real mask in the IMP-DEF register `VM_TMR_FIQ_ENA_EL2` (bit 0 = V, bit 1 = P) [verified: F0 §1 lines 4-5, from `irq-apple-aic.c` 187-189, 500-531]. The vGIC maintenance interrupt arrives as a "fake FIQ" and is recognized by reading `ICH_MISR_EL2` [verified: PB §1].
+5. m1n1 **since version 2.0.0 is GPL-2.0-or-later** (MIT up to 1.9.9): README and `src/hv/hv_vm.c` have `SPDX: GPL-2.0-or-later` [verified: README and file read on 2026-10-14]. This contradicts the brief's note "m1n1 MIT" and weighs on the choice in the license ADR.
+6. m1n1 hands control to the "next stage" with 4 arguments after shutting down NVMe, exceptions, USB, display, framebuffer and **MMU** [verified: `src/main.c`]. At which exception level and with which registers is a **[hypothesis]** to be verified (M3a): EL2 is assumed, `x0` = FDT pointer as in the Linux arm64 boot protocol.
+7. QEMU `virt`: with `virtualization=on` and without `secure` the QEMU PSCI conduit is **SMC**, otherwise HVC [verified: `hw/arm/virt.c`, `machvirt_init`]. Therefore in QEMU the "guest" PSCI is provided **by the layer via HVC**, and the layer in turn uses QEMU's SMC PSCI to power on the emulated physical cores.
 
-## 2. Scelta: estendere m1n1 hv o scrivere uno strato nuovo
-Decisione completa in `docs/adr/draft-el2-base-m1n1-or-new.md`. Sintesi:
+## 2. Choice: extend m1n1 hv or write a new layer
+Full decision in `docs/adr/draft-el2-base-m1n1-or-new.md`. Summary:
 
-| Criterio | A. Estendere m1n1 hv | B. Fork di NTASP `m1n1_windows` | **C. Strato nuovo, m1n1 solo loader (scelto)** |
+| Criterion | A. Extend m1n1 hv | B. Fork NTASP `m1n1_windows` | **C. New layer, m1n1 only as loader (chosen)** |
 |---|---|---|---|
-| Ha già stage-2, trap MMIO, FIQ timer | sì [V: PB §2] | sì | da scrivere (≈ 600-900 righe [I]) |
-| Ha un vGIC | **no** (inietta FIQ virtuale e il guest parla con AIC) [V: PB §2] | sì, incompleto: pending/active "not implemented", 1 core, SGI "TODO" [V: PB §3] | da scrivere (2.500-4.000 righe [I]) |
-| Autonomia | **no**: ogni eccezione non gestita cede al proxy Python e il guest si ferma; percorso lento single-thread [V: PB §2] | come A | sì, per progetto |
-| Testabilità fuori dal Mac | no: codice legato all'hardware Apple, nessun test automatico | no | **sì**: nucleo portabile + backend, test host e QEMU TCG |
-| Licenza | GPL-2.0-or-later (≥ 2.0.0) [V] | MIT dichiarata, ma derivata da m1n1 e "ispirata a KVM" (GPL-2.0): stato incerto [V: NTASP §6] | codice nostro; riferimenti solo letti |
-| Qualità/rischi | codice di debug, non di produzione [I] | "da riscrivere" (audit Mu), 1 manutentore | costo di scrittura, ma controllato |
-| Coerenza con ADR-0007 | — | **contraddice** (strada indipendente) | coerente |
+| Already has stage-2, MMIO traps, timer FIQ | yes [verified: PB §2] | yes | to write (≈ 600-900 lines [hypothesis]) |
+| Has a vGIC | **no** (injects a virtual FIQ and the guest talks to the AIC) [verified: PB §2] | yes, incomplete: pending/active "not implemented", 1 core, SGI "TODO" [verified: PB §3] | to write (2,500-4,000 lines [hypothesis]) |
+| Autonomy | **no**: every unhandled exception yields to the Python proxy and the guest stops; slow single-threaded path [verified: PB §2] | same as A | yes, by design |
+| Testability off the Mac | no: code tied to Apple hardware, no automated tests | no | **yes**: portable core + backends, host tests and QEMU TCG |
+| License | GPL-2.0-or-later (≥ 2.0.0) [verified] | MIT declared, but derived from m1n1 and "inspired by KVM" (GPL-2.0): uncertain status [verified: NTASP §6] | our code; references only read |
+| Quality/risks | debug code, not production [hypothesis] | "to be rewritten" (Mu audit), 1 maintainer | writing cost, but controlled |
+| Consistency with ADR-0007 | — | **contradicts** (independent path) | consistent |
 
-**Scelta C**: m1n1 resta il *loader* (iBoot → m1n1 → payload, già supportato dall'installer Asahi, "UEFI environment only"), e **non** è l'hypervisor. m1n1 hv resta uno **strumento di misura** (per osservare in sola lettura come macOS programma AIC/timer, o per provare il significato di `VM_TMR_FIQ_ENA_EL2` prima di implementarlo), mai nel percorso di produzione.
+**Choice C**: m1n1 remains the *loader* (iBoot → m1n1 → payload, already supported by the Asahi installer, "UEFI environment only"), and is **not** the hypervisor. m1n1 hv remains a **measurement tool** (to observe read-only how macOS programs AIC/timer, or to test the meaning of `VM_TMR_FIQ_ENA_EL2` before implementing it), never in the production path.
 
-Linguaggio: **C11 freestanding + assembly AArch64**, clang (lo stesso toolchain già usato per EDK2 CLANGDWARF). Scartati: Rust `no_std` (toolchain da installare, vietato senza backup/conferma; non c'è competenza nel repo), C++ (runtime).
+Language: **freestanding C11 + AArch64 assembly**, clang (the same toolchain already used for EDK2 CLANGDWARF). Rejected: Rust `no_std` (toolchain to install, forbidden without backup/confirmation; no expertise in the repo), C++ (runtime).
 
-## 3. Vista C4
+## 3. C4 view
 
-### 3.1 Contesto
+### 3.1 Context
 ```mermaid
 flowchart LR
-  dev["Sviluppatore (Mac host)"] -->|"build, QEMU TCG, test"| host["Banco: QEMU 11.1.2 TCG virtualization=on"]
-  dev -->|"payload su ESP, m1n1 tethered"| mbp["MacBook Pro M1 j293"]
-  dbg["Host di debug (M3)"] <-->|"UART via USB-C"| mbp
-  asahi["Asahi: m1n1, installer"] -->|"loader (solo lettura del codice)"| mbp
+  dev["Developer (host Mac)"] -->|"build, QEMU TCG, tests"| host["Bench: QEMU 11.1.2 TCG virtualization=on"]
+  dev -->|"payload on ESP, m1n1 tethered"| mbp["MacBook Pro M1 j293"]
+  dbg["Debug host (M3)"] <-->|"UART via USB-C"| mbp
+  asahi["Asahi: m1n1, installer"] -->|"loader (code read-only)"| mbp
   subgraph sys["Watari Boot"]
     wel2["Watari EL2"]
     edk2["EDK2 + acpigen"]
-    win["Windows 11 ARM64 non modificato"]
+    win["Unmodified Windows 11 ARM64"]
   end
   mbp --> wel2 --> edk2 --> win
   host --> wel2
 ```
 
-### 3.2 Container: flusso di boot iBoot → m1n1 → Watari EL2 → EDK2 → Windows
+### 3.2 Container: boot flow iBoot → m1n1 → Watari EL2 → EDK2 → Windows
 ```mermaid
 sequenceDiagram
   participant I as iBoot
@@ -57,44 +57,44 @@ sequenceDiagram
   participant E as EDK2 (EL1)
   participant B as bootmgr/winload (EL1)
   participant K as ntoskrnl+HAL (EL1)
-  I->>M: avvio, ADT, framebuffer
-  M->>M: PMGR, USB, avvio core secondari in spin-table
-  M->>W: payload "Image" + FDT in x0 a EL2 (da verificare)
-  W->>W: MMU EL2, UART, log, E2H=1, init per-CPU
-  W->>W: parse FDT, stage-2 identità, vGIC, backend pirq/ipi/timer
-  W->>W: patch FDT per EDK2: memoria ridotta, PSCI=hvc, nodi vGIC e watari,el2
-  W->>E: ERET a EL1, x0=FDT, MMU spenta
-  E->>E: ArmGicDxe sul vGIC, timer, GOP, ACPI da acpigen
-  E->>B: boot da USB/ESP
-  B->>K: kernel e HAL con ACPI (GICv3, PSCI HVC)
-  K->>W: HVC PSCI CPU_ON (x7 core)
-  W->>M: avvio core fisico via spin-table (M1) o SMC PSCI (QEMU)
-  K->>K: interrupt AIC visti come SPI, timer come PPI, IPI come SGI
+  I->>M: start, ADT, framebuffer
+  M->>M: PMGR, USB, secondary cores started in spin-table
+  M->>W: "Image" payload + FDT in x0 at EL2 (to be verified)
+  W->>W: EL2 MMU, UART, log, E2H=1, per-CPU init
+  W->>W: parse FDT, identity stage-2, vGIC, pirq/ipi/timer backends
+  W->>W: patch FDT for EDK2: reduced memory, PSCI=hvc, vGIC and watari,el2 nodes
+  W->>E: ERET to EL1, x0=FDT, MMU off
+  E->>E: ArmGicDxe on the vGIC, timer, GOP, ACPI from acpigen
+  E->>B: boot from USB/ESP
+  B->>K: kernel and HAL with ACPI (GICv3, PSCI HVC)
+  K->>W: HVC PSCI CPU_ON (x7 cores)
+  W->>M: physical core start via spin-table (M1) or PSCI SMC (QEMU)
+  K->>K: AIC interrupts seen as SPIs, timer as PPI, IPI as SGI
 ```
-In QEMU lo schema è identico, con `-kernel wel2.elf` al posto di iBoot+m1n1 e il PSCI SMC di QEMU al posto della spin-table.
+In QEMU the scheme is identical, with `-kernel wel2.elf` in place of iBoot+m1n1 and QEMU's PSCI SMC in place of the spin-table.
 
-### 3.3 Componenti
+### 3.3 Components
 ```mermaid
 flowchart TB
-  subgraph core["Nucleo portabile (testabile su host)"]
-    types["wel2-types: tipi, bit, lock, accesso sysreg"]
+  subgraph core["Portable core (host-testable)"]
+    types["wel2-types: types, bits, lock, sysreg access"]
     log["wel2-log"]
-    fdt["wel2-fdt: lettore e patch minimi"]
-    vgic["wel2-vgic: stato GICD/GICR/LR, nessun accesso hw"]
-    cpuif["wel2-cpuif: ICH/ICC, modo HW o TRAP_EMULATE"]
-    vtimer["wel2-vtimer: timer come PPI"]
+    fdt["wel2-fdt: minimal reader and patcher"]
+    vgic["wel2-vgic: GICD/GICR/LR state, no hw access"]
+    cpuif["wel2-cpuif: ICH/ICC, HW or TRAP_EMULATE mode"]
+    vtimer["wel2-vtimer: timer as PPI"]
     psci["wel2-psci: PSCI/SMCCC"]
     s2["wel2-s2: stage-2"]
-    trap["wel2-trap: dispatcher EC, tabelle sysreg/MMIO/HVC"]
-    boot["wel2-boot: radice di composizione"]
+    trap["wel2-trap: EC dispatcher, sysreg/MMIO/HVC tables"]
+    boot["wel2-boot: composition root"]
   end
-  subgraph ifs["Interfacce (header)"]
+  subgraph ifs["Interfaces (headers)"]
     pirq_if["pirq_ops"]
     ipi_if["ipi_ops"]
     tsrc_if["timer_src_ops"]
     plat_if["plat_ops"]
   end
-  subgraph back["Backend"]
+  subgraph back["Backends"]
     aic["pirq-aic-t8103, ipi-aic-fast, timer-fiq-apple"]
     gicq["pirq-gic-qemu, ipi-gic-sgi, timer-gic-ppi"]
     fake["pirq-fake, ipi-fake, timer-fake (host)"]
@@ -115,163 +115,163 @@ flowchart TB
   boot --> trap
   boot --> fdt
   boot --> log
-  aic -.implementa.-> pirq_if
-  aic -.implementa.-> ipi_if
-  aic -.implementa.-> tsrc_if
-  gicq -.implementa.-> pirq_if
-  gicq -.implementa.-> ipi_if
-  gicq -.implementa.-> tsrc_if
-  fake -.implementa.-> pirq_if
-  pq -.implementa.-> plat_if
-  pt -.implementa.-> plat_if
+  aic -.implements.-> pirq_if
+  aic -.implements.-> ipi_if
+  aic -.implements.-> tsrc_if
+  gicq -.implements.-> pirq_if
+  gicq -.implements.-> ipi_if
+  gicq -.implements.-> tsrc_if
+  fake -.implements.-> pirq_if
+  pq -.implements.-> plat_if
+  pt -.implements.-> plat_if
   boot --> back
 ```
-Il grafo delle dipendenze di link è aciclico: `boot` è la radice, i backend dipendono solo da `types` e dalla propria interfaccia, il `vgic` non include mai un backend. `tools/check-deps.sh` (da scrivere) verifica con `#include` che nessun file di `vgic/` includa `plat/` o `backend/`.
+The link dependency graph is acyclic: `boot` is the root, the backends depend only on `types` and on their own interface, and the `vgic` never includes a backend. `tools/check-deps.sh` (to be written) verifies via `#include` that no file in `vgic/` includes `plat/` or `backend/`.
 
-## 4. Moduli
-Convenzione: prefisso `wel2_`; directory proposta `el2/` alla radice del repository (aggiornare la sezione "Struttura" di CLAUDE.md al merge).
+## 4. Modules
+Convention: prefix `wel2_`; proposed directory `el2/` at the repository root (update the "Structure" section of CLAUDE.md at merge).
 
-| Modulo | Responsabilità singola | Interfaccia pubblica | Dipende da |
+| Module | Single responsibility | Public interface | Depends on |
 |---|---|---|---|
-| `wel2-types` | Fornire tipi base, bit helper, lock e accesso ai registri di sistema | `types.h`, `sysreg.h`, `lock.h` | nessuno |
-| `wel2-log` | Registrare eventi in un ring buffer con uscita su seriale | `log_event()`, `log_panic()`, `log_dump()` | types |
-| `wel2-fdt` | Leggere un FDT e modificare in loco poche proprietà | `fdt_find_node()`, `fdt_get_prop()`, `fdt_set_prop_inplace()`, `fdt_trim_memory()` | types |
-| `wel2-vgic` | Mantenere lo stato architetturale del GICv3 virtuale ed eseguire le sue regole | `vgic_mmio_read/write()`, `vgic_set_pending()`, `vgic_next_for_vcpu()`, `vgic_sgi_send()` | types, `pirq_ops`, `ipi_ops` |
-| `wel2-cpuif` | Pilotare i registri `ICH_*`/`ICC_*` per una vCPU | `cpuif_flush()`, `cpuif_fold()`, `cpuif_trap_icc()`, `cpuif_maintenance()` | vgic |
-| `wel2-vtimer` | Trasformare l'evento del timer del guest in un PPI virtuale a livello coerente | `vtimer_on_fire()`, `vtimer_on_eoi()` | vgic, `timer_src_ops` |
-| `wel2-psci` | Rispondere alle chiamate PSCI/SMCCC | `psci_handle(vcpu, regs)` | `plat_ops` |
-| `wel2-s2` | Costruire e modificare le tabelle di stage-2 | `s2_init()`, `s2_map_ram()`, `s2_map_mmio()`, `s2_map_hook()`, `s2_unmap()` | types |
-| `wel2-trap` | Smistare le eccezioni dal guest alle tabelle di gestori | `trap_sync_lower()`, `trap_irq_lower()`, `trap_fiq_lower()`, `trap_serror_lower()`, `trap_register_*()` | vgic, cpuif, vtimer, psci, s2 |
-| `wel2-boot` | Comporre i moduli nell'ordine corretto e lanciare EDK2 | `boot_main_bsp()`, `boot_main_ap()` | tutti i moduli, backend scelti a build-time |
-| `pirq-*` | Normalizzare gli eventi fisici (IRQ e FIQ) di una piattaforma e tradurre le sorgenti dispositivo in SPI virtuali (mask/unmask) | `pirq_ops` (INTERFACES §8.1) | types |
-| `ipi-*` | Inviare e ricevere un'IPI fisica di notifica tra core | `ipi_ops` (INTERFACES §8.2) | types |
-| `timer-*` | Intercettare e mascherare alla fonte il timer del guest | `timer_src_ops` (INTERFACES §8.3) | types |
-| `plat-qemu-virt` | Descrivere la piattaforma QEMU (UART, RAM, avvio core via SMC) | `plat_ops` (INTERFACES §8.4) | types |
-| `plat-t8103` | Descrivere il t8103 (UART, RAM, spin-table, reset) | `plat_ops` | types |
+| `wel2-types` | Provide base types, bit helpers, locks and system register access | `types.h`, `sysreg.h`, `lock.h` | none |
+| `wel2-log` | Record events in a ring buffer with output to serial | `log_event()`, `log_panic()`, `log_dump()` | types |
+| `wel2-fdt` | Read an FDT and modify a few properties in place | `fdt_find_node()`, `fdt_get_prop()`, `fdt_set_prop_inplace()`, `fdt_trim_memory()` | types |
+| `wel2-vgic` | Maintain the architectural state of the virtual GICv3 and enforce its rules | `vgic_mmio_read/write()`, `vgic_set_pending()`, `vgic_next_for_vcpu()`, `vgic_sgi_send()` | types, `pirq_ops`, `ipi_ops` |
+| `wel2-cpuif` | Drive the `ICH_*`/`ICC_*` registers for a vCPU | `cpuif_flush()`, `cpuif_fold()`, `cpuif_trap_icc()`, `cpuif_maintenance()` | vgic |
+| `wel2-vtimer` | Turn the guest timer event into a virtual PPI at a consistent level | `vtimer_on_fire()`, `vtimer_on_eoi()` | vgic, `timer_src_ops` |
+| `wel2-psci` | Answer PSCI/SMCCC calls | `psci_handle(vcpu, regs)` | `plat_ops` |
+| `wel2-s2` | Build and modify the stage-2 tables | `s2_init()`, `s2_map_ram()`, `s2_map_mmio()`, `s2_map_hook()`, `s2_unmap()` | types |
+| `wel2-trap` | Dispatch exceptions from the guest to handler tables | `trap_sync_lower()`, `trap_irq_lower()`, `trap_fiq_lower()`, `trap_serror_lower()`, `trap_register_*()` | vgic, cpuif, vtimer, psci, s2 |
+| `wel2-boot` | Compose the modules in the correct order and launch EDK2 | `boot_main_bsp()`, `boot_main_ap()` | all modules, backends chosen at build time |
+| `pirq-*` | Normalize the physical events (IRQ and FIQ) of a platform and translate device sources into virtual SPIs (mask/unmask) | `pirq_ops` (INTERFACES §8.1) | types |
+| `ipi-*` | Send and receive a physical notification IPI between cores | `ipi_ops` (INTERFACES §8.2) | types |
+| `timer-*` | Intercept and mask at the source the guest timer | `timer_src_ops` (INTERFACES §8.3) | types |
+| `plat-qemu-virt` | Describe the QEMU platform (UART, RAM, core start via SMC) | `plat_ops` (INTERFACES §8.4) | types |
+| `plat-t8103` | Describe the t8103 (UART, RAM, spin-table, reset) | `plat_ops` | types |
 
-Controllo "una sola e": nessuna descrizione di responsabilità sopra contiene più di un compito; `wel2-cpuif` e `wel2-vgic` sono separati perché il primo parla con l'hardware e il secondo no (così il secondo si testa su host).
+"Single 'and'" check: no responsibility description above contains more than one task; `wel2-cpuif` and `wel2-vgic` are separate because the former talks to the hardware and the latter does not (so the latter is tested on the host).
 
-### 4.1 Pattern per modulo (motivazioni, alternative scartate)
-| Modulo | Pattern | Perché | Alternative scartate | Costo |
+### 4.1 Pattern per module (rationale, rejected alternatives)
+| Module | Pattern | Why | Rejected alternatives | Cost |
 |---|---|---|---|---|
-| backend | **Strategy** via tabelle di puntatori a funzione (`*_ops`) | stesso nucleo su QEMU, M1 e test host | `#ifdef` per piattaforma (illeggibile, non testabile insieme) | una indirezione per chiamata, trascurabile |
-| vgic | **Modello a stato puro + effetti espliciti** (le funzioni restituiscono azioni da eseguire) | testabile su host senza hardware, deterministico | accesso diretto ai registri nel vgic (come KVM hyp) | un piccolo strato di "azioni" |
-| trap | **Tabelle dichiarative ordinate** (sysreg per codifica, HVC per range di ID, MMIO per regione) | estendere = una riga | `switch` gigante | ricerca binaria su tabella piccola |
-| boot | **Radice di composizione** | l'unico punto che conosce i backend | service locator globale | nessuno |
-| log | **Ring buffer lock-free per CPU** | non perdere eventi vicino al panic, nessun lock in IRQ | `printf` sincrono su UART (altera i tempi) | memoria riservata |
-| cpuif | **Modalità selezionabile (HW / TRAP_EMULATE)** | stessa logica testata in TCG per M1 | solo HW (fragile per errata SEIS) | codice di emulazione ICC (≈ 500 righe [I]) |
-| psci | **Macchina a stati per vCPU** (OFF, ON_PENDING, ON) come in TF-A | evita doppi `CPU_ON` | flag sparsi | tabella per vCPU |
+| backend | **Strategy** via tables of function pointers (`*_ops`) | same core on QEMU, M1 and host tests | per-platform `#ifdef` (unreadable, not testable together) | one indirection per call, negligible |
+| vgic | **Pure-state model + explicit effects** (functions return actions to execute) | host-testable without hardware, deterministic | direct register access in the vgic (like KVM hyp) | a small "actions" layer |
+| trap | **Ordered declarative tables** (sysreg by encoding, HVC by ID range, MMIO by region) | extending = one row | giant `switch` | binary search on a small table |
+| boot | **Composition root** | the only point that knows the backends | global service locator | none |
+| log | **Lock-free per-CPU ring buffer** | do not lose events close to the panic, no lock in IRQ | synchronous `printf` on UART (alters timing) | reserved memory |
+| cpuif | **Selectable mode (HW / TRAP_EMULATE)** | same logic tested in TCG for M1 | HW only (fragile due to SEIS errata) | ICC emulation code (≈ 500 lines [hypothesis]) |
+| psci | **Per-vCPU state machine** (OFF, ON_PENDING, ON) as in TF-A | avoids double `CPU_ON` | scattered flags | per-vCPU table |
 
-## 5. Memoria e privilegio
-- **Layout (M1)** [I per le dimensioni]: lo strato occupa una regione contigua riservata (es. 64 MB) in cima alla RAM; contiene codice, tabelle EL2, stack per CPU, ring log, tabelle stage-2. La regione **non è mappata nello stage-2** del guest, ed è tolta dalla memoria che si dichiara a EDK2 (patch del nodo `/memory` dell'FDT, `fdt_trim_memory`).
-- **EL2 stage-1**: identità con MMU e cache accese, perché i lock usano istruzioni atomiche/esclusive che richiedono memoria Normal cacheable [I, regola architetturale].
-- **Stage-2**: identità, granulo 16 KB (come m1n1 hv, `VTCR_TG0=2` [V: m1n1 `hv_vm.c`, `hv_pt_init`]). Windows usa 4 KB nello stage-1; lo stage-2 è indipendente dal granulo dello stage-1 [I: architettura; indizio forte: Windows 11 gira come guest KVM su host Asahi a 16 KB, `AsahiLinux/docs windows-11-vm.md`, via PB §0]. Blocchi grandi dove possibile (meno TLB).
-- **Attributi MMIO**: stage-2 forza **Device-nGnRnE** sulle regioni periferiche. Motivo [I]: l'interconnessione Apple non gestisce le scritture "posted" (Linux usa la proprietà DT `nonposted-mmio` per usare nGnRnE); Windows mappa l'MMIO come nGnRE; la combinazione stage-1/stage-2 prende l'attributo più restrittivo, quindi nGnRnE. Da verificare in M3a con un autotest.
-- **Per-CPU**: `TPIDR_EL2` punta alla struttura `pcpu` (stack, vCPU, coda eventi). Lo strato non usa lo scheduler: 1 vCPU = 1 pCPU.
-- **HCR_EL2** del guest (valori iniziali, dettagli INTERFACES §6): `RW=1, VM=1, E2H=1, TGE=0, IMO=1, FMO=1, AMO=1, TSC=1, TID3=1`. `IMO/FMO` instradano IRQ/FIQ a EL2 e fanno trappare `ICC_SGI*R_EL1` (verifica sul manuale ARM da fare: [I]).
+## 5. Memory and privilege
+- **Layout (M1)** [hypothesis for the sizes]: the layer occupies a reserved contiguous region (e.g. 64 MB) at the top of RAM; it contains code, EL2 tables, per-CPU stacks, ring log, stage-2 tables. The region is **not mapped in the guest's stage-2**, and is removed from the memory declared to EDK2 (patch of the FDT `/memory` node, `fdt_trim_memory`).
+- **EL2 stage-1**: identity with MMU and caches on, because the locks use atomic/exclusive instructions that require Normal cacheable memory [hypothesis, architectural rule].
+- **Stage-2**: identity, 16 KB granule (like m1n1 hv, `VTCR_TG0=2` [verified: m1n1 `hv_vm.c`, `hv_pt_init`]). Windows uses 4 KB in stage-1; stage-2 is independent of the stage-1 granule [hypothesis: architecture; strong hint: Windows 11 runs as a KVM guest on an Asahi host at 16 KB, `AsahiLinux/docs windows-11-vm.md`, via PB §0]. Large blocks where possible (fewer TLB entries).
+- **MMIO attributes**: stage-2 forces **Device-nGnRnE** on peripheral regions. Reason [hypothesis]: the Apple interconnect does not handle "posted" writes (Linux uses the DT property `nonposted-mmio` to use nGnRnE); Windows maps MMIO as nGnRE; the stage-1/stage-2 combination takes the most restrictive attribute, hence nGnRnE. To be verified in M3a with a self-test.
+- **Per-CPU**: `TPIDR_EL2` points to the `pcpu` structure (stack, vCPU, event queue). The layer does not use a scheduler: 1 vCPU = 1 pCPU.
+- **Guest HCR_EL2** (initial values, details in INTERFACES §6): `RW=1, VM=1, E2H=1, TGE=0, IMO=1, FMO=1, AMO=1, TSC=1, TID3=1`. `IMO/FMO` route IRQ/FIQ to EL2 and make `ICC_SGI*R_EL1` trap (check against the ARM manual still to do: [hypothesis]).
 
-## 6. Percorsi degli interrupt
+## 6. Interrupt paths
 
-### 6.1 Interrupt periferica: AIC → vGIC → Windows (modo `TRAP_EMULATE`, default su M1)
+### 6.1 Peripheral interrupt: AIC → vGIC → Windows (`TRAP_EMULATE` mode, default on M1)
 ```mermaid
 sequenceDiagram
-  participant D as Periferica (reale)
+  participant D as Peripheral (real)
   participant A as AIC (MMIO)
   participant E as Watari EL2
-  participant V as vGIC (stato SW)
+  participant V as vGIC (SW state)
   participant L as ICH_LR (hw)
   participant W as Windows EL1
-  D->>A: alza linea (level)
-  A->>E: IRQ fisico (HCR_EL2.IMO=1)
-  E->>A: legge AIC_EVENT (0x2004): tipo IRQ, numero n (maschera n)
-  E->>V: vgic_set_pending(INTID 32+n), scelta vCPU da GICD_IROUTER
-  alt vCPU di destinazione = questo core
-    E->>L: cpuif_flush: scrive LR (stato pending, priorità, gruppo 1)
-  else altro core
-    E->>E: ipi_ops.send(core) (IPI veloce)
+  D->>A: raises line (level)
+  A->>E: physical IRQ (HCR_EL2.IMO=1)
+  E->>A: reads AIC_EVENT (0x2004): IRQ type, number n (masks n)
+  E->>V: vgic_set_pending(INTID 32+n), vCPU choice from GICD_IROUTER
+  alt destination vCPU = this core
+    E->>L: cpuif_flush: writes LR (pending state, priority, group 1)
+  else other core
+    E->>E: ipi_ops.send(core) (fast IPI)
   end
-  E-->>W: ERET (vIRQ segnalato dall'hardware)
+  E-->>W: ERET (vIRQ signaled by the hardware)
   W->>E: MRS ICC_IAR1_EL1 (trap, TALL1)
-  E->>V: pending → active, restituisce INTID
-  W->>W: ISR del driver (device pulisce la linea)
+  E->>V: pending → active, returns INTID
+  W->>W: driver ISR (device clears the line)
   W->>E: MSR ICC_EOIR1_EL1 (trap)
-  E->>V: active → inattivo
-  E->>A: pirq_ops.unmask(n) (MASK_CLR) se ancora abilitato
+  E->>V: active → inactive
+  E->>A: pirq_ops.unmask(n) (MASK_CLR) if still enabled
 ```
-Note:
-- Semantica **level**: l'IRQ resta mascherato nell'AIC dal momento dell'ack fino all'EOI; se la linea è ancora alta si ripresenta come nuovo IRQ fisico. Per SPI configurati *edge* (`GICD_ICFGR`) si smaschera subito all'iniezione.
-- Con più di 8 interrupt pendenti: gli esclusi restano nello stato software; `ICH_HCR_EL2.UIE` genera un maintenance interrupt di underflow per ricaricare gli LR.
-- Modo `HW` (QEMU, opzionale): Windows legge `ICC_IAR1_EL1`/scrive `EOIR1` senza trap; l'EOI software si ottiene con `LR.EOI=1` e il maintenance interrupt (`ICH_MISR_EL2.EOI`), che su M1 arriva come FIQ finto.
-- Il core che riceve l'IRQ fisico decide a chi inoltrare; `GICD_IROUTER[n]` traduce in `TARGET_CPU` dell'AIC (v1: una maschera per IRQ) [V: F0 §4, audit D5], quindi di norma l'IRQ fisico arriva già al core giusto.
+Notes:
+- **Level** semantics: the IRQ stays masked in the AIC from the moment of the ack until the EOI; if the line is still high it shows up again as a new physical IRQ. For SPIs configured as *edge* (`GICD_ICFGR`) it is unmasked immediately at injection.
+- With more than 8 pending interrupts: the excluded ones stay in the software state; `ICH_HCR_EL2.UIE` generates an underflow maintenance interrupt to reload the LRs.
+- `HW` mode (QEMU, optional): Windows reads `ICC_IAR1_EL1`/writes `EOIR1` without traps; the software EOI is obtained with `LR.EOI=1` and the maintenance interrupt (`ICH_MISR_EL2.EOI`), which on M1 arrives as a fake FIQ.
+- The core receiving the physical IRQ decides whom to forward to; `GICD_IROUTER[n]` translates into the AIC's `TARGET_CPU` (v1: one mask per IRQ) [verified: F0 §4, audit D5], so normally the physical IRQ already arrives at the right core.
 
-### 6.2 Timer: FIQ fisico → vPPI
+### 6.2 Timer: physical FIQ → vPPI
 ```mermaid
 sequenceDiagram
   participant W as Windows EL1
   participant T as Timer HW (CNTP/CNTV)
   participant E as Watari EL2
   participant V as vGIC
-  W->>T: scrive CNTP_CVAL/CTL (nessun trap)
-  T->>E: FIQ (guest timer, sbloccato da VM_TMR_FIQ_ENA_EL2)
-  E->>E: timer_src.fired(): legge CNTP_CTL_EL02/CNTV_CTL_EL02 (ENABLE e ISTATUS e !IMASK)
-  E->>T: maschera alla fonte: bit P/V di VM_TMR_FIQ_ENA_EL2 = 0 (CTL del guest intatto)
-  E->>V: vgic_set_level(PPI 30 o 27, 1)
-  E-->>W: ERET con vIRQ
+  W->>T: writes CNTP_CVAL/CTL (no trap)
+  T->>E: FIQ (guest timer, unmasked by VM_TMR_FIQ_ENA_EL2)
+  E->>E: timer_src.fired(): reads CNTP_CTL_EL02/CNTV_CTL_EL02 (ENABLE and ISTATUS and !IMASK)
+  E->>T: masks at the source: bit P/V of VM_TMR_FIQ_ENA_EL2 = 0 (guest CTL untouched)
+  E->>V: vgic_set_level(PPI 30 or 27, 1)
+  E-->>W: ERET with vIRQ
   W->>E: ICC_IAR1 / ICC_EOIR1 (trap)
-  E->>E: vtimer_on_eoi(): se il timer ancora "firing" → di nuovo pending (level); altrimenti VM_TMR_FIQ_ENA_EL2 = 1
+  E->>E: vtimer_on_eoi(): if the timer is still "firing" → pending again (level); otherwise VM_TMR_FIQ_ENA_EL2 = 1
 ```
-- Si maschera con il bit IMP-DEF e non con `IMASK` per non far vedere a Windows un `CNTP_CTL` modificato [I: motivo di trasparenza; il bit è "l'unico mask vero" dei timer guest secondo il commento di Linux, F0 §1 riga 4].
-- Nel backend QEMU (`timer-gic-ppi`) il timer arriva come PPI fisico 30/27 del GIC reale: stesso `vtimer`, sorgente diversa. **Il percorso FIQ Apple non è provabile in QEMU** (RISKS R-04): si copre con host test (sysreg finti), con l'autotest su hardware (M3a) e con m1n1 hv come strumento di misura.
-- PMU: all'inizializzazione di ogni core si replicano le azioni di `aic_init_cpu` (PMCR0.IMODE=OFF, UPMCR0 off, IPI pendenti azzerate) [V: F0 §5] altrimenti tempesta di FIQ.
+- Masking is done with the IMP-DEF bit and not with `IMASK` so that Windows does not see a modified `CNTP_CTL` [hypothesis: transparency reason; the bit is "the only real mask" of the guest timers according to the Linux comment, F0 §1 line 4].
+- In the QEMU backend (`timer-gic-ppi`) the timer arrives as physical PPI 30/27 of the real GIC: same `vtimer`, different source. **The Apple FIQ path cannot be tested in QEMU** (RISKS R-04): it is covered with host tests (fake sysregs), with the on-hardware self-test (M3a) and with m1n1 hv as a measurement tool.
+- PMU: at the initialization of each core the actions of `aic_init_cpu` are replicated (PMCR0.IMODE=OFF, UPMCR0 off, pending IPIs cleared) [verified: F0 §5], otherwise an FIQ storm results.
 
-### 6.3 SGI di Windows → IPI AIC
+### 6.3 Windows SGI → AIC IPI
 ```mermaid
 sequenceDiagram
-  participant W0 as Windows su vCPU0
+  participant W0 as Windows on vCPU0
   participant E0 as Watari EL2 (core0)
-  participant V as vGIC (condiviso)
-  participant A as AIC / registri IPI
+  participant V as vGIC (shared)
+  participant A as AIC / IPI registers
   participant E1 as Watari EL2 (core1)
-  participant W1 as Windows su vCPU1
+  participant W1 as Windows on vCPU1
   W0->>E0: MSR ICC_SGI1R_EL1 (trap)
-  E0->>E0: decodifica TargetList, Aff1-3, IRM, INTID 0-15
-  E0->>V: SGI pending sulla vCPU1 (atomico)
-  E0->>A: ipi_ops.send(core1): IPI veloce IPI_RR_* (M1) / SGI fisica (QEMU)
-  E0-->>W0: ERET (istruzione completata)
-  A->>E1: FIQ/IRQ di IPI
-  E1->>A: IPI_SR_EL1 = PENDING (azzera) [M1]
+  E0->>E0: decodes TargetList, Aff1-3, IRM, INTID 0-15
+  E0->>V: SGI pending on vCPU1 (atomic)
+  E0->>A: ipi_ops.send(core1): fast IPI IPI_RR_* (M1) / physical SGI (QEMU)
+  E0-->>W0: ERET (instruction completed)
+  A->>E1: IPI FIQ/IRQ
+  E1->>A: IPI_SR_EL1 = PENDING (clears) [M1]
   E1->>V: cpuif_flush(vCPU1): SGI → LR
-  E1-->>W1: ERET con vIRQ
+  E1-->>W1: ERET with vIRQ
 ```
-- Fast IPI su t8103 (selezionata da Linux per `apple,t8103-aic` [V: F0 §4.1]); le IPI "legacy" restano un backend alternativo [I].
-- Una vCPU in `WFI` del guest (non intercettato) si sveglia con la FIQ dell'IPI.
-- Le SGI non portano l'identità del mittente in GICv3 (a differenza di GICv2): non serve nessuna coda per mittente [I].
+- Fast IPI on t8103 (selected by Linux for `apple,t8103-aic` [verified: F0 §4.1]); the "legacy" IPIs remain an alternative backend [hypothesis].
+- A vCPU in guest `WFI` (not intercepted) wakes up with the IPI FIQ.
+- SGIs do not carry the sender's identity in GICv3 (unlike GICv2): no per-sender queue is needed [hypothesis].
 
-## 7. Dati condivisi e concorrenza
-- Distributor (SPI: enable, priorità, routing, config, pending) con **un lock a ticket** (spin), sezione critica corta; per-vCPU (PPI/SGI, LR) senza lock condiviso se non per le SGI in arrivo, che sono bit atomici (`sgi_pending[vcpu]`).
-- Ordine dei lock: distributor poi vCPU; mai due lock vCPU insieme.
-- Nessuna allocazione dinamica dopo `boot_main_bsp()`: tabelle statiche dimensionate da `WEL2_MAX_CPUS=8`.
-- Gli handler non bloccano mai: se un lock è occupato da più di N cicli si registra e si va in panic con dump (anti-deadlock; F-15 insegna che gli hang silenziosi sono il rischio).
+## 7. Shared data and concurrency
+- Distributor (SPI: enable, priority, routing, config, pending) with **a ticket lock** (spin), short critical section; per-vCPU (PPI/SGI, LR) without a shared lock except for incoming SGIs, which are atomic bits (`sgi_pending[vcpu]`).
+- Lock order: distributor then vCPU; never two vCPU locks together.
+- No dynamic allocation after `boot_main_bsp()`: static tables sized by `WEL2_MAX_CPUS=8`.
+- Handlers never block: if a lock is held for more than N cycles it is logged and the layer panics with a dump (anti-deadlock; F-15 teaches that silent hangs are the risk).
 
-## 8. Confini e contratti tra moduli
-1. `vgic` non conosce AIC, QEMU né registri Apple: parla con `pirq_ops` e `ipi_ops`. Un nuovo SoC non lo tocca.
-2. `trap` è l'unico che legge `ESR_EL2`/`FAR_EL2`/`HPFAR_EL2` e produce strutture `trap_ctx`; i gestori ricevono `trap_ctx`, non registri.
-3. `boot` è l'unico che costruisce l'FDT per EDK2 e conosce l'ordine di inizializzazione.
-4. Gli errori sono valori (`wel2_err_t`), mai eccezioni; un errore non recuperabile chiama `log_panic()` che non ritorna.
-5. Nessun modulo scrive nella regione di un altro: lo stato condiviso passa solo da funzioni dichiarate.
+## 8. Boundaries and contracts between modules
+1. `vgic` knows neither AIC, QEMU nor Apple registers: it talks to `pirq_ops` and `ipi_ops`. A new SoC does not touch it.
+2. `trap` is the only one that reads `ESR_EL2`/`FAR_EL2`/`HPFAR_EL2` and produces `trap_ctx` structures; handlers receive `trap_ctx`, not registers.
+3. `boot` is the only one that builds the FDT for EDK2 and knows the initialization order.
+4. Errors are values (`wel2_err_t`), never exceptions; an unrecoverable error calls `log_panic()`, which does not return.
+5. No module writes into another's region: shared state passes only through declared functions.
 
-## 9. Punti di estensione espliciti
-1. **Nuovo SoC** (M1 Pro/Max, M2): cartella `plat/<soc>` + backend `pirq-aicv2` che implementa `pirq_ops`; nessuna modifica a `vgic`, `trap`, `psci`.
-2. **Nuovo controller di interrupt fisico**: nuova implementazione di `pirq_ops`/`ipi_ops`/`timer_src_ops`.
-3. **Dispositivo emulato** (es. MSI PCIe → SPI): registrare una regione MMIO con `trap_register_mmio()` e un gestore; nessuna modifica al dispatcher.
-4. **Registro di sistema da intercettare**: una riga nella tabella sysreg di `trap`.
-5. **Funzione HVC vendor** (es. contatori, log): una riga nella tabella HVC.
-6. **Modalità cpuif**: nuova modalità (es. ottimizzata una volta stabilito che l'errata SEIS non colpisce certi percorsi) = nuovo valore dell'enum, stessa interfaccia.
-7. **Sorgenti di log**: `log` accetta sink registrati (seriale, framebuffer, ring).
-In tutti i casi sopra si **aggiunge** codice senza modificare moduli esistenti, tranne la tabella di registrazione nella radice di composizione (`boot`), dichiarata come unico punto di modifica.
+## 9. Explicit extension points
+1. **New SoC** (M1 Pro/Max, M2): `plat/<soc>` folder + `pirq-aicv2` backend implementing `pirq_ops`; no change to `vgic`, `trap`, `psci`.
+2. **New physical interrupt controller**: new implementation of `pirq_ops`/`ipi_ops`/`timer_src_ops`.
+3. **Emulated device** (e.g. PCIe MSI → SPI): register an MMIO region with `trap_register_mmio()` and a handler; no change to the dispatcher.
+4. **System register to intercept**: one row in the `trap` sysreg table.
+5. **Vendor HVC function** (e.g. counters, log): one row in the HVC table.
+6. **cpuif mode**: new mode (e.g. optimized once it is established that the SEIS errata does not affect certain paths) = new enum value, same interface.
+7. **Log sinks**: `log` accepts registered sinks (serial, framebuffer, ring).
+In all the cases above code is **added** without modifying existing modules, except the registration table in the composition root (`boot`), declared as the only point of modification.
 
-## 10. Tracciabilità requisiti → moduli
-| Requisito | Moduli |
+## 10. Requirements → modules traceability
+| Requirement | Modules |
 |---|---|
 | FR-1 | boot, fdt, plat-* |
 | FR-2 | s2, trap |
@@ -283,19 +283,19 @@ In tutti i casi sopra si **aggiunge** codice senza modificare moduli esistenti, 
 | FR-9, FR-10 | psci, plat-* |
 | FR-11, FR-12 | trap |
 | FR-14, FR-15 | log, trap |
-| FR-16 | tutti i backend, boot |
-| NFR-1 | cpuif, trap (contatori) |
-| NFR-2 | tutti (regole di stile); log |
-| NFR-3 | Makefile, tools/ (build riproducibile) |
-| NFR-4 | struttura delle dipendenze (sezione 3.3), `check-deps.sh` |
-| NFR-5 | sezione 9 |
+| FR-16 | all backends, boot |
+| NFR-1 | cpuif, trap (counters) |
+| NFR-2 | all (style rules); log |
+| NFR-3 | Makefile, tools/ (reproducible build) |
+| NFR-4 | dependency structure (section 3.3), `check-deps.sh` |
+| NFR-5 | section 9 |
 | NFR-6 | s2, trap, boot |
-| NFR-7 | tutti |
-| NFR-8 | processo (ADR licenza) |
+| NFR-7 | all |
+| NFR-8 | process (license ADR) |
 | NFR-9 | log, trap |
 
-## 11. Valutazione dei quattro requisiti trasversali
-- **Mantenibilità:** responsabilità singole dichiarate (§4), errori come valori, naming uniforme (INTERFACES §10), logging strutturato.
-- **Riproducibilità:** toolchain e QEMU pinnati, build bit-a-bit, seed fissi, nessun "dipende dalla macchina" (TEST_STRATEGY §7).
-- **Modularità:** nucleo senza dipendenze hardware, backend dietro `*_ops`, grafo aciclico verificato da script.
-- **Estensibilità:** §9; il costo di un nuovo SoC è un backend.
+## 11. Assessment of the four cross-cutting requirements
+- **Maintainability:** declared single responsibilities (§4), errors as values, uniform naming (INTERFACES §10), structured logging.
+- **Reproducibility:** pinned toolchain and QEMU, bit-for-bit build, fixed seeds, no "depends on the machine" (TEST_STRATEGY §7).
+- **Modularity:** core without hardware dependencies, backends behind `*_ops`, acyclic graph verified by script.
+- **Extensibility:** §9; the cost of a new SoC is a backend.

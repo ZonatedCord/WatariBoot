@@ -1,43 +1,45 @@
-# Watari Boot: istruzioni per Claude
+# Watari Boot: instructions for Claude
 
-Obiettivo: **dual boot** di Windows ARM64 su Apple Silicon, **senza macOS sotto**, sopra uno strato EL2 minimo (piano B, adottato il 2026-10-14: `docs/adr/draft-plan-b-el2-layer.md`). Si parte da un MacBook Pro 13" M1 (t8103, j293) e poi si generalizza a tutti gli Apple Silicon. Il piano completo è in `docs/PLAN.md`.
+**Language:** all repository documentation is written in English; always talk to Marco (the user) in Italian.
 
-## ⚠️ BACKUP OBBLIGATORIO (regola assoluta dell'utente)
-**Prima di scaricare o installare QUALSIASI cosa sul Mac** (toolchain, test, ISO, pacchetti brew, repo grandi, qualunque cosa), fermarsi e **ricordare all'utente di fare il backup completo** (Time Machine). Si procede solo dopo che l'utente ha **confermato esplicitamente** che il backup è fatto. Nessuna eccezione, anche per download piccoli.
+Goal: **dual boot** of Windows ARM64 on Apple Silicon, **without macOS underneath**, on top of a minimal EL2 layer (Plan B, adopted on 2026-10-14: `docs/adr/draft-plan-b-el2-layer.md`). We start from a 13" M1 MacBook Pro (t8103, j293) and then generalize to all Apple Silicon. The full plan is in `docs/PLAN.md`.
 
-## Workflow (obbligatorio)
-- **Opus = capo.**
-  - Ragiona, progetta, scompone il lavoro, verifica i risultati e parla con l'utente.
-  - Non riferisce mai il risultato di un agente senza averlo controllato.
-- **Sonnet = esecutori.**
-  - Agent tool con `model: "sonnet"`.
-  - Eseguono task ben definiti e rispondono a Opus.
-  - Task indipendenti vanno lanciati in parallelo.
-- L'utente parla solo con Opus.
-- Per un nuovo sottosistema serve prima una sessione di progettazione con `morasca-agent` (`model: "sonnet"`), con output in `docs/design/`.
+## ⚠️ BACKUP REQUIRED (absolute rule from the user)
+**Before downloading or installing ANYTHING on the Mac** (toolchains, tests, ISOs, brew packages, large repos, anything), stop and **remind the user to make a full backup** (Time Machine). Proceed only after the user has **explicitly confirmed** that the backup is done. No exceptions, even for small downloads.
 
-## Documentazione (a ogni fine sessione, senza eccezioni)
-1. Scrivere `docs/sessions/AAAA-MM-GG-<autore>-NN.md` (un file per autore, per evitare conflitti): obiettivo, cosa è stato fatto, decisioni (con link agli ADR), risultati verificati, problemi aperti, prossimi passi.
-2. Aggiornare `docs/STATUS.md`: fase corrente, traguardi raggiunti, blocchi, da dove si riparte.
-3. Ogni decisione architetturale va in una bozza `docs/adr/draft-<title>.md`; il numero si assegna al merge.
-4. Aggiornare il contatore dei token e dei costi: `python3 -I tools/token-usage.py --autore <marco|ciani>`. Aggiorna `docs/costs/<autore>.json` e la tabella nel README.
-5. Commit e push **su un branch**, poi PR verso `main`. Mai push diretto su `main` (vedi `docs/CONTRIBUTING.md`).
+## Workflow (mandatory)
+- **Opus = boss.**
+  - Reasons, designs, breaks down the work, verifies results and talks to the user.
+  - Never reports an agent's result without having checked it.
+- **Sonnet = executors.**
+  - Agent tool with `model: "sonnet"`.
+  - They execute well-defined tasks and answer to Opus.
+  - Independent tasks must be launched in parallel.
+- The user talks only to Opus.
+- A new subsystem first requires a design session with `morasca-agent` (`model: "sonnet"`), with output in `docs/design/`.
 
-## Collaborazione
-- Lavorano in due (Marco + Ciani) più Ralph. Le regole su branch, PR, issue e file "caldi" sono in `docs/CONTRIBUTING.md` e vanno rispettate sempre.
-- Ralph loop: solo sul proprio branch `ralph/...`, una sola istanza per volta, istruzioni in `ralph/README.md`.
+## Documentation (at the end of every session, no exceptions)
+1. Write `docs/sessions/YYYY-MM-DD-<author>-NN.md` (one file per author, to avoid conflicts): goal, what was done, decisions (with links to the ADRs), verified results, open problems, next steps.
+2. Update `docs/STATUS.md`: current phase, milestones reached, blockers, where to resume.
+3. Every architectural decision goes in a draft `docs/adr/draft-<title>.md`; the number is assigned at merge.
+4. Update the token and cost counter: `python3 -I tools/token-usage.py --autore <marco|ciani>`. It updates `docs/costs/<author>.json` and the table in the README.
+5. Commit and push **on a branch**, then open a PR to `main`. Never push directly to `main` (see `docs/CONTRIBUTING.md`).
 
-## Vincoli
-- **Dual boot, strato minimo**: niente macOS sotto, niente VM "classiche" (Parallels/UTM). È consentito **solo** lo strato EL2 minimo (vGIC, PSCI, timer, IPI) deciso da Marco il 2026-10-14; tutto il resto deve restare nativo (core a piena velocità, periferiche reali). QEMU si usa solo come banco di prova.
-- **Nessun binario o codice Microsoft nel repository**: ntoskrnl, PDB, ISO e dump vanno in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato), fuori dal repository. Gli appunti di reverse engineering vanno in `re/`, scritti con parole nostre e citando gli indirizzi, senza incollare grandi blocchi di codice decompilato.
-- Il codice Asahi (MIT / GPL-2.0 / dual) si riusa rispettando la licenza, con un header di provenienza.
-- Ogni affermazione tecnica va marcata come **verificato** (con evidenza) o **ipotesi**.
-- Sicurezza dell'hardware: macOS e recovery non si toccano. Le modifiche al disco passano solo dall'installer di Asahi, e servono un backup e la conferma dell'utente prima di ogni operazione sul disco o sul boot.
+## Collaboration
+- Two people work on the project (Marco + Ciani), plus Ralph. The rules on branches, PRs, issues and "hot" files are in `docs/CONTRIBUTING.md` and must always be followed.
+- Ralph loop: only on its own `ralph/...` branch, one instance at a time, instructions in `ralph/README.md`.
 
-## Struttura
-- `re/`: reverse engineering di Windows ARM64 (HAL, interrupt, estensioni HAL)
-- `edk2-apple/`: piattaforma EDK2 AppleSiliconPkg
-- `halext-aic/`: estensione HAL per AIC e timer
-- `drivers/`: driver Windows (ANS StorPort, DART, PEP, SPI HID)
-- `tools/`: build, immagini, QEMU
-- `docs/`: piano, stato, sessioni, ADR, design
+## Constraints
+- **Dual boot, minimal layer**: no macOS underneath, no "classic" VMs (Parallels/UTM). **Only** the minimal EL2 layer (vGIC, PSCI, timer, IPI) decided by Marco on 2026-10-14 is allowed; everything else must stay native (full-speed cores, real peripherals). QEMU is used only as a test bench.
+- **No Microsoft binaries or code in the repository**: ntoskrnl, PDBs, ISOs and dumps go in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (external disk; it must be plugged in), outside the repository. Reverse-engineering notes go in `re/`, written in our own words and citing addresses, without pasting large blocks of decompiled code.
+- Asahi code (MIT / GPL-2.0 / dual) is reused in accordance with its license, with a provenance header.
+- Every technical claim must be marked as **verified** (with evidence) or **hypothesis**.
+- Hardware safety: macOS and recovery are never touched. Disk changes go only through the Asahi installer, and a backup plus the user's confirmation are required before any operation on the disk or on boot.
+
+## Structure
+- `re/`: reverse engineering of Windows ARM64 (HAL, interrupts, HAL extensions)
+- `edk2-apple/`: EDK2 platform AppleSiliconPkg
+- `halext-aic/`: HAL extension for the AIC and timer
+- `drivers/`: Windows drivers (ANS StorPort, DART, PEP, SPI HID)
+- `tools/`: build, images, QEMU
+- `docs/`: plan, status, sessions, ADRs, design

@@ -1,138 +1,138 @@
 # TEST_STRATEGY: Watari EL2
 
-- Progetto: Watari Boot, sottosistema Watari EL2 · Data: 2026-10-14 · Versione: 0.1 · Stato: draft
-- Documenti collegati: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [RISKS](RISKS.md)
-- Marcatura: **[V]** verificato, **[I]** ipotesi. Gli strumenti di base (QEMU 11.1.2 con TCG, EDK2 `edk2-stable202608`, Windows 11 installato in N2, script `tools/run-qemu-windows.sh`, trace del GIC con `kernel-irqchip=off`) esistono già nel repository [V: STATUS, FALLIMENTI F-08, F-11, F-13, F-15]. Nessun test di questo piano richiede download o installazioni nuove.
+- Project: Watari Boot, subsystem Watari EL2 · Date: 2026-10-14 · Version: 0.1 · Status: draft
+- Linked documents: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [RISKS](RISKS.md)
+- Marking: **[verified]** verified, **[hypothesis]** hypothesis. The basic tools (QEMU 11.1.2 with TCG, EDK2 `edk2-stable202608`, Windows 11 installed in N2, script `tools/run-qemu-windows.sh`, GIC trace with `kernel-irqchip=off`) already exist in the repository [verified: STATUS, FAILURES F-08, F-11, F-13, F-15]. No test in this plan requires new downloads or installations.
 
-## 1. Piramide
+## 1. Pyramid
 ```
-              /\        L4  Hardware M3 (autotest + Windows su M1)      pochi, lenti, manuali con backup
-             /  \       L3  Sistema QEMU TCG (EDK2, Windows)            decine, minuti-ore
-            /----\      L2  Integrazione QEMU TCG con guest di prova    ~30, secondi
-           /      \     L1  Oracolo di fedeltà (replay di trace)        centinaia di letture, secondi
-          /--------\    L0  Unit test su host (macOS, clang nativo)     centinaia, < 10 s totali
+              /\        L4  Hardware M3 (self-test + Windows on M1)      few, slow, manual with backup
+             /  \       L3  QEMU TCG system (EDK2, Windows)              dozens, minutes-hours
+            /----\      L2  QEMU TCG integration with test guest         ~30, seconds
+           /      \     L1  Fidelity oracle (trace replay)               hundreds of reads, seconds
+          /--------\    L0  Host unit tests (macOS, native clang)        hundreds, < 10 s total
 ```
-Regola: ogni bug trovato a un livello alto genera un test a un livello più basso (come F-11 → confronto MADT).
+Rule: every bug found at a high level generates a test at a lower level (like F-11 → MADT comparison).
 
-## 2. L0 — test su host (il cuore del TDD)
-Il nucleo (`vgic`, `cpuif` logica, `vtimer`, `psci`, `fdt`, `s2` costruzione tabelle) è C portabile **senza accesso hardware**: gli accessi passano da `*_ops` e da un piccolo strato `sysreg` che su host è una struttura in memoria. Si compila con il clang di sistema, senza QEMU.
+## 2. L0 — host tests (the heart of TDD)
+The core (`vgic`, `cpuif` logic, `vtimer`, `psci`, `fdt`, `s2` table construction) is portable C **without hardware access**: accesses go through `*_ops` and a small `sysreg` layer that on the host is an in-memory structure. It is compiled with the system clang, without QEMU.
 
-| Modulo | Cosa si testa | Casi limite noti |
+| Module | What is tested | Known edge cases |
 |---|---|---|
-| `vgic` (distributor) | ogni registro di INTERFACES §5: reset, lettura/scrittura, set/clear (ISENABLER/ICENABLER, ISPENDR/ICPENDR, ISACTIVER/ICACTIVER), priorità a byte e a parola, ICFGR, IROUTER, ID register | scrittura a registri riservati; accesso a byte su registro a 32 bit; INTID 1020-1023; SPI oltre il massimo; `IROUTER` verso vCPU inesistente; `IRM=1` |
-| `vgic` (redistributor) | `GICR_TYPER` con `Last` solo sull'ultima, `Affinity_Value`; `WAKER` (ChildrenAsleep immediato); frame SGI_base | 1 vCPU e 8 vCPU; scrittura `WAKER` ripetuta |
-| `vgic` (consegna) | scelta dell'INTID a priorità più alta, preemption per priorità, pending→active→inactive, level vs edge, SGI/PPI/SPI, mascheratura per `PMR`/`BPR` | stesse priorità (vince l'INTID minore), >8 interrupt pendenti (overflow LR), interrupt abilitato mentre pendente, disabilitato mentre active |
-| `cpuif` (logica) | flush/fold tra stato software e 8 LR finti; underflow; emulazione di `IAR1/EOIR1/HPPIR1/DIR` e `ICC_CTLR` (SEIS letto 0) | EOImode 0 e 1; IAR con nulla di pendente → 1023; EOIR di INTID non active (ignorato, log) |
-| `vtimer` | timer firing → PPI 30/27 pendente; mask alla fonte; riarmo all'EOI se non più firing; re-iniezione se ancora firing | timer disabilitato mentre pendente; due timer insieme; EOI senza firing |
-| `psci` | tutte le funzioni di INTERFACES §9, macchina a stati OFF→ON_PENDING→ON, errori | `CPU_ON` doppio, su sé stesso, MPIDR inesistente, entry fuori RAM; `AFFINITY_INFO` in transizione |
-| `fdt` | lettura nodi/proprietà, `fdt_trim_memory`, patch in loco, ricostruzione `/cpus`, FDT corrotti (lunghezze incoerenti) | FDT senza `/memory`; stringa `psci/method` già `hvc`; buffer troppo piccolo |
-| `s2` | costruzione tabelle (blocchi vs pagine), `unmap` di una regione dentro un blocco (split), attributi Device-nGnRnE vs Normal | regione non allineata; sovrapposizione; ultima pagina dello spazio PA |
-| `trap` | decodifica di ESR (EC, ISS, ISV, SAS, SRT, WnR), tabelle di registrazione (sovrapposizioni → `E_BUSY`), default-deny | `ISV=0` → panic; sysreg non in tabella; HVC non noto |
+| `vgic` (distributor) | every register in INTERFACES §5: reset, read/write, set/clear (ISENABLER/ICENABLER, ISPENDR/ICPENDR, ISACTIVER/ICACTIVER), priorities by byte and by word, ICFGR, IROUTER, ID registers | write to reserved registers; byte access to a 32-bit register; INTID 1020-1023; SPI beyond the maximum; `IROUTER` toward a non-existent vCPU; `IRM=1` |
+| `vgic` (redistributor) | `GICR_TYPER` with `Last` only on the last, `Affinity_Value`; `WAKER` (immediate ChildrenAsleep); SGI_base frame | 1 vCPU and 8 vCPUs; repeated `WAKER` write |
+| `vgic` (delivery) | choice of the highest-priority INTID, priority preemption, pending→active→inactive, level vs edge, SGI/PPI/SPI, masking by `PMR`/`BPR` | equal priorities (the lower INTID wins), >8 pending interrupts (LR overflow), interrupt enabled while pending, disabled while active |
+| `cpuif` (logic) | flush/fold between software state and 8 fake LRs; underflow; emulation of `IAR1/EOIR1/HPPIR1/DIR` and `ICC_CTLR` (SEIS read as 0) | EOImode 0 and 1; IAR with nothing pending → 1023; EOIR of a non-active INTID (ignored, log) |
+| `vtimer` | timer firing → PPI 30/27 pending; mask at the source; re-arm at EOI if no longer firing; re-injection if still firing | timer disabled while pending; two timers together; EOI without firing |
+| `psci` | all functions in INTERFACES §9, OFF→ON_PENDING→ON state machine, errors | double `CPU_ON`, on itself, non-existent MPIDR, entry outside RAM; `AFFINITY_INFO` during transition |
+| `fdt` | node/property reading, `fdt_trim_memory`, in-place patch, `/cpus` rebuild, corrupted FDTs (inconsistent lengths) | FDT without `/memory`; `psci/method` string already `hvc`; buffer too small |
+| `s2` | table construction (blocks vs pages), `unmap` of a region inside a block (split), Device-nGnRnE vs Normal attributes | unaligned region; overlap; last page of the PA space |
+| `trap` | ESR decoding (EC, ISS, ISV, SAS, SRT, WnR), registration tables (overlaps → `E_BUSY`), default-deny | `ISV=0` → panic; sysreg not in table; unknown HVC |
 
-**Primo test (TDD, passo per passo)**
-1. Scrivere `tests/host/test_gicd_typer.c`: crea un `vgic` con 4 vCPU, legge `GICD_TYPER` e verifica `0x0178001D` (valore [I] da confermare con l'oracolo, vedi §4).
-2. Vederlo fallire (il modulo non esiste: errore di link).
-3. Implementare il minimo (`vgic_new`, `vgic_mmio_read` per quel solo offset), farlo passare.
-4. Secondo test: `test_spi_enable_pend_ack_eoi`: abilita SPI 40 (INTID), lo mette pendente, imposta `PMR`, chiama l'emulazione di `IAR1` e si aspetta 40, poi `EOIR1` e si aspetta stato inattivo.
-5. Da qui in poi ogni funzione nuova nasce da un test rosso.
+**First test (TDD, step by step)**
+1. Write `tests/host/test_gicd_typer.c`: creates a `vgic` with 4 vCPUs, reads `GICD_TYPER` and checks `0x0178001D` (value [hypothesis] to be confirmed with the oracle, see §4).
+2. See it fail (the module does not exist: link error).
+3. Implement the minimum (`vgic_new`, `vgic_mmio_read` for that offset only), make it pass.
+4. Second test: `test_spi_enable_pend_ack_eoi`: enables SPI 40 (INTID), makes it pending, sets `PMR`, calls the `IAR1` emulation and expects 40, then `EOIR1` and expects the inactive state.
+5. From here on every new function is born from a red test.
 
-**Test di proprietà (deterministici)**: generatore pseudo-casuale `xorshift64*` con **seed fisso scritto nel test e stampato a ogni esecuzione**; sequenze casuali di operazioni MMIO/IRQ/ack/EOI contro un **modello di riferimento** semplice (non l'implementazione ottimizzata). Invarianti controllati dopo ogni passo:
-- un INTID compare in al più un LR;
-- nessun INTID è contemporaneamente pending e active se non per le regole GICv3 (pending+active ammesso per level);
-- l'INTID consegnato ha priorità ≥ di qualsiasi altro pendente abilitato e non mascherato da `PMR`;
-- dopo `EOIR` seguita da `ICENABLER`, nessuna re-iniezione.
-Numero di sequenze per esecuzione: 10.000, tempo massimo 5 s.
+**Property tests (deterministic)**: `xorshift64*` pseudo-random generator with a **fixed seed written in the test and printed at every run**; random sequences of MMIO/IRQ/ack/EOI operations against a simple **reference model** (not the optimized implementation). Invariants checked after each step:
+- an INTID appears in at most one LR;
+- no INTID is simultaneously pending and active except under the GICv3 rules (pending+active allowed for level);
+- the delivered INTID has priority ≥ any other enabled pending one not masked by `PMR`;
+- after `EOIR` followed by `ICENABLER`, no re-injection.
+Number of sequences per run: 10,000, maximum time 5 s.
 
-**Copertura**: `llvm-cov`/`gcov` sul nucleo, soglia **≥ 90% delle righe** e 100% dei rami di decodifica dei registri (il comando e la soglia fanno fallire la build locale).
+**Coverage**: `llvm-cov`/`gcov` on the core, threshold **≥ 90% of lines** and 100% of register-decoding branches (the command and the threshold fail the local build).
 
-## 3. L2 — integrazione su QEMU TCG con payload di prova
-`virtualization=on` rende disponibili a EL2 il GICv3 con `ICH_*` e il maintenance interrupt in TCG [V: PB §7: `arm_gicv3_cpuif.c`, `virt.c`]. Comando di riferimento [I]:
+## 3. L2 — integration on QEMU TCG with a test payload
+`virtualization=on` makes the GICv3 with `ICH_*` and the maintenance interrupt available at EL2 in TCG [verified: PB §7: `arm_gicv3_cpuif.c`, `virt.c`]. Reference command [hypothesis]:
 ```
 qemu-system-aarch64 -M virt,virtualization=on,gic-version=3 -cpu max -smp 4 -m 2G \
   -nographic -serial mon:stdio -kernel build/wel2.elf -d guest_errors -D logs/qemu.log \
-  -icount shift=auto,sleep=off   # solo per i test a tempo deterministico
+  -icount shift=auto,sleep=off   # only for deterministic-time tests
 ```
-Il payload di prova (`tests/qemu/guest-*.S`, scritto da noi, ≤ 200 righe) stampa su UART un token per ogni passo, e il test controlla il flusso di token (grep con timeout). Casi:
+The test payload (`tests/qemu/guest-*.S`, written by us, ≤ 200 lines) prints a token on UART for each step, and the test checks the token flow (grep with timeout). Cases:
 
-| Test | Verifica | Milestone |
+| Test | Verifies | Milestone |
 |---|---|---|
-| `boot-el2` | banner, `CurrentEL=2`, `E2H=1` impostato dallo strato, stage-2 attivo | M0 |
-| `inject-ppi` | iniezione PPI 30 → il guest esegue `IAR1` (trap o HW), legge 30, `EOIR1` | M0 |
-| `gic-probe` | il guest legge tutti i registri GICD/GICR di INTERFACES §5-6 e confronta con i valori attesi stampati dallo strato | M0-M1 |
-| `psci-smp` | il guest accende i core 1-3 con `HVC CPU_ON`; ogni core stampa il proprio MPIDR; poi `CPU_OFF` e `AFFINITY_INFO` | M1 |
-| `sgi-ipi` | ogni core invia SGI a ogni altro con `ICC_SGI1R_EL1`; il destinatario conta le ricezioni (N×(N-1) attesi) | M1 |
-| `spi-device` | un dispositivo virtio con interrupt reali (backend `gic-qemu`) → vSPI → guest | M1-M2 |
-| `timer-tick` | il guest programma `CNTP` a 10 ms e conta 100 interrupt in ~1 s virtuale (tolleranza dichiarata) | M1 |
-| `modes` | le stesse prove con `cpuif_mode=HW` e `TRAP_EMULATE`: risultati identici | M1 |
-| `fault-injection` | accesso a regione dello strato; `ISV=0` forzato; HVC ignoto; MMIO non mappato → panic con dump e codice atteso | M1 |
-| `linux-control` (opzionale) | un kernel Linux arm64 di prova (se già presente in locale; **non si scarica**) usa il vGIC e arriva alla console | M1 |
+| `boot-el2` | banner, `CurrentEL=2`, `E2H=1` set by the layer, stage-2 active | M0 |
+| `inject-ppi` | PPI 30 injection → the guest executes `IAR1` (trap or HW), reads 30, `EOIR1` | M0 |
+| `gic-probe` | the guest reads all GICD/GICR registers of INTERFACES §5-6 and compares with the expected values printed by the layer | M0-M1 |
+| `psci-smp` | the guest powers on cores 1-3 with `HVC CPU_ON`; each core prints its own MPIDR; then `CPU_OFF` and `AFFINITY_INFO` | M1 |
+| `sgi-ipi` | each core sends an SGI to every other with `ICC_SGI1R_EL1`; the destination counts receptions (N×(N-1) expected) | M1 |
+| `spi-device` | a virtio device with real interrupts (`gic-qemu` backend) → vSPI → guest | M1-M2 |
+| `timer-tick` | the guest programs `CNTP` at 10 ms and counts 100 interrupts in ~1 virtual second (declared tolerance) | M1 |
+| `modes` | the same tests with `cpuif_mode=HW` and `TRAP_EMULATE`: identical results | M1 |
+| `fault-injection` | access to the layer region; forced `ISV=0`; unknown HVC; unmapped MMIO → panic with dump and expected code | M1 |
+| `linux-control` (optional) | a test Linux arm64 kernel (if already present locally; **not downloaded**) uses the vGIC and reaches the console | M1 |
 
-**Test host di sezione E2H**: il boot dello strato in QEMU imposta `HCR_EL2.E2H=1` per riprodurre il M1 [I: ARCHITECTURE §1.3]; un test verifica che l'accesso ai registri del guest passi da `*_EL12` e non da `*_EL1`.
+**E2H host test**: the layer boot in QEMU sets `HCR_EL2.E2H=1` to reproduce the M1 [hypothesis: ARCHITECTURE §1.3]; a test verifies that access to the guest registers goes through `*_EL12` and not through `*_EL1`.
 
-## 4. L1 — test di fedeltà del vGIC (anti-F-14)
-Obiettivo: nessun registro del vGIC che Windows legge deve differire da quanto ha visto su un GICv3 funzionante.
+## 4. L1 — vGIC fidelity tests (anti-F-14)
+Goal: no vGIC register that Windows reads must differ from what it saw on a working GICv3.
 
-**Oracolo.** Il boot V1 di Windows 11 (MADT acpigen, GICv3 di QEMU, schermata di blocco raggiunta [V: F-11]) viene rieseguito con `-accel tcg` o HVF e `kernel-irqchip=off` con il trace del GIC di QEMU (`-trace 'gicv3_*'`, come in F-13/F-15 [V]) e registrato in un file: ogni riga = (tempo, CPU, tipo accesso, offset, dimensione, valore letto/scritto). Il file di trace e il suo hash vanno in `WatariBoot-data/oracle/` (fuori dal repository: contiene solo accessi a registri GIC, nessun codice Microsoft, ma è grande).
+**Oracle.** The V1 boot of Windows 11 (acpigen MADT, QEMU GICv3, lock screen reached [verified: F-11]) is rerun with `-accel tcg` or HVF and `kernel-irqchip=off` with the QEMU GIC trace (`-trace 'gicv3_*'`, as in F-13/F-15 [verified]) and recorded in a file: each line = (time, CPU, access type, offset, size, value read/written). The trace file and its hash go in `WatariBoot-data/oracle/` (outside the repository: it contains only GIC register accesses, no Microsoft code, but it is large).
 
-**Replay su host.** `tests/oracle/replay.c` legge il trace e ripete le scritture di Windows sul nostro `vgic` (stesse vCPU), confrontando ogni lettura con il valore dell'oracolo. Classificazione:
-- **statici** (devono coincidere sempre): `TYPER`, `IIDR`, `TYPER2`, ID register, `GICR_TYPER`, `ICFGR` di SGI/PPI, `IPRIORITYR` rilette dopo scrittura, `ISENABLER` rilette dopo scrittura, `WAKER`, `CTLR` (incluso RWP);
-- **dinamici** (pending/active, `HPPIR`, `IAR`): non confrontati nel replay; coperti da L0 e dal modello di riferimento;
-- le differenze **attese** (es. numero di SPI, indirizzi) sono in una lista `oracle-allow.txt` con motivazione.
-Criterio: 100% dei registri statici letti da Windows coincide; report con la tabella "registro letto da Windows / frequenza" (serve anche a ordinare le priorità implementative).
+**Replay on host.** `tests/oracle/replay.c` reads the trace and repeats Windows' writes on our `vgic` (same vCPUs), comparing every read with the oracle's value. Classification:
+- **static** (must always match): `TYPER`, `IIDR`, `TYPER2`, ID registers, `GICR_TYPER`, `ICFGR` of SGI/PPI, `IPRIORITYR` reread after write, `ISENABLER` reread after write, `WAKER`, `CTLR` (including RWP);
+- **dynamic** (pending/active, `HPPIR`, `IAR`): not compared in the replay; covered by L0 and the reference model;
+- **expected** differences (e.g. number of SPIs, addresses) are in an `oracle-allow.txt` list with rationale.
+Criterion: 100% of the static registers read by Windows match; report with the table "register read by Windows / frequency" (also serves to order implementation priorities).
 
-**Misure aggiuntive dal trace** (rispondono a decisioni aperte):
-- frequenza di scrittura di `ICC_PMR_EL1` e di `IAR/EOIR` per secondo durante il boot e a riposo → stima del costo del modo `TRAP_EMULATE` (RISKS R-05). Il trace via `kernel-irqchip=off` registra gli accessi MMIO al GIC; i registri `ICC_*` sono di sistema e vanno contati con un trace dei sysreg (QEMU TCG: `-d` con `trace:` sui registri `ICC_*` oppure contatori dello strato in `TRAP_EMULATE` — l'alternativa pratica) [I].
-- elenco delle sequenze di avvio delle CPU (come F-15 T6) per verificare che il vGIC le accetti.
+**Additional measurements from the trace** (answer open decisions):
+- write frequency of `ICC_PMR_EL1` and of `IAR/EOIR` per second during boot and at rest → estimate of the cost of the `TRAP_EMULATE` mode (RISKS R-05). The trace via `kernel-irqchip=off` records MMIO accesses to the GIC; the `ICC_*` registers are system registers and must be counted with a sysreg trace (QEMU TCG: `-d` with `trace:` on the `ICC_*` registers, or the layer's counters in `TRAP_EMULATE` — the practical alternative) [hypothesis].
+- list of CPU bring-up sequences (like F-15 T6) to verify that the vGIC accepts them.
 
-**Test negativi di fedeltà** (da F-14): per ogni registro "Critico" di INTERFACES si fa una variante con il valore sbagliato (mutation testing manuale: `RWP=1` permanente, `Last` errato, `ChildrenAsleep` fisso a 1) e si verifica in L2/L3 che il sintomo sia **rilevato dal watchdog dello strato** (timeout con dump) invece di essere un hang silenzioso (NFR-9).
+**Negative fidelity tests** (from F-14): for each "Critical" register in INTERFACES a variant with the wrong value is made (manual mutation testing: permanent `RWP=1`, wrong `Last`, `ChildrenAsleep` fixed at 1) and it is verified in L2/L3 that the symptom is **detected by the layer's watchdog** (timeout with dump) instead of being a silent hang (NFR-9).
 
-## 5. L3 — sistema su QEMU TCG
-| Test | Passi | Criterio |
+## 5. L3 — system on QEMU TCG
+| Test | Steps | Criterion |
 |---|---|---|
-| `edk2-boot` (M1) | `-kernel wel2.elf`, pflash con `QEMU_EFI-watari.fd`, `-smp 4` | seriale: GICv3 rilevato, `BdsWait` termina, Boot Manager; 3 esecuzioni con gli stessi eventi chiave |
-| `edk2-reset` (M1) | dal Boot Manager, `Reset` | lo strato logga `SYSTEM_RESET` e QEMU riparte; nessun doppio avvio |
-| `win-boot` (M2) | disco Windows installato (N2) con `snapshot=on`, `-smp 4`, `ramfb` | schermata di blocco entro il limite (§7); screenshot con `screendump` su percorso senza spazi (F-07); prima di dichiarare un hang si manda un tasto (`sendkey shift`, F-10) |
-| `win-smp` (M2) | stesso | log strato: 3 `CPU_ON` riusciti + BSP; nessun bugcheck 0x5C |
-| `win-soak` (M2) | 30 minuti di inattività | 0 panic, contatori di uscite stabili (rate ≤ soglia NFR-1) |
-| `win-baseline` (M2) | Windows su TCG **senza** strato (firmware originale) | tempo di riferimento per il criterio 1,5× |
+| `edk2-boot` (M1) | `-kernel wel2.elf`, pflash with `QEMU_EFI-watari.fd`, `-smp 4` | serial: GICv3 detected, `BdsWait` terminates, Boot Manager; 3 runs with the same key events |
+| `edk2-reset` (M1) | from the Boot Manager, `Reset` | the layer logs `SYSTEM_RESET` and QEMU restarts; no double boot |
+| `win-boot` (M2) | installed Windows disk (N2) with `snapshot=on`, `-smp 4`, `ramfb` | lock screen within the limit (§7); screenshot with `screendump` on a path without spaces (F-07); before declaring a hang a key is sent (`sendkey shift`, F-10) |
+| `win-smp` (M2) | same | layer log: 3 successful `CPU_ON` + BSP; no bugcheck 0x5C |
+| `win-soak` (M2) | 30 minutes of idling | 0 panics, exit counters stable (rate ≤ NFR-1 threshold) |
+| `win-baseline` (M2) | Windows on TCG **without** the layer (original firmware) | reference time for the 1.5× criterion |
 
-Diagnosi di un blocco: il watchdog dello strato (timeout senza uscite da una vCPU per T secondi, T configurabile) stampa lo stato; il gdbstub di QEMU (`-gdb`) è utilizzabile **ma altera i timeout del guest** (F-15) e quindi solo per post-mortem.
+Diagnosing a hang: the layer's watchdog (timeout with no exits from a vCPU for T seconds, T configurable) prints the state; QEMU's gdbstub (`-gdb`) is usable **but alters the guest's timeouts** (F-15) and therefore only for post-mortem.
 
 ## 6. L4 — hardware (M3)
-Si esegue solo dopo conferma di backup e del via di Marco (regola assoluta). Prerequisito: host di debug (RISKS R-07).
-- **Autotest di M3a** (payload di prova + strato, senza EDK2/Windows): 
-  1. `aic-sw-irq`: `SW_SET` dell'AIC su un IRQ non collegato a nulla [V: F0 §3.4] → vSPI → il payload lo riceve; verifica mask/unmask e target.
-  2. `ipi-fast`: IPI veloce core→core per tutte le 56 coppie.
-  3. `timer-fiq`: timer guest fisico e virtuale → vPPI 30 e 27; verifica che `CNTP_CTL` letto dal guest non mostri `IMASK` modificato; assenza di tempeste di FIQ (contatore di FIQ per secondo).
-  4. `psci-8`: `CPU_ON` degli 8 core con spin-table.
-  5. `serror-probe`: letture/scritture mirate dei registri `ICC/ICH` per verificare la variante B del trap (R-01) senza SError; qualunque SError → classificazione e log.
-  6. `s2-attr`: scrittura MMIO nGnRE dal guest verso un registro innocuo → nessun SError (verifica l'ipotesi nGnRnE).
-  7. `mem-protect`: accesso del guest alla regione dello strato → fault gestito.
-- **Misure di prestazione (NFR-1):** guest di controllo (Linux Asahi se già installato, o il payload di prova) in due configurazioni: stage-2 identità e traps minime vs. native; ciclo CPU-bound, ciclo di accessi MMIO reali, IRQ ad alto ritmo (`SW_SET` in loop). Scrivere i numeri in `docs/costs/` o in un file di misure del sottosistema. m1n1 hv può servire per osservazioni in sola lettura [I].
-- **Windows M3b:** USB-C con disco/ tastiera USB; criterio di PRD §8.
+Executed only after confirmation of the backup and Marco's go-ahead (absolute rule). Prerequisite: debug host (RISKS R-07).
+- **M3a self-tests** (test payload + layer, without EDK2/Windows):
+  1. `aic-sw-irq`: AIC `SW_SET` on an IRQ not connected to anything [verified: F0 §3.4] → vSPI → the payload receives it; verifies mask/unmask and target.
+  2. `ipi-fast`: fast IPI core→core for all 56 pairs.
+  3. `timer-fiq`: guest physical and virtual timer → vPPI 30 and 27; verifies that the `CNTP_CTL` read by the guest does not show a modified `IMASK`; absence of FIQ storms (FIQ counter per second).
+  4. `psci-8`: `CPU_ON` of the 8 cores with spin-table.
+  5. `serror-probe`: targeted reads/writes of the `ICC/ICH` registers to verify trap variant B (R-01) without SError; any SError → classification and log.
+  6. `s2-attr`: nGnRE MMIO write from the guest to a harmless register → no SError (verifies the nGnRnE hypothesis).
+  7. `mem-protect`: guest access to the layer region → handled fault.
+- **Performance measurements (NFR-1):** control guest (Asahi Linux if already installed, or the test payload) in two configurations: identity stage-2 and minimal traps vs. native; CPU-bound loop, real MMIO access loop, high-rate IRQs (`SW_SET` in a loop). Write the numbers in `docs/costs/` or in a measurements file of the subsystem. m1n1 hv can serve for read-only observations [hypothesis].
+- **Windows M3b:** USB-C with USB disk/keyboard; criterion in PRD §8.
 
-## 7. Riproducibilità
-| Elemento | Regola |
+## 7. Reproducibility
+| Element | Rule |
 |---|---|
-| Toolchain | versione di clang scritta in `el2/TOOLCHAIN.md` e controllata all'avvio del `make` (fallisce se diversa); flag `-ffreestanding -fno-pic -mgeneral-regs-only -Wall -Wextra -Werror`; `-ffile-prefix-map` e nessun timestamp |
-| Build | `make -C el2 repro-check`: due build da cartelle diverse → stesso SHA-256 |
-| QEMU | 11.1.2, comando completo in `tools/run-qemu-wel2.sh` (da scrivere); `snapshot=on` per i dischi Windows; durata e seed registrati nel log |
-| Tempo | per L2: `-icount shift=auto,sleep=off` dove possibile (tempo guest deterministico); per L3: tolleranze dichiarate e controllo su eventi (non su durata) |
-| Dati | immagini identificate da SHA-256 in `WatariBoot-data/…/SHA256.txt` (già in uso per l'ISO) |
-| Seed | tutti i test casuali stampano il seed; `SEED=<n> make test` lo riproduce |
-| Ambiente | percorsi senza spazi (F-07: `/tmp/watari-data`); nessun uso di rete nei test |
-| Esito | ogni test scrive un file di esito con comando, versioni, hash degli input e risultato |
+| Toolchain | clang version written in `el2/TOOLCHAIN.md` and checked at the start of `make` (fails if different); flags `-ffreestanding -fno-pic -mgeneral-regs-only -Wall -Wextra -Werror`; `-ffile-prefix-map` and no timestamps |
+| Build | `make -C el2 repro-check`: two builds from different folders → same SHA-256 |
+| QEMU | 11.1.2, full command in `tools/run-qemu-wel2.sh` (to be written); `snapshot=on` for the Windows disks; duration and seed recorded in the log |
+| Time | for L2: `-icount shift=auto,sleep=off` where possible (deterministic guest time); for L3: declared tolerances and checks on events (not on duration) |
+| Data | images identified by SHA-256 in `WatariBoot-data/…/SHA256.txt` (already in use for the ISO) |
+| Seed | all random tests print the seed; `SEED=<n> make test` reproduces it |
+| Environment | paths without spaces (F-07: `/tmp/watari-data`); no network use in the tests |
+| Outcome | each test writes an outcome file with command, versions, input hashes and result |
 
-## 8. Cosa NON si testa in QEMU (e come si compensa)
-| Limite | Compensazione |
+## 8. What is NOT tested in QEMU (and how it is compensated)
+| Limit | Compensation |
 |---|---|
-| Timer come FIQ e `VM_TMR_FIQ_ENA_EL2` | L0 con sysreg finti; L4 `timer-fiq` |
-| AIC (non esiste in QEMU, F-06) | L0 con `pirq-fake` e con un modello a registri dell'AIC scritto nei test (mappa 0x2000-0x4200); L4 `aic-sw-irq` |
-| Errata SEIS e SError reali | L4 `serror-probe`; L2 simula SError con iniezione software |
-| Prestazioni | solo contatori di uscite in QEMU (utili per confronti relativi, non per assolute); misure vere in L4 |
+| Timer as FIQ and `VM_TMR_FIQ_ENA_EL2` | L0 with fake sysregs; L4 `timer-fiq` |
+| AIC (does not exist in QEMU, F-06) | L0 with `pirq-fake` and with a register model of the AIC written in the tests (map 0x2000-0x4200); L4 `aic-sw-irq` |
+| SEIS errata and real SErrors | L4 `serror-probe`; L2 simulates SErrors with software injection |
+| Performance | only exit counters in QEMU (useful for relative comparisons, not absolute ones); real measurements in L4 |
 | Fast IPI, PMU FIQ | L4 |
-| Comportamento di Windows sulle periferiche Apple | fuori scopo (driver) |
-Un modello AIC dentro QEMU sarebbe l'ideale ma richiede di compilare QEMU: **non si fa senza il via di Marco** (F-13) e non è nel percorso critico.
+| Windows behavior on Apple peripherals | out of scope (drivers) |
+An AIC model inside QEMU would be ideal but requires compiling QEMU: **not done without Marco's go-ahead** (F-13) and not on the critical path.
 
-## 9. Criteri di uscita per milestone
-Riportati in PRD §8; ogni criterio ha un test numerato qui (M0: §2 + §3 `boot-el2`, `inject-ppi`; M1: §3 e §5 `edk2-*`; M2: §4 e §5 `win-*`; M3a: §6).
+## 9. Exit criteria per milestone
+Reported in PRD §8; each criterion has a numbered test here (M0: §2 + §3 `boot-el2`, `inject-ppi`; M1: §3 and §5 `edk2-*`; M2: §4 and §5 `win-*`; M3a: §6).

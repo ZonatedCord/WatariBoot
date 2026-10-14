@@ -1,54 +1,54 @@
 # ARCHITECTURE: Watari Boot
 
-- Progetto: Watari Boot · Data: 2026-10-12 · Versione: 0.1 · Stato: draft
-- Documenti collegati: [PRD](PRD.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
-- Marcatura: `[verificato: fonte]` / `[ipotesi]`. Tutto cio' che descrive il comportamento interno di Windows e' `[ipotesi]` fino alla conclusione della Fase 0.
+- Project: Watari Boot · Date: 2026-10-12 · Version: 0.1 · Status: draft
+- Related documents: [PRD](PRD.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
+- Marking: `[verified: source]` / `[hypothesis]`. Everything that describes the internal behavior of Windows is `[hypothesis]` until Phase 0 is concluded.
 
-## 1. Fatti di base usati
-- [verificato: https://codebrowser.dev/linux/linux/arch/arm64/kernel/acpi_parking_protocol.c.html] Il parking protocol usa una mailbox per CPU con `cpu_id` (32 bit, atteso 0xFFFFFFFF finche' non rilasciata), `reserved` e `entry_point` (64 bit); l'OS scrive entry point, poi cpu_id, poi invia un IPI di risveglio.
-- [verificato: sorgente `drivers/irqchip/irq-apple-aic.c` di Linux, es. https://gbmc.googlesource.com/linux/+/refs/heads/master/drivers/irqchip/irq-apple-aic.c] L'AIC ha 896 IRQ hardware level-triggered con mask e affinity per IRQ e due IPI per CPU; le FIQ sono usate per timer ARM, Fast IPI (e performance counter) verso client hard-wired.
-- [verificato: https://learn.microsoft.com/en-us/windows-hardware/test/hlk/testref/de119483-e85e-4f19-ba05-202a7219b43f] Esiste il concetto di HAL Extension DLL, legata a un device ACPI tramite PNP ID (esempio ACPI\MSFT_1124) e al requisito HLK System.Fundamentals.HAL.IfCSRTPresent; l'estensione viene verificata come caricata e serviceable.
-- [ipotesi] Il formato di CSRT per le HAL extension, l'interfaccia (`HalExtension` exports) e la possibilita' di registrare un controller non-GIC sono da confermare in Fase 0.
-- [ipotesi, dal piano] Il M1 non ha EL3/PSCI; il SoC e' t8103, board j293; l'SSD e' ANS2 non su PCIe.
+## 1. Baseline facts used
+- [verified: https://codebrowser.dev/linux/linux/arch/arm64/kernel/acpi_parking_protocol.c.html] The parking protocol uses a per-CPU mailbox with `cpu_id` (32 bit, expected 0xFFFFFFFF until released), `reserved` and `entry_point` (64 bit); the OS writes the entry point, then cpu_id, then sends a wake-up IPI.
+- [verified: Linux source `drivers/irqchip/irq-apple-aic.c`, e.g. https://gbmc.googlesource.com/linux/+/refs/heads/master/drivers/irqchip/irq-apple-aic.c] The AIC has 896 level-triggered hardware IRQs with per-IRQ mask and affinity and two IPIs per CPU; FIQs are used for the ARM timer, Fast IPI (and performance counters) toward hard-wired clients.
+- [verified: https://learn.microsoft.com/en-us/windows-hardware/test/hlk/testref/de119483-e85e-4f19-ba05-202a7219b43f] The concept of an HAL Extension DLL exists, tied to an ACPI device through a PNP ID (example ACPI\MSFT_1124) and to the HLK requirement System.Fundamentals.HAL.IfCSRTPresent; the extension is checked to be loaded and serviceable.
+- [hypothesis] The CSRT format for HAL extensions, the interface (`HalExtension` exports) and the possibility of registering a non-GIC controller are to be confirmed in Phase 0.
+- [hypothesis, from the plan] The M1 has no EL3/PSCI; the SoC is t8103, board j293; the SSD is ANS2, not on PCIe.
 
-## 2. Vista C4
+## 2. C4 view
 
 ### 2.1 Context
 ```mermaid
 flowchart LR
-  dev[Sviluppatore] -->|esegue, osserva| mac[MacBook Pro M1 j293]
+  dev[Developer] -->|runs, observes| mac[MacBook Pro M1 j293]
   dbg[Debug host Pi 5] <-->|UART/USB-C debug| mac
   dev --> host[Mac host: build, Ghidra, QEMU]
-  host -->|immagini, driver| mac
-  ms[(Dati Microsoft: ntoskrnl, PDB, ISO - fuori dal repo)] -.->|solo analisi locale| host
-  asahi[Upstream Asahi: m1n1, linux] -->|codice riusato con provenienza| host
+  host -->|images, drivers| mac
+  ms[(Microsoft data: ntoskrnl, PDB, ISO - outside the repo)] -.->|local analysis only| host
+  asahi[Upstream Asahi: m1n1, linux] -->|reused code with provenance| host
   subgraph sys[Watari Boot]
-    sw[Firmware + estensioni HAL + driver]
+    sw[Firmware + HAL extensions + drivers]
   end
   host --> sw --> mac
 ```
 
-### 2.2 Container (componenti di sistema)
+### 2.2 Container (system components)
 ```mermaid
 flowchart TB
   subgraph FW[Firmware]
     iBoot[iBoot / Apple boot]:::ext --> m1n1[m1n1 stage]
-    m1n1 -->|handoff: ADT, framebuffer, memoria, UART| edk2[EDK2 AppleSiliconPkg]
-    edk2 --> acpigen[M-ACPI-GEN: tabelle da ADT]
-    edk2 --> park[M-PARK: mailbox core secondari]
+    m1n1 -->|handoff: ADT, framebuffer, memory, UART| edk2[EDK2 AppleSiliconPkg]
+    edk2 --> acpigen[M-ACPI-GEN: tables from ADT]
+    edk2 --> park[M-PARK: secondary core mailboxes]
   end
-  subgraph WIN[Windows ARM64 non modificato]
+  subgraph WIN[Unmodified Windows ARM64]
     bm[bootmgr/winload]:::ext --> kernel[ntoskrnl + HAL]:::ext
-    kernel -->|carica via CSRT| halext[M-HALEXT: estensione HAL AIC + timer]
-    kernel --> drv[Driver: ANS StorPort, DART, PEP, SPI HID]
-    kernel --> xhci[UsbXhci standard]:::ext
+    kernel -->|loads via CSRT| halext[M-HALEXT: AIC + timer HAL extension]
+    kernel --> drv[Drivers: ANS StorPort, DART, PEP, SPI HID]
+    kernel --> xhci[Standard UsbXhci]:::ext
   end
   edk2 -->|ACPI + UEFI services| bm
   acpigen -.-> kernel
   classDef ext fill:#eee,stroke:#999
 ```
 
-### 2.3 Component (moduli e dipendenze)
+### 2.3 Component (modules and dependencies)
 ```mermaid
 flowchart LR
   ADT[(ADT)] --> ADTP[M-ADT-PARSE]
@@ -56,38 +56,38 @@ flowchart LR
   ADTP --> EDK2[M-EDK2 platform]
   ACPIGEN --> EDK2
   PARK[M-PARK] --> EDK2
-  HALEXT[M-HALEXT] -. descritta da CSRT/DSDT .-> ACPIGEN
-  PEP[M-PEP] -. descritto da DSDT .-> ACPIGEN
+  HALEXT[M-HALEXT] -. described by CSRT/DSDT .-> ACPIGEN
+  PEP[M-PEP] -. described by DSDT .-> ACPIGEN
   ANS[M-ANS] --> DART[M-DART]
   ANS --> SART[M-SART]
-  XHCI[M-XHCI: solo descrizione ACPI] --> ACPIGEN
+  XHCI[M-XHCI: ACPI description only] --> ACPIGEN
   SPIHID[M-SPIHID] --> DART
-  RE[M-RE: analisi Ghidra] -. informa .-> HALEXT
-  TOOLS[M-TOOLS] -. build di tutti .-> EDK2
+  RE[M-RE: Ghidra analysis] -. informs .-> HALEXT
+  TOOLS[M-TOOLS] -. builds all .-> EDK2
 ```
-Il grafo e' aciclico: le frecce tratteggiate sono dipendenze di descrizione/documentazione, non di link.
+The graph is acyclic: the dashed arrows are description/documentation dependencies, not link dependencies.
 
-## 3. Moduli
-| Modulo | Responsabilita' singola | Interfaccia pubblica | Dipende da |
+## 3. Modules
+| Module | Single responsibility | Public interface | Depends on |
 |---|---|---|---|
-| M-RE | Produrre conoscenza verificata su HAL/ntoskrnl (solo documenti) | Report in `re/` (INTERFACES, sez. IPOTESI) | nessuno |
-| M-ADT-PARSE | Leggere l'ADT consegnato da m1n1 e produrre un modello dati di piattaforma | `AdtGet*` (INTERFACES 2) | nessuno |
-| M-ACPI-GEN | Generare tabelle ACPI dal modello dati | `AcpiGenBuildAll()` | M-ADT-PARSE |
-| M-PARK | Inizializzare le mailbox del parking protocol e il codice di parcheggio | Layout mailbox (INTERFACES 4) | M-ADT-PARSE |
-| M-EDK2 | Piattaforma UEFI: memoria, GOP, console, avvio di bootmgr | UEFI + protocollo ACPI | M-ADT-PARSE, M-ACPI-GEN, M-PARK |
-| M-HALEXT | Fornire a Windows l'AIC come controller di interrupt e il timer IRQ | Interfaccia estensione HAL (IPOTESI) | niente a link-time (carico dinamico) |
-| M-ANS | Esporre l'SSD ANS2 come disco StorPort | Miniport StorPort | M-DART, M-SART |
-| M-SART | Programmare le regioni SART dell'SSD | `SartMapRegion()` | nessuno |
-| M-DART | Gestire IOMMU (bypass o mappature) | `DartMap()/DartBypass()` | nessuno |
-| M-XHCI | Descrivere in ACPI il controller xHCI (nessun codice Windows nostro) | Nodo DSDT | M-ACPI-GEN |
-| M-PEP | Gestione energetica e DVFS (registri PMGR) | PEP callbacks | nessuno |
-| M-SPIHID | Tastiera/trackpad su SPI come HID | KMDF HID minidriver | M-DART |
-| M-GPU | Futuro driver WDDM (non definito in dettaglio) | n/d | n/d |
-| M-TOOLS | Build riproducibile, immagini, script QEMU | CLI in `tools/` | nessuno |
+| M-RE | Produce verified knowledge about HAL/ntoskrnl (documents only) | Report in `re/` (INTERFACES, HYPOTHESIS section) | none |
+| M-ADT-PARSE | Read the ADT delivered by m1n1 and produce a platform data model | `AdtGet*` (INTERFACES 2) | none |
+| M-ACPI-GEN | Generate ACPI tables from the data model | `AcpiGenBuildAll()` | M-ADT-PARSE |
+| M-PARK | Initialize the parking protocol mailboxes and the parking code | Mailbox layout (INTERFACES 4) | M-ADT-PARSE |
+| M-EDK2 | UEFI platform: memory, GOP, console, bootmgr launch | UEFI + ACPI protocol | M-ADT-PARSE, M-ACPI-GEN, M-PARK |
+| M-HALEXT | Provide Windows with the AIC as interrupt controller and the IRQ timer | HAL extension interface (HYPOTHESIS) | nothing at link time (dynamic load) |
+| M-ANS | Expose the ANS2 SSD as a StorPort disk | StorPort miniport | M-DART, M-SART |
+| M-SART | Program the SSD's SART regions | `SartMapRegion()` | none |
+| M-DART | Manage the IOMMU (bypass or mappings) | `DartMap()/DartBypass()` | none |
+| M-XHCI | Describe the xHCI controller in ACPI (no Windows code of our own) | DSDT node | M-ACPI-GEN |
+| M-PEP | Power management and DVFS (PMGR registers) | PEP callbacks | none |
+| M-SPIHID | Keyboard/trackpad over SPI as HID | KMDF HID minidriver | M-DART |
+| M-GPU | Future WDDM driver (not defined in detail) | n/a | n/a |
+| M-TOOLS | Reproducible build, images, QEMU scripts | CLI in `tools/` | none |
 
-Nota Mantenibilita': i moduli che nel piano sono descritti in modo composto (ad es. "AIC + timer") restano due responsabilita' interne distinte (`aic_controller`, `irq_timer`) nello stesso binario perche' Windows carica una sola estensione HAL per device ACPI [ipotesi]; la separazione e' a livello di file e interfaccia interna.
+Maintainability note: modules that the plan describes as a combination (e.g. "AIC + timer") remain two distinct internal responsibilities (`aic_controller`, `irq_timer`) in the same binary because Windows loads a single HAL extension per ACPI device [hypothesis]; the separation is at the file and internal-interface level.
 
-## 4. Flusso di boot dall'accensione al desktop
+## 4. Boot flow from power-on to desktop
 ```mermaid
 sequenceDiagram
   participant HW as Hardware/iBoot
@@ -97,57 +97,57 @@ sequenceDiagram
   participant K as ntoskrnl+HAL
   participant X as M-HALEXT
   participant D as Driver
-  HW->>M: avvio (m1n1 come payload scelto dall'installer Asahi, "UEFI environment only")
+  HW->>M: boot (m1n1 as payload chosen by the Asahi installer, "UEFI environment only")
   M->>M: init PMGR, framebuffer, USB PHY/DWC3 host
-  M->>E: handoff (ADT, FB, mappa memoria, UART) [INTERFACES 1]
-  E->>E: parse ADT, costruzione tabelle ACPI, mailbox parking
-  E->>E: GOP, driver USB/disco UEFI
-  E->>W: avvio da USB/ESP
-  W->>K: carica kernel/HAL con ACPI
-  K->>X: caricamento estensione HAL descritta in CSRT [ipotesi]
-  X->>K: registra controller AIC e timer [ipotesi]
-  K->>K: avvio core secondari via parking protocol
+  M->>E: handoff (ADT, FB, memory map, UART) [INTERFACES 1]
+  E->>E: parse ADT, build ACPI tables, parking mailboxes
+  E->>E: GOP, USB/disk UEFI drivers
+  E->>W: boot from USB/ESP
+  W->>K: load kernel/HAL with ACPI
+  K->>X: load HAL extension described in CSRT [hypothesis]
+  X->>K: register AIC controller and timer [hypothesis]
+  K->>K: start secondary cores via parking protocol
   K->>D: boot-start drivers (ANS, DART)
-  D-->>K: disco pronto
+  D-->>K: disk ready
   K->>K: userland, logon, desktop
 ```
-Dettagli per fase: in Fase 3 si arriva fino al caricamento dei driver; Fase 4 abilita disco interno e USB; Fase 5 PEP e periferiche interne.
+Details per phase: Phase 3 goes up to driver loading; Phase 4 enables the internal disk and USB; Phase 5 PEP and internal peripherals.
 
-## 5. Flusso di un interrupt AIC -> estensione HAL -> ISR
-Tutto l'interno di Windows e' `[ipotesi]`.
+## 5. Flow of an interrupt AIC -> HAL extension -> ISR
+All of Windows' internals are `[hypothesis]`.
 ```mermaid
 sequenceDiagram
-  participant Dev as Periferica
+  participant Dev as Peripheral
   participant AIC as AIC (MMIO)
-  participant CPU as CPU (vettore IRQ)
-  participant Hal as HAL (dispatch) [ipotesi]
-  participant X as M-HALEXT [ipotesi]
-  participant ISR as ISR del driver
-  Dev->>AIC: alza linea level-triggered
-  AIC->>CPU: segnala IRQ (non FIQ)
-  CPU->>Hal: vettore eccezioni IRQ di Windows
-  Hal->>X: callback "accetta interrupt" (nome/firma da Fase 0)
-  X->>AIC: leggi registro evento, ricava numero IRQ
-  X-->>Hal: ritorna vettore/GSIV logico
+  participant CPU as CPU (IRQ vector)
+  participant Hal as HAL (dispatch) [hypothesis]
+  participant X as M-HALEXT [hypothesis]
+  participant ISR as Driver ISR
+  Dev->>AIC: raises level-triggered line
+  AIC->>CPU: signals IRQ (not FIQ)
+  CPU->>Hal: Windows IRQ exception vector
+  Hal->>X: "accept interrupt" callback (name/signature from Phase 0)
+  X->>AIC: read event register, derive IRQ number
+  X-->>Hal: returns logical vector/GSIV
   Hal->>ISR: dispatch (KINTERRUPT)
-  ISR-->>Hal: gestito
-  Hal->>X: callback "fine interrupt" / unmask
+  ISR-->>Hal: handled
+  Hal->>X: "end of interrupt" / unmask callback
   X->>AIC: ack/unmask
 ```
-Punti aperti: [ipotesi] la lettura dell'evento puo' avvenire nel HAL e non nell'estensione; Fase 0 determina chi fa cosa. [verificato: irq-apple-aic.c] l'AIC espone registro evento e registri di mask/set/clear per IRQ e IPI.
+Open points: [hypothesis] reading the event may happen in the HAL and not in the extension; Phase 0 determines who does what. [verified: irq-apple-aic.c] the AIC exposes an event register and mask/set/clear registers for IRQs and IPIs.
 
-## 6. Confini e contratti
-- m1n1 -> EDK2: solo dati (INTERFACES 1). EDK2 non richiama m1n1 dopo l'handoff.
-- EDK2 -> Windows: standard UEFI + ACPI; nessun protocollo privato oltre CSRT/DSDT.
-- Windows -> estensioni/driver: solo interfacce WDK documentate. [ipotesi] Se Fase 0 mostra che serve un'interfaccia non documentata, la decisione va all'utente (ADR-0001, piano B).
-- Modulo -> modello dati ADT: nessun modulo legge l'ADT direttamente salvo M-ADT-PARSE.
+## 6. Boundaries and contracts
+- m1n1 -> EDK2: data only (INTERFACES 1). EDK2 does not call back into m1n1 after the handoff.
+- EDK2 -> Windows: standard UEFI + ACPI; no private protocol beyond CSRT/DSDT.
+- Windows -> extensions/drivers: only documented WDK interfaces. [hypothesis] If Phase 0 shows that an undocumented interface is needed, the decision goes to the user (ADR-0001, plan B).
+- Module -> ADT data model: no module reads the ADT directly except M-ADT-PARSE.
 
-## 7. Punti di estensione espliciti
-1. Nuovo SoC: aggiungere una tabella dati in M-ADT-PARSE/M-ACPI-GEN (nomi compatible ADT -> blocchi ACPI); nessuna modifica ai moduli esistenti. AIC2 aggiunge un back-end `aic_controller` dietro la stessa interfaccia interna (Fase 6).
-2. Nuovo dispositivo: un nuovo nodo DSDT generato da una voce di registro `DeviceDescriptor` + nuovo driver con il suo HID ACPI.
-3. Nuovo ruolo di core (P/E, nuove classi): solo dati PPTT/efficiency class.
-4. Sorgente di interrupt alternativa (es. MSI/AIC di nuove generazioni): nuovo back-end in M-HALEXT.
-5. Piano B hypervisor/shim: l'interfaccia M-EDK2 -> Windows resta invariata (ACPI con GIC virtuale); cambia solo M-ACPI-GEN. [ipotesi] da valutare se si attiva il piano B.
+## 7. Explicit extension points
+1. New SoC: add a data table in M-ADT-PARSE/M-ACPI-GEN (ADT compatible names -> ACPI blocks); no changes to existing modules. AIC2 adds an `aic_controller` back-end behind the same internal interface (Phase 6).
+2. New device: a new DSDT node generated from a `DeviceDescriptor` registry entry + a new driver with its own ACPI HID.
+3. New core role (P/E, new classes): PPTT/efficiency class data only.
+4. Alternative interrupt source (e.g. MSI/AIC of new generations): new back-end in M-HALEXT.
+5. Plan B hypervisor/shim: the M-EDK2 -> Windows interface stays unchanged (ACPI with a virtual GIC); only M-ACPI-GEN changes. [hypothesis] to be evaluated if plan B is activated.
 
-## 8. Tracciabilita'
-FR-1 M-RE · FR-2 M-ACPI-GEN/M-EDK2 · FR-3 M-PARK · FR-4 M-EDK2 · FR-5/FR-6 M-HALEXT · FR-7 M-EDK2+M-HALEXT+M-XHCI · FR-8 M-ANS/M-SART/M-DART · FR-9 M-XHCI · FR-10 M-DART · FR-11 M-PEP/M-ACPI-GEN · FR-12 M-SPIHID · FR-13 punti di estensione (2) · FR-14 M-GPU · FR-15 M-ACPI-GEN/M-HALEXT · FR-16 procedura installer. NFR-2 M-TOOLS; NFR-3/4 sezioni 6-7.
+## 8. Traceability
+FR-1 M-RE · FR-2 M-ACPI-GEN/M-EDK2 · FR-3 M-PARK · FR-4 M-EDK2 · FR-5/FR-6 M-HALEXT · FR-7 M-EDK2+M-HALEXT+M-XHCI · FR-8 M-ANS/M-SART/M-DART · FR-9 M-XHCI · FR-10 M-DART · FR-11 M-PEP/M-ACPI-GEN · FR-12 M-SPIHID · FR-13 extension points (2) · FR-14 M-GPU · FR-15 M-ACPI-GEN/M-HALEXT · FR-16 installer procedure. NFR-2 M-TOOLS; NFR-3/4 sections 6-7.

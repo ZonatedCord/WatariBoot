@@ -1,346 +1,346 @@
-# ESPERIMENTO-F0: progetto del Gate B in QEMU (task A5)
+# EXPERIMENT-F0: design of Gate B in QEMU (task A5)
 
-- Progetto: Watari Boot · Data: 2026-10-12 · Stato: **progetto, non eseguito** · Autore: esecutore Sonnet (task A5), da verificare da Opus
-- Collegamenti: [bozza ADR Fase 0 sperimentale](../../adr/draft-phase0-experimental.md) · [ADR-0001](../../adr/0001-native-boot-without-hypervisor.md) · [ADR-0003](../../adr/0003-parking-protocol-instead-of-psci.md) · [ADR-0004](../../adr/0004-irq-instead-of-fiq.md) · [INTERFACES](INTERFACES.md) · [RISKS](RISKS.md) · [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) · [tools/acpigen](../../../tools/acpigen/README.md)
+- Project: Watari Boot · Date: 2026-10-12 · Status: **design, not executed** · Author: Sonnet executor (task A5), to be verified by Opus
+- Links: [Phase 0 experimental ADR draft](../../adr/draft-phase0-experimental.md) · [ADR-0001](../../adr/0001-native-boot-without-hypervisor.md) · [ADR-0003](../../adr/0003-parking-protocol-instead-of-psci.md) · [ADR-0004](../../adr/0004-irq-instead-of-fiq.md) · [INTERFACES](INTERFACES.md) · [RISKS](RISKS.md) · [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) · [tools/acpigen](../../../tools/acpigen/README.md)
 
-## 0. Convenzioni e vincoli
+## 0. Conventions and constraints
 
-- `[verificato: fonte]` = letto sulla fonte citata durante questo task. `[ipotesi]` = non verificato. `[ipotesi, da confermare con A1/A2/A4]` = dipende dalle ricerche A1 (estensioni HAL), A2 (requisiti ACPI e parking protocol), A4 (Raspberry Pi 3), non ancora disponibili.
-- `[UMANO]` = passo che esegue Marco, non un agente.
-- **Scatola nera**: nessun binario, simbolo o dump Microsoft viene scaricato o analizzato dal progetto (bozza ADR Fase 0). Si osserva solo il comportamento di Windows dall'esterno (bugcheck, messaggi del debugger, esito del boot). L'ISO e il WDK ufficiali sono *strumenti*, usati senza disassemblarli.
-- **Nulla di questo documento è stato eseguito.** Prima di qualunque download o installazione vale la regola assoluta del backup Time Machine con conferma esplicita di Marco (vedi sez. 5).
-- Tutte le opzioni di QEMU e di `bcdedit` citate sono prese dalla documentazione ufficiale (link in sez. 9). Dove un'opzione non è stata trovata nella documentazione è scritto.
+- `[verified: source]` = read on the cited source during this task. `[hypothesis]` = not verified. `[hypothesis, to be confirmed with A1/A2/A4]` = depends on research A1 (HAL extensions), A2 (ACPI requirements and parking protocol), A4 (Raspberry Pi 3), not yet available.
+- `[HUMAN]` = step performed by Marco, not by an agent.
+- **Black box**: no Microsoft binary, symbol or dump is downloaded or analyzed by the project (Phase 0 ADR draft). Only the behavior of Windows is observed from the outside (bugcheck, debugger messages, boot outcome). The official ISO and WDK are *tools*, used without disassembling them.
+- **Nothing in this document has been executed.** Before any download or installation the absolute Time Machine backup rule applies, with explicit confirmation from Marco (see sec. 5).
+- All QEMU and `bcdedit` options cited are taken from the official documentation (links in sec. 9). Where an option was not found in the documentation it is stated.
 
-## 1. Che cosa vogliamo sapere (domande del Gate B)
+## 1. What we want to know (Gate B questions)
 
-| ID | Domanda | Varianti che ci rispondono |
+| ID | Question | Variants that answer it |
 |---|---|---|
-| Q1 | Il nostro generatore `acpigen` produce tabelle che Windows accetta come quelle di QEMU? (validazione dello strumento) | V1 |
-| Q2 | Windows ARM64 enumera le CPU e arriva al boot se la MADT ha le GICC ma **non** la GICD? | V2 |
-| Q3 | Windows avvia i core secondari con il Parking Protocol (mailbox in GICC) invece di PSCI? | V3 |
-| Q4 | Windows carica un'estensione HAL agganciata a un gruppo CSRT nostro? E con quale interfaccia/messaggi? | V4 |
-| Q5 | Quanto dipende Windows dal timer architetturale descritto in GTDT (collegato al fatto che sul M1 il timer è solo FIQ, [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md))? | V5 |
+| Q1 | Does our `acpigen` generator produce tables that Windows accepts like those of QEMU? (tool validation) | V1 |
+| Q2 | Does Windows ARM64 enumerate the CPUs and reach boot if the MADT has the GICCs but **not** the GICD? | V2 |
+| Q3 | Does Windows start the secondary cores with the Parking Protocol (mailbox in GICC) instead of PSCI? | V3 |
+| Q4 | Does Windows load an HAL extension hooked to a CSRT group of ours? And with what interface/messages? | V4 |
+| Q5 | How much does Windows depend on the architectural timer described in the GTDT (related to the fact that on the M1 the timer is FIQ-only, [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md))? | V5 |
 
-La domanda decisiva ("accetta un controller non-GIC fornito da un'estensione HAL?") **non** ha una variante QEMU che la chiuda da sola: vedi sez. 4 per i limiti. Le varianti riducono l'incertezza sulle sue precondizioni (V2, V3, V4, V5).
+The decisive question ("does it accept a non-GIC controller provided by an HAL extension?") has **no** QEMU variant that closes it on its own: see sec. 4 for the limits. The variants reduce uncertainty on its preconditions (V2, V3, V4, V5).
 
-## 2. Ambiente
+## 2. Environment
 
-### 2.1 QEMU `virt` aarch64 con HVF
+### 2.1 QEMU `virt` aarch64 with HVF
 
-| Voce | Scelta | Stato |
+| Item | Choice | Status |
 |---|---|---|
-| Binario | `qemu-system-aarch64` (QEMU recente da Homebrew o compilato) | scelta; installazione [UMANO] dopo backup |
-| Macchina | `-machine virt` | [verificato: https://www.qemu.org/docs/master/system/arm/virt.html] |
-| Acceleratore | `-accel hvf` | `hvf` è fra gli acceleratori elencati dalla documentazione di invocazione, sintassi `-accel name[,prop=value]` [verificato: https://www.qemu.org/docs/master/system/invocation.html]; la pagina virt elenca `host` come unico CPU model supportato con HVF (oltre a KVM) e `max` = `host` per KVM/HVF [verificato: pagina virt] |
-| CPU | `-cpu host` (con HVF; equivale a `max`) | [verificato: pagina virt] |
-| `gic-version` | valori `2`, `3`, `4`, `x-5`, `host`, `max`. **Non esiste un valore "none/disabled"** | [verificato: pagina virt] |
-| Rimozione del GIC | **Non possibile con `-machine virt`**: il GIC è sempre istanziato dalla macchina | [verificato: nessuna opzione per rimuoverlo nella pagina virt; le uniche opzioni correlate sono `gic-version`, `virtualization`, `msi`]. Il "non-GIC" va quindi simulato solo nelle **tabelle ACPI** (vedi V2) |
-| Versione GIC da usare | `gic-version=3` come scelta iniziale (è quella usata negli esempi QEMU per tpm-tis e coerente con la probabile aspettativa di Windows) | [ipotesi, da confermare con A2: quale versione GIC richiede Windows ARM64]. Se HVF non accetta v3 con la versione di QEMU installata: provare `2` o `host`; il comportamento di HVF con il GIC è [ipotesi]: controllare con `qemu-system-aarch64 -machine virt,help` e le note di rilascio della versione installata |
-| EL2 | `virtualization=off` (default) | [verificato: pagina virt, default `off`]. Windows deve girare a EL1, come sul M1 senza hypervisor (ADR-0001) |
-| `acpi` | `acpi=on` (o `auto`) | [verificato: pagina virt, valori `on/off/auto`] |
-| `msi` | lasciare il default; se V2 va in crisi sulle IORT/ITS, provare `msi=off` | [verificato: opzione `msi` documentata; effetto su Windows: ipotesi] |
-| Memoria / core | `-m 8G -smp 4` (V3: `-smp 4` almeno, meglio 8 per somigliare al M1) | scelta; il limite dei core con HVF dipende dall'host [ipotesi] |
-| Firmware | `-drive if=pflash,format=raw,file=...` con EDK2 compilato da noi (sez. 2.2) | schema pflash [verificato: esempio TPM nella documentazione QEMU, https://www.qemu.org/docs/master/specs/tpm.html] |
-| Grafica / input | `ramfb` o `virtio-gpu-pci`, tastiera e mouse `usb-kbd`/`usb-mouse` su `qemu-xhci` | [ipotesi] Windows ha driver inbox per xHCI e display base; virtio-gpu non ha driver inbox |
-| Disco | `-device nvme` (driver inbox di Windows) sull'immagine qcow2; ISO come `usb-storage` | [ipotesi]. Evita `virtio-blk` che richiede i driver `virtio-win` durante il setup |
-| TPM | `swtpm` + `-chardev socket` + `-tpmdev emulator` + `-device tpm-tis-device,tpmdev=tpm0` | [verificato: https://www.qemu.org/docs/master/specs/tpm.html]. Necessità per Windows 11: [ipotesi] richiesto dal setup (da A2/verificare) |
-| NIC per il debug | `-device e1000e,netdev=...` | KDNET supporta Intel con device ID `10D3` [verificato: lista Microsoft sotto]; che il modello `e1000e` di QEMU presenti proprio quell'ID: [ipotesi, controllare con `lspci`/Gestione dispositivi nel guest]. In alternativa `-device e1000` (ID `100E` è nella lista) [ipotesi su ID emulato] |
+| Binary | `qemu-system-aarch64` (recent QEMU from Homebrew or built) | choice; installation [HUMAN] after backup |
+| Machine | `-machine virt` | [verified: https://www.qemu.org/docs/master/system/arm/virt.html] |
+| Accelerator | `-accel hvf` | `hvf` is among the accelerators listed by the invocation documentation, syntax `-accel name[,prop=value]` [verified: https://www.qemu.org/docs/master/system/invocation.html]; the virt page lists `host` as the only CPU model supported with HVF (besides KVM) and `max` = `host` for KVM/HVF [verified: virt page] |
+| CPU | `-cpu host` (with HVF; equivalent to `max`) | [verified: virt page] |
+| `gic-version` | values `2`, `3`, `4`, `x-5`, `host`, `max`. **There is no "none/disabled" value** | [verified: virt page] |
+| Removing the GIC | **Not possible with `-machine virt`**: the GIC is always instantiated by the machine | [verified: no option to remove it on the virt page; the only related options are `gic-version`, `virtualization`, `msi`]. The "non-GIC" must therefore be simulated only in the **ACPI tables** (see V2) |
+| GIC version to use | `gic-version=3` as the initial choice (it is the one used in QEMU examples for tpm-tis and consistent with the likely expectation of Windows) | [hypothesis, to be confirmed with A2: which GIC version Windows ARM64 requires]. If HVF does not accept v3 with the installed QEMU version: try `2` or `host`; the behavior of HVF with the GIC is [hypothesis]: check with `qemu-system-aarch64 -machine virt,help` and the release notes of the installed version |
+| EL2 | `virtualization=off` (default) | [verified: virt page, default `off`]. Windows must run at EL1, as on the M1 without a hypervisor (ADR-0001) |
+| `acpi` | `acpi=on` (or `auto`) | [verified: virt page, values `on/off/auto`] |
+| `msi` | leave the default; if V2 runs into trouble with IORT/ITS, try `msi=off` | [verified: `msi` option documented; effect on Windows: hypothesis] |
+| Memory / cores | `-m 8G -smp 4` (V3: `-smp 4` at least, better 8 to resemble the M1) | choice; the core limit with HVF depends on the host [hypothesis] |
+| Firmware | `-drive if=pflash,format=raw,file=...` with EDK2 built by us (sec. 2.2) | pflash scheme [verified: TPM example in the QEMU documentation, https://www.qemu.org/docs/master/specs/tpm.html] |
+| Graphics / input | `ramfb` or `virtio-gpu-pci`, keyboard and mouse `usb-kbd`/`usb-mouse` on `qemu-xhci` | [hypothesis] Windows has inbox drivers for xHCI and basic display; virtio-gpu has no inbox driver |
+| Disk | `-device nvme` (Windows inbox driver) on the qcow2 image; ISO as `usb-storage` | [hypothesis]. Avoid `virtio-blk`, which requires the `virtio-win` drivers during setup |
+| TPM | `swtpm` + `-chardev socket` + `-tpmdev emulator` + `-device tpm-tis-device,tpmdev=tpm0` | [verified: https://www.qemu.org/docs/master/specs/tpm.html]. Necessity for Windows 11: [hypothesis] required by setup (from A2/to be verified) |
+| NIC for debugging | `-device e1000e,netdev=...` | KDNET supports Intel with device ID `10D3` [verified: Microsoft list below]; that QEMU's `e1000e` model presents exactly that ID: [hypothesis, check with `lspci`/Device Manager in the guest]. Alternatively `-device e1000` (ID `100E` is in the list) [hypothesis on emulated ID] |
 
-Lista KDNET: https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/supported-ethernet-nics-for-network-kernel-debugging-in-windows-10 [verificato: la pagina elenca Intel 8086:10D3 e 8086:100E; per la versione di Windows 11 ARM64 si deve controllare `VerifiedNicList.xml` del WDK, come dice la pagina].
+KDNET list: https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/supported-ethernet-nics-for-network-kernel-debugging-in-windows-10 [verified: the page lists Intel 8086:10D3 and 8086:100E; for the Windows 11 ARM64 version one must check the WDK's `VerifiedNicList.xml`, as the page says].
 
-Esempio di riga di comando (**schema**, da adattare; ogni opzione è fra quelle verificate sopra tranne dove indicato):
+Command line example (**scheme**, to be adapted; every option is among those verified above except where indicated):
 ```
 qemu-system-aarch64 -machine virt,gic-version=3,acpi=on -accel hvf -cpu host -smp 4 -m 8G \
   -drive if=pflash,format=raw,file=FW_CODE.fd,readonly=on \
   -drive if=pflash,format=raw,file=FW_VARS.fd \
-  -serial <chardev> -display <da scegliere> ...
+  -serial <chardev> -display <to be chosen> ...
 ```
-`-serial` e `-chardev` non sono stati letti nella documentazione in questo task (la pagina era troncata): **[ipotesi]** sintassi da confermare su https://www.qemu.org/docs/master/system/invocation.html (sezione "Character device options") prima di scriverli negli script.
+`-serial` and `-chardev` were not read in the documentation in this task (the page was truncated): **[hypothesis]** syntax to be confirmed at https://www.qemu.org/docs/master/system/invocation.html ("Character device options" section) before writing them into scripts.
 
-### 2.2 EDK2 `ArmVirtQemu` compilato da noi, con tabelle ACPI sostituibili
+### 2.2 EDK2 `ArmVirtQemu` built by us, with replaceable ACPI tables
 
-**Fatto verificato che esclude la strada facile**: l'opzione `-acpitable` di QEMU è documentata **solo per il target i386** [verificato: https://www.qemu.org/docs/master/system/invocation.html, "i386 target only"]. Su `virt` aarch64 non è disponibile. Inoltre con `acpi=on` QEMU genera da sé MADT (con GICC, GICD e GICR), GTDT, DBG2, SPCR, IORT e FADT con flag PSCI [verificato: `hw/arm/virt-acpi-build.c` di QEMU: `build_madt`, `build_gtdt`, `build_dbg2`, `build_spcr`, `build_iort`; `ACPI_FADT_ARM_PSCI_COMPLIANT` per il conduit SMC/HVC]. Le tabelle arrivano al firmware via fw_cfg.
+**Verified fact that rules out the easy road**: QEMU's `-acpitable` option is documented **only for the i386 target** [verified: https://www.qemu.org/docs/master/system/invocation.html, "i386 target only"]. On `virt` aarch64 it is not available. Moreover with `acpi=on` QEMU generates by itself the MADT (with GICC, GICD and GICR), GTDT, DBG2, SPCR, IORT and the FADT with the PSCI flag [verified: QEMU `hw/arm/virt-acpi-build.c`: `build_madt`, `build_gtdt`, `build_dbg2`, `build_spcr`, `build_iort`; `ACPI_FADT_ARM_PSCI_COMPLIANT` for the SMC/HVC conduit]. The tables reach the firmware via fw_cfg.
 
-**Dove si innesta EDK2** [verificato: `ArmVirtPkg/ArmVirtQemu.dsc` di tianocore/edk2]: la piattaforma include `OvmfPkg/AcpiPlatformDxe/AcpiPlatformDxe.inf` (driver "QemuFwCfgAcpiPlatform", entry point `AcpiPlatformEntryPoint`), che legge le tabelle da fw_cfg e le installa via `EFI_ACPI_TABLE_PROTOCOL` (il modulo dichiara quel protocollo come dipendenza); il DSC ha anche `OvmfPkg/PlatformHasAcpiDtDxe` e il PCD `PcdForceNoAcpi` (variabile NV `ForceNoAcpi`) e una configurazione `TPM2_CONFIG_ENABLE`.
+**Where EDK2 plugs in** [verified: tianocore/edk2 `ArmVirtPkg/ArmVirtQemu.dsc`]: the platform includes `OvmfPkg/AcpiPlatformDxe/AcpiPlatformDxe.inf` (driver "QemuFwCfgAcpiPlatform", entry point `AcpiPlatformEntryPoint`), which reads the tables from fw_cfg and installs them via `EFI_ACPI_TABLE_PROTOCOL` (the module declares that protocol as a dependency); the DSC also has `OvmfPkg/PlatformHasAcpiDtDxe` and the PCD `PcdForceNoAcpi` (NV variable `ForceNoAcpi`) and a `TPM2_CONFIG_ENABLE` configuration.
 
-Strategie per sostituire le tabelle, in ordine di preferenza:
+Strategies to replace the tables, in order of preference:
 
-| # | Strategia | Pro | Contro | Stato |
+| # | Strategy | Pros | Cons | Status |
 |---|---|---|---|---|
-| S1 | **Piattaforma nostra `WatariQemuPkg`** (fork minimo di `ArmVirtQemu`) con un driver DXE `WatariAcpiOverride`: dopo `AcpiPlatformDxe`, scorre XSDT, e per ogni firma presente nel suo Firmware Volume (file `FREEFORM` generati da `acpigen`) sostituisce la tabella QEMU (uninstall + install via `EFI_ACPI_TABLE_PROTOCOL`, ricalcolando checksum e XSDT). Le tabelle restano fuori dal codice: sono file binari nel FV, rigenerabili senza ricompilare il driver | riproduce esattamente il meccanismo che userà `edk2-apple` (tabelle da generatore → protocollo ACPI); nessuna patch a QEMU | scrivere e provare il driver (circa 1 giorno di lavoro agente, [ipotesi]); `UninstallAcpiTable` richiede l'handle `TableKey` restituito all'installazione: se non lo si ha, l'override deve intercettare l'installazione, non sostituire a posteriori [ipotesi: da leggere in `MdeModulePkg/Universal/Acpi/AcpiTableDxe`] | proposta |
-| S2 | Patch locale a `AcpiPlatformDxe` che, per le firme "sovrascritte", ignora la tabella di fw_cfg e carica la nostra dal FV | un solo punto di modifica | divergenza dal driver upstream, da rifare a ogni aggiornamento | proposta (ripiego di S1) |
-| S3 | `-machine virt,acpi=off` + firmware che installa **tutte** le tabelle (DSDT inclusa) da generatore | controllo totale | serve un DSDT/FADT/IORT/MCFG/DBG2/SPCR completi: troppo lavoro per Gate B | scartata per ora |
-| S4 | Patch al sorgente di QEMU (`virt-acpi-build.c`) | veloce da scrivere | rompe la riproducibilità, richiede compilare QEMU | scartata |
+| S1 | **Our own platform `WatariQemuPkg`** (minimal fork of `ArmVirtQemu`) with a DXE driver `WatariAcpiOverride`: after `AcpiPlatformDxe`, it walks the XSDT, and for each signature present in its Firmware Volume (`FREEFORM` files generated by `acpigen`) it replaces the QEMU table (uninstall + install via `EFI_ACPI_TABLE_PROTOCOL`, recomputing checksum and XSDT). The tables stay outside the code: they are binary files in the FV, regenerable without recompiling the driver | reproduces exactly the mechanism that `edk2-apple` will use (tables from generator -> ACPI protocol); no patch to QEMU | writing and testing the driver (about 1 agent-day of work, [hypothesis]); `UninstallAcpiTable` requires the `TableKey` handle returned at installation: if it is not available, the override must intercept the installation rather than replace after the fact [hypothesis: to be read in `MdeModulePkg/Universal/Acpi/AcpiTableDxe`] | proposal |
+| S2 | Local patch to `AcpiPlatformDxe` that, for the "overridden" signatures, ignores the fw_cfg table and loads ours from the FV | a single point of modification | divergence from the upstream driver, to be redone at every update | proposal (fallback of S1) |
+| S3 | `-machine virt,acpi=off` + firmware that installs **all** tables (DSDT included) from the generator | total control | requires a complete DSDT/FADT/IORT/MCFG/DBG2/SPCR: too much work for Gate B | discarded for now |
+| S4 | Patch to the QEMU source (`virt-acpi-build.c`) | quick to write | breaks reproducibility, requires building QEMU | discarded |
 
-**Tabelle che restano di QEMU** (non le sostituiamo): RSDP/XSDT, FADT (salvo V3), DSDT, MCFG, IORT, SPCR, DBG2, SRAT/PPTT se presenti. **Tabelle nostre**: MADT, GTDT, CSRT e, per V3, una FADT modificata (bit PSCI) e per V4 un SSDT con il device del gruppo CSRT.
+**Tables that remain QEMU's** (we do not replace them): RSDP/XSDT, FADT (except V3), DSDT, MCFG, IORT, SPCR, DBG2, SRAT/PPTT if present. **Our tables**: MADT, GTDT, CSRT and, for V3, a modified FADT (PSCI bit) and for V4 an SSDT with the CSRT group device.
 
-**Lacune del nostro `acpigen` rispetto a quanto serve** [verificato: lettura di `tools/acpigen/include/acpigen.h` e `src/main.c`]:
-1. La CLI accetta solo `<madt|gtdt|pptt|csrt> -o file` e usa **solo** il modello t8103 cablato (`t8103_cpus`, GICD assente nella CLI, 8 CPU, `parked_address = 0`). Non ci sono opzioni per scegliere modello, numero di CPU, GICD, parking, GSIV.
-2. `acpigen_build_madt` emette GICC e al più una GICD; **non emette la struttura GIC Redistributor (tipo 0x0E)** che QEMU `virt` con GICv3 mette in MADT (`build_append_gicr`) [verificato: sorgente QEMU]. Il campo `gicr_base_address` nella GICC esiste ma è un altro meccanismo.
-3. Non c'è un generatore di **FADT** né di **SSDT/DSDT**.
+**Gaps in our `acpigen` relative to what is needed** [verified: reading of `tools/acpigen/include/acpigen.h` and `src/main.c`]:
+1. The CLI accepts only `<madt|gtdt|pptt|csrt> -o file` and uses **only** the hardwired t8103 model (`t8103_cpus`, GICD absent in the CLI, 8 CPUs, `parked_address = 0`). There are no options to choose the model, number of CPUs, GICD, parking, GSIV.
+2. `acpigen_build_madt` emits GICC and at most one GICD; it **does not emit the GIC Redistributor structure (type 0x0E)** that QEMU `virt` with GICv3 puts in the MADT (`build_append_gicr`) [verified: QEMU source]. The `gicr_base_address` field in the GICC exists but is a different mechanism.
+3. There is no **FADT** or **SSDT/DSDT** generator.
 
-Lavoro necessario su `acpigen` (task per un esecutore, non fatto qui): (a) opzione `--model {t8103|qemu-virt}` e flag `--no-gicd`, `--parking`, `--ncpus`; (b) modello `qemu-virt` con base GICD/GICR e GSIV timer **letti dal DT/ACPI di QEMU in esecuzione** (non inventati: vedi V1); (c) struttura GICR; (d) FADT con `arm_boot_arch` configurabile; (e) SSDT minimo con il device `_HID`/`_UID` legato al gruppo CSRT (compilato con `iasl`, vedi sez. 5) o in alternativa AML generato a mano [ipotesi sulla fattibilità].
+Work needed on `acpigen` (task for an executor, not done here): (a) option `--model {t8103|qemu-virt}` and flags `--no-gicd`, `--parking`, `--ncpus`; (b) `qemu-virt` model with GICD/GICR base and timer GSIV **read from the DT/ACPI of the running QEMU** (not invented: see V1); (c) GICR structure; (d) FADT with configurable `arm_boot_arch`; (e) minimal SSDT with the `_HID`/`_UID` device bound to the CSRT group (compiled with `iasl`, see sec. 5) or alternatively hand-generated AML [hypothesis on feasibility].
 
-**Come ricavare i valori della baseline** (per V1, senza inventarli): avviare Windows o una shell UEFI con le tabelle QEMU di serie e salvarle (shell UEFI di EDK2 comando `acpiview`/`dmpstore`: [ipotesi], controllare nel pacchetto ShellPkg), oppure leggere `virt-acpi-build.c` e `hw/arm/virt.c` per le basi di GICD/GICR [verificato: i file esistono su github.com/qemu/qemu; i valori numerici non sono stati letti in questo task]. Il confronto binario fra tabelle di QEMU e tabelle `acpigen` è il test di V1.
+**How to obtain the baseline values** (for V1, without inventing them): boot Windows or a UEFI shell with the stock QEMU tables and save them (EDK2 UEFI shell command `acpiview`/`dmpstore`: [hypothesis], check in the ShellPkg package), or read `virt-acpi-build.c` and `hw/arm/virt.c` for the GICD/GICR bases [verified: the files exist on github.com/qemu/qemu; the numeric values were not read in this task]. The binary comparison between QEMU tables and `acpigen` tables is the V1 test.
 
-Compilazione EDK2: richiede toolchain AArch64 (GCC cross o clang) e `python3`, `nasm`/`iasl` secondo la piattaforma [ipotesi]; è un **download/installazione** quindi [UMANO]: backup prima.
+EDK2 build: requires an AArch64 toolchain (GCC cross or clang) and `python3`, `nasm`/`iasl` depending on the platform [hypothesis]; it is a **download/installation** so [HUMAN]: backup first.
 
-### 2.3 ISO Windows 11 ARM64
+### 2.3 Windows 11 ARM64 ISO
 
-- ISO ufficiale Microsoft di Windows 11 ARM64 [UMANO]: download da microsoft.com (pagina "Download Windows 11 Arm64"; URL esatto da verificare da Marco al momento, non fissato qui: [ipotesi]). Dimensione stimata ~5-7 GB [ipotesi].
-- Congelare **build e hash SHA-256** dell'ISO usata e registrarli nel diario (R-11). Non mettere l'ISO nel repository: va in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato) (CLAUDE.md di progetto).
-- Licenza/attivazione: Windows senza chiave funziona in modalità non attivata per test; condizioni d'uso: [ipotesi, controllare i termini Microsoft] [UMANO].
-- Requisiti del setup (TPM 2.0, Secure Boot, RAM, disco): [ipotesi, da confermare con A2/documentazione Microsoft]. Il bypass dei controlli del setup è una pratica di comunità non documentata da Microsoft: **non** la si usa se esiste l'alternativa swtpm (sopra).
+- Official Microsoft Windows 11 ARM64 ISO [HUMAN]: download from microsoft.com ("Download Windows 11 Arm64" page; exact URL to be verified by Marco at the time, not fixed here: [hypothesis]). Estimated size ~5-7 GB [hypothesis].
+- Freeze the **build and SHA-256 hash** of the ISO used and record them in the log (R-11). Do not put the ISO in the repository: it goes in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (external disk; it must be connected) (project CLAUDE.md).
+- License/activation: Windows without a key works in non-activated mode for testing; terms of use: [hypothesis, check the Microsoft terms] [HUMAN].
+- Setup requirements (TPM 2.0, Secure Boot, RAM, disk): [hypothesis, to be confirmed with A2/Microsoft documentation]. Bypassing the setup checks is a community practice not documented by Microsoft: we do **not** use it if the swtpm alternative exists (above).
 
-### 2.4 Spazio disco stimato (tutte stime [ipotesi])
+### 2.4 Estimated disk space (all estimates [hypothesis])
 
-Spazio libero oggi sul Mac: 53 GiB (da `df -h` su `/System/Volumes/Data`, [verificato: eseguito in questo task]).
+Free space on the Mac today: 53 GiB (from `df -h` on `/System/Volumes/Data`, [verified: executed in this task]).
 
-| Voce | Stima |
+| Item | Estimate |
 |---|---|
-| QEMU (Homebrew + dipendenze) o compilato | 1-2 GB |
-| Toolchain EDK2 + albero edk2 + build | 3-6 GB |
-| ISO Windows 11 ARM64 | 5-7 GB |
-| Immagine qcow2 del target (sparsa; usata davvero) | 20-30 GB (nominale 64 GB) |
-| VM del debugger (Windows ARM64 + WinDbg + WDK + Visual Studio Build Tools) | 40-60 GB |
-| Snapshot/backup immagini, log, dump | 5-10 GB |
-| **Totale** | **~75-115 GB** |
+| QEMU (Homebrew + dependencies) or built | 1-2 GB |
+| EDK2 toolchain + edk2 tree + build | 3-6 GB |
+| Windows 11 ARM64 ISO | 5-7 GB |
+| Target qcow2 image (sparse; actually used) | 20-30 GB (nominal 64 GB) |
+| Debugger VM (Windows ARM64 + WinDbg + WDK + Visual Studio Build Tools) | 40-60 GB |
+| Snapshots/backups of images, logs, dumps | 5-10 GB |
+| **Total** | **~75-115 GB** |
 
-**Conclusione: 53 GiB liberi non bastano per l'intero Gate B** nella configurazione "VM debugger sul Mac". Opzioni: SSD esterno per le immagini [UMANO], liberare spazio, oppure usare un PC Windows già disponibile come host del debugger (nessun costo di spazio) [UMANO, ipotesi che esista]. Decisione e spazio vanno confermati prima di scaricare qualunque cosa.
+**Conclusion: 53 GiB free are not enough for the whole of Gate B** in the "debugger VM on the Mac" configuration. Options: external SSD for the images [HUMAN], free up space, or use an already available Windows PC as the debugger host (no space cost) [HUMAN, hypothesis that one exists]. Decision and space must be confirmed before downloading anything.
 
-## 3. Debug
+## 3. Debugging
 
-### 3.1 Architettura di debug
+### 3.1 Debug architecture
 
-Windows va debuggato con WinDbg, che gira solo su Windows [ipotesi: nessuna versione per macOS nota; verificare]. Il progetto non ha un secondo computer (PLAN). Schema proposto: due guest sullo stesso Mac.
+Windows is debugged with WinDbg, which runs only on Windows [hypothesis: no known macOS version; verify]. The project has no second computer (PLAN). Proposed scheme: two guests on the same Mac.
 
 ```
 Mac (HVF)
- ├─ QEMU "target": Windows 11 ARM64 sotto test + EDK2 nostro + (kernel debug attivo)
- └─ VM "debugger": Windows ARM64 (o altro) con WinDbg + WDK  [UMANO]
-        collegamento: rete virtuale tra i due QEMU (KDNET)  oppure  seriale virtuale
+ ├─ QEMU "target": Windows 11 ARM64 under test + our EDK2 + (kernel debug active)
+ └─ "debugger" VM: Windows ARM64 (or other) with WinDbg + WDK  [HUMAN]
+        link: virtual network between the two QEMUs (KDNET)  or  virtual serial
 ```
 
-Il target e la VM debugger si collegano con `-netdev socket` (punto-punto TCP, `listen`/`connect`) o con una rete condivisa di QEMU: **[ipotesi]** sintassi e comportamento esatti da leggere in https://www.qemu.org/docs/master/system/invocation.html (sezione Network options, non letta in questo task). In alternativa la VM debugger può essere un altro prodotto di virtualizzazione sulla stessa rete [UMANO, ipotesi].
+The target and the debugger VM connect with `-netdev socket` (point-to-point TCP, `listen`/`connect`) or with a shared QEMU network: **[hypothesis]** exact syntax and behavior to be read at https://www.qemu.org/docs/master/system/invocation.html (Network options section, not read in this task). Alternatively the debugger VM can be another virtualization product on the same network [HUMAN, hypothesis].
 
-### 3.2 Trasporti di debug
+### 3.2 Debug transports
 
-| Trasporto | Come | Pro | Contro |
+| Transport | How | Pros | Cons |
 |---|---|---|---|
-| **KDNET** | NIC supportata nel target (sopra) | veloce, standard Microsoft, funziona con `bcdedit /dbgsettings net hostip:... port:...` | richiede NIC con ID in `VerifiedNicList.xml`; dipende dal fatto che l'ID emulato da QEMU ci sia [ipotesi]; richiede che il bus PCIe/MSI del target funzioni |
-| **Seriale (KDCOM)** | `bcdedit /dbgsettings serial debugport:1 baudrate:115200` | indipendente da PCIe/NIC; **DBG2 e SPCR sono generate da QEMU** [verificato: `build_dbg2`, `build_spcr` in virt-acpi-build.c] e Windows sceglie il trasporto di debug leggendo DBG2 [verificato: https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/acpi-system-description-tables, sezione DBG2] | serve esporre l'UART PL011 di QEMU verso WinDbg: come (pipe/TCP) è [ipotesi]; compatibilità del tipo di UART con KDCOM: [ipotesi, da A2/A4]; è il trasporto realistico su M1, quindi vale la pena provarlo |
-| Solo schermata + dump | schermata di bugcheck via QEMU, nessun debugger | zero infrastruttura | informazione minima; il comando QEMU per catturare lo schermo (`screendump` del monitor) è [ipotesi, da verificare nella doc del monitor] |
+| **KDNET** | Supported NIC in the target (above) | fast, standard Microsoft, works with `bcdedit /dbgsettings net hostip:... port:...` | requires a NIC with an ID in `VerifiedNicList.xml`; depends on whether the ID emulated by QEMU is there [hypothesis]; requires the target's PCIe/MSI bus to work |
+| **Serial (KDCOM)** | `bcdedit /dbgsettings serial debugport:1 baudrate:115200` | independent of PCIe/NIC; **DBG2 and SPCR are generated by QEMU** [verified: `build_dbg2`, `build_spcr` in virt-acpi-build.c] and Windows chooses the debug transport by reading DBG2 [verified: https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/acpi-system-description-tables, DBG2 section] | QEMU's PL011 UART must be exposed to WinDbg: how (pipe/TCP) is [hypothesis]; compatibility of the UART type with KDCOM: [hypothesis, from A2/A4]; it is the realistic transport on the M1, so it is worth trying |
+| Screen + dump only | bugcheck screen via QEMU, no debugger | zero infrastructure | minimal information; the QEMU command to capture the screen (monitor `screendump`) is [hypothesis, to be verified in the monitor docs] |
 
-Piano: V0 e V1 con **KDNET e seriale entrambi provati** (se uno non si aggancia lo si sa subito, prima di dare la colpa a una variante). Dalla V2 in poi si usa il trasporto che in V0 ha funzionato.
+Plan: V0 and V1 with **both KDNET and serial tried** (if one does not attach it is known immediately, before blaming a variant). From V2 onward the transport that worked in V0 is used.
 
-### 3.3 Comandi `bcdedit` (tutti da eseguire nel guest target, prompt amministratore, poi riavvio)
+### 3.3 `bcdedit` commands (all to be run in the target guest, administrator prompt, then reboot)
 
-Fonti: https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--dbgsettings e https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--set [verificato: sintassi letta in questo task].
+Sources: https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--dbgsettings and https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--set [verified: syntax read in this task].
 
 ```
-bcdedit /debug on                                       (abilita il debug del kernel per la voce corrente)
+bcdedit /debug on                                       (enables kernel debugging for the current entry)
 bcdedit /dbgsettings serial debugport:1 baudrate:115200
-bcdedit /dbgsettings net hostip:<IP_DEBUGGER> port:50000 [key:<chiave>|newkey] [nodhcp]
-bcdedit /set testsigning on                             (per V4: carica codice kernel test-signed)
-bcdedit /set nocrashautoreboot on                       (non riavviare dopo bugcheck: si legge il codice)
-bcdedit /set bootlog yes                                (log dei driver caricati, Ntbtlog.txt)
-bcdedit /set sos on                                     (mostra i nomi dei driver durante il boot)
-(non impostare mai "quietboot on": la pagina bcdedit /set dice che impedisce di vedere i dati di bugcheck)
-bcdedit /enum                                           (mostra le voci e i GUID)
+bcdedit /dbgsettings net hostip:<DEBUGGER_IP> port:50000 [key:<key>|newkey] [nodhcp]
+bcdedit /set testsigning on                             (for V4: loads test-signed kernel code)
+bcdedit /set nocrashautoreboot on                       (do not reboot after bugcheck: the code is read)
+bcdedit /set bootlog yes                                (log of loaded drivers, Ntbtlog.txt)
+bcdedit /set sos on                                     (shows driver names during boot)
+(never set "quietboot on": the bcdedit /set page says it prevents seeing bugcheck data)
+bcdedit /enum                                           (shows the entries and GUIDs)
 ```
-Note verificate dalla documentazione: `/dbgsettings` configura ma **non abilita** il debug, serve `/debug`; la porta KDNET deve essere 49152 o superiore; con `net` servono `HOSTIP` e `PORT`; per il seriale `DEBUGPORT` e `BAUDRATE` sono opzionali (default COM1, 115200); prima di impostare opzioni BCD può servire sospendere BitLocker e disattivare Secure Boot; `nointegritychecks` non si può impostare con Secure Boot attivo; `testsigning` richiede riavvio. Il comando per leggere `ForceNoAcpi` o altre variabili UEFI: non pertinente.
-**Secure Boot**: nel firmware EDK2 di `ArmVirtQemu` la disponibilità/stato di Secure Boot è [ipotesi]; va deciso e registrato per ogni run (influenza `testsigning`).
+Notes verified from the documentation: `/dbgsettings` configures but **does not enable** debugging, `/debug` is needed; the KDNET port must be 49152 or higher; with `net`, `HOSTIP` and `PORT` are required; for serial `DEBUGPORT` and `BAUDRATE` are optional (default COM1, 115200); before setting BCD options it may be necessary to suspend BitLocker and disable Secure Boot; `nointegritychecks` cannot be set with Secure Boot active; `testsigning` requires a reboot. The command to read `ForceNoAcpi` or other UEFI variables: not relevant.
+**Secure Boot**: in the `ArmVirtQemu` EDK2 firmware the availability/state of Secure Boot is [hypothesis]; it must be decided and recorded for every run (it influences `testsigning`).
 
-### 3.4 Log lato QEMU e firmware
+### 3.4 QEMU and firmware side logs
 
-- Seriale del firmware: la console UART PL011 di EDK2 va su `-serial` ([ipotesi sulla sintassi, vedi 2.1]); registrare ogni run su file con timestamp. Nota: se la stessa UART è usata dal debugger Windows, il log del firmware e KDCOM si contendono la porta; usare la seconda UART di `virt` (la documentazione QEMU consiglia edk2-stable202311 o più recente per guest che usano entrambe le UART [verificato: risultato di ricerca su docs QEMU `virt`; da ricontrollare sulla pagina]) [ipotesi sul dettaglio].
-- Log dei messaggi di errore del guest lato QEMU (opzioni `-d`, `-D`): [ipotesi, controllare la documentazione QEMU prima di usarle].
-- Per ogni run archiviare: riga di comando QEMU completa, hash di firmware/tabelle, hash dell'ISO, versione di QEMU, log seriale, log WinDbg (`.logopen`), schermata finale, codice di bugcheck con i quattro parametri.
+- Firmware serial: EDK2's PL011 UART console goes to `-serial` ([hypothesis on the syntax, see 2.1]); record every run to a file with a timestamp. Note: if the same UART is used by the Windows debugger, the firmware log and KDCOM contend for the port; use `virt`'s second UART (the QEMU documentation recommends edk2-stable202311 or newer for guests that use both UARTs [verified: search result on QEMU `virt` docs; to be rechecked on the page]) [hypothesis on the detail].
+- Guest error message logs on the QEMU side (options `-d`, `-D`): [hypothesis, check the QEMU documentation before using them].
+- For each run archive: full QEMU command line, firmware/tables hashes, ISO hash, QEMU version, serial log, WinDbg log (`.logopen`), final screenshot, bugcheck code with the four parameters.
 
-### 3.5 Cosa guardare in WinDbg (comandi standard del debugger, da confermare nella documentazione WinDbg prima dell'uso)
+### 3.5 What to look at in WinDbg (standard debugger commands, to be confirmed in the WinDbg documentation before use)
 
-`!analyze -v` dopo un bugcheck, `.bugcheck`, `lm` (elenco moduli: la nostra estensione HAL compare?), `!irql`, `!pcr`, `!ipi`, `!ioapic`/equivalente per ARM [ipotesi], `!acpi`/`!amli` per le tabelle. [ipotesi: esistenza e output di ciascuna su ARM64]. Il documento non inventa altro: l'elenco va ripulito dopo il primo run (V0).
+`!analyze -v` after a bugcheck, `.bugcheck`, `lm` (module list: does our HAL extension appear?), `!irql`, `!pcr`, `!ipi`, `!ioapic`/equivalent for ARM [hypothesis], `!acpi`/`!amli` for the tables. [hypothesis: existence and output of each on ARM64]. The document invents nothing else: the list is to be cleaned up after the first run (V0).
 
-## 4. Matrice delle varianti
+## 4. Variant matrix
 
-### 4.1 Cosa dimostrano e cosa no (nota onesta)
+### 4.1 What they prove and what they do not (honest note)
 
-**In QEMU il GIC esiste comunque** (`virt` non lo può rimuovere, sez. 2.1). Conseguenze:
+**In QEMU the GIC exists anyway** (`virt` cannot remove it, sec. 2.1). Consequences:
 
-| Possono dimostrare | NON possono dimostrare |
+| Can prove | CANNOT prove |
 |---|---|
-| Come Windows **tratta le tabelle** quando mancano o sono incoerenti (GICD assente, parking, GTDT, CSRT): errori, bugcheck, gestione dei fallimenti all'avvio | Che Windows funzioni con un controller **non-GIC** davvero funzionante: il GIC reale di QEMU resta presente e potrebbe essere usato da Windows anche se la MADT non lo dichiara (accessi MMIO a indirizzi noti) [ipotesi: improbabile ma non escludibile] |
-| Se Windows **carica** un'estensione HAL da CSRT e quali chiamate/messaggi emette (V4) | Se l'estensione HAL può **registrare un controller di interrupt** e farlo usare a Windows: per farlo servirebbe un'estensione che implementi un controller completo (bridge sul GIC di QEMU = reimplementare un GIC driver, lavoro enorme, [ipotesi]) |
-| Se Windows enumera i core e li avvia con il **parking protocol** quando il firmware li parcheggia (V3), almeno con GIC presente | Il **wakeup senza GIC** (l'IPI del parking protocol è un SGI nel mondo GIC, vedi INTERFACES sez. 4): su M1 sarà AIC; in QEMU l'SGI viene dal GIC vero (V3 lo usa, quindi non prova nulla sul caso AIC) |
-| Che Windows ARM64 **gira su core Apple M1** a EL1 (con HVF il guest esegue sui core reali): utile per R-07 (ID register, granularità pagine, istruzioni) [ipotesi: HVF maschera/espone alcuni registri, quindi la prova è parziale] | Il comportamento con le **FIQ** del M1: QEMU `virt` non instrada il timer come FIQ AIC. Non si riproduce il vincolo critico di [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) (timer solo-FIQ) |
-| Il **processo** (iterazione rapida, strumenti di debug, generatore di tabelle, driver DXE di override) | Timing, SError, cache coherency, DART, ANS, PMGR, AIC reale: tutto ciò che è hardware M1 |
+| How Windows **treats the tables** when they are missing or inconsistent (GICD absent, parking, GTDT, CSRT): errors, bugchecks, handling of boot failures | That Windows works with a truly working **non-GIC** controller: QEMU's real GIC remains present and might be used by Windows even if the MADT does not declare it (MMIO accesses to known addresses) [hypothesis: unlikely but not excludable] |
+| Whether Windows **loads** an HAL extension from CSRT and which calls/messages it emits (V4) | Whether the HAL extension can **register an interrupt controller** and have Windows use it: this would require an extension implementing a complete controller (bridge on QEMU's GIC = reimplementing a GIC driver, enormous work, [hypothesis]) |
+| Whether Windows enumerates the cores and starts them with the **parking protocol** when the firmware parks them (V3), at least with the GIC present | The **wakeup without a GIC** (the parking protocol IPI is an SGI in the GIC world, see INTERFACES sec. 4): on the M1 it will be AIC; in QEMU the SGI comes from the real GIC (V3 uses it, so it proves nothing about the AIC case) |
+| That Windows ARM64 **runs on Apple M1 cores** at EL1 (with HVF the guest runs on the real cores): useful for R-07 (ID registers, page granularity, instructions) [hypothesis: HVF masks/exposes some registers, so the proof is partial] | The behavior with the M1's **FIQs**: QEMU `virt` does not route the timer as an AIC FIQ. The critical constraint of [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) (FIQ-only timer) is not reproduced |
+| The **process** (fast iteration, debug tools, table generator, override DXE driver) | Timing, SError, cache coherency, DART, ANS, PMGR, real AIC: everything that is M1 hardware |
 
-Quindi Gate B può dare **un verdetto negativo forte** (se Windows rifiuta già le precondizioni nelle tabelle, la strada è in dubbio), ma solo un **verdetto positivo debole** ("le precondizioni nelle tabelle sono accettate"). Il sì definitivo viene solo dall'hardware (Fase 3) o da A1/A2/A4 combinati con V4.
+So Gate B can give **a strong negative verdict** (if Windows already rejects the preconditions in the tables, the road is in doubt), but only a **weak positive verdict** ("the preconditions in the tables are accepted"). The definitive yes comes only from the hardware (Phase 3) or from A1/A2/A4 combined with V4.
 
-### 4.2 Tabella
+### 4.2 Table
 
-Convenzione: "baseline QEMU" = tabelle generate da QEMU `virt` con `gic-version=3` e `acpi=on`. I comandi `acpigen` sono quelli **da avere dopo l'estensione di sez. 2.2** (le opzioni `--model/--no-gicd/--parking/...` non esistono ancora: oggi la CLI accetta solo `acpigen <madt|gtdt|pptt|csrt> -o file`, [verificato: `src/main.c`]).
+Convention: "QEMU baseline" = tables generated by QEMU `virt` with `gic-version=3` and `acpi=on`. The `acpigen` commands are those **to have after the extension of sec. 2.2** (the `--model/--no-gicd/--parking/...` options do not exist yet: today the CLI accepts only `acpigen <madt|gtdt|pptt|csrt> -o file`, [verified: `src/main.c`]).
 
-| Var. | Tabelle ACPI usate | Comando `acpigen` (futuro, tranne dove indicato) | Cosa osserviamo | Esiti possibili → conclusione | Tempo stimato |
+| Var. | ACPI tables used | `acpigen` command (future, except where indicated) | What we observe | Possible outcomes -> conclusion | Estimated time |
 |---|---|---|---|---|---|
-| **V0** baseline | tutte quelle di QEMU, firmware EDK2 nostro **senza** override | nessuno (`WatariAcpiOverride` disattivato) | Windows installa e arriva al desktop; tutti i core visibili (`-smp`); KDNET e/o seriale agganciati; `bcdedit` applicati; snapshot dell'immagine | **OK**: ambiente valido, si prosegue. **Windows non parte / non si installa**: problema di ambiente (HVF, firmware, TPM, driver disco), non di Watari: si risolve prima di tutto, nessuna conclusione su Q1-Q5. **Debug non si aggancia**: cambiare trasporto prima di V1 | 1-3 giorni (installazione, configurazione, due trasporti di debug) [ipotesi] |
-| **V1** generatore | MADT, GTDT sostituite da `acpigen` equivalenti alla baseline QEMU (stesse CPU, GICC, GICD, GICR, GSIV timer, flag); resto QEMU | `acpigen madt --model qemu-virt --ncpus N -o madt.bin`; `acpigen gtdt --model qemu-virt -o gtdt.bin` | Confronto binario con le tabelle QEMU (stessi campi, checksum validi); Windows si comporta come V0 | **Come V0**: `acpigen` e `WatariAcpiOverride` validati, V2-V5 sono interpretabili. **Differenze nel boot o bug-check**: bug nel generatore o nell'override (non in Windows): correggere e rifare. Questo è il test che separa "Windows rifiuta" da "la nostra tabella è sbagliata" (falso negativo, sez. 6) | 1-2 giorni, più il lavoro sul generatore [ipotesi] |
-| **V2** GICC senza GICD | MADT con 4-8 GICC e **senza GICD (e senza GICR)**; GTDT e il resto come V1 | `acpigen madt --model qemu-virt --no-gicd --ncpus N -o madt.bin` | Dove si ferma il boot; codice e parametri di bugcheck; messaggi su seriale/debugger; se Windows enumera le CPU prima di fallire; se la fase è prima/dopo `HalInitSystem` [ipotesi sui nomi] | **Boot completo o fermo in modo "non per il controller" (es. nessun interrupt ma nessun rifiuto)**: segnale che la mancanza di GICD non è controllata presto → R-02 ridimensionato (positivo debole, vedi sotto). **Bugcheck/halt presto con causa riconducibile a assenza di controller di interrupt**: Windows pretende un GIC dichiarato → R-02 confermato; il piano passa al "GIC fittizio nel DSDT/ACPI intercettato da estensione" (INTERFACES 3.1) e al piano B. **Rifiuto generico non attribuibile**: inconcludente, ripetere con V2b (GICD presente ma indirizzo non valido) per separare "manca la struttura" da "manca l'hardware" | 2-4 giorni [ipotesi] |
-| **V3** parking protocol | MADT: GICC con `parking_version` e `parked_address` validi per ogni core, **GICD presente** (per isolare la domanda); FADT con `arm_boot_arch` **senza** PSCI_COMPLIANT (QEMU la mette con SMC/HVC, [verificato: virt-acpi-build.c]); resto V1 | `acpigen madt --model qemu-virt --parking --parked-base 0x... -o madt.bin`; `acpigen fadt --model qemu-virt --no-psci -o fadt.bin` (FADT: da creare) | Se Windows avvia i core secondari (`!pcr`/Task Manager: N core attivi); se scrive nella mailbox (osservabile con watchpoint o log del driver DXE di parcheggio); eventuali timeout/bugcheck; sequenza di scrittura (entry point prima di cpu_id) per confrontare con [verificato: Linux, `acpi_parking_protocol.c` come in INTERFACES 4] | **Core secondari avviati**: Windows supporta il parking protocol come previsto e la nostra mailbox è conforme (positivo, ma con GIC presente, vedi limiti). **Windows resta a 1 core senza errori**: la MADT/FADT non è stata interpretata come parking, oppure Windows richiede PSCI; ricontrollare i flag FADT e la versione del protocollo (**ipotesi, da A2**). **Bugcheck all'avvio dei core**: anomalia nella mailbox, indirizzo non mappato, memoria non riservata (UEFI memory map) → correggere e ripetere. **Mai scrive la mailbox**: Windows non usa il protocollo → ADR-0003 in dubbio | 4-7 giorni: serve il codice di parcheggio EDK2 (i core in QEMU partono spenti e vanno accesi con PSCI `CPU_ON` dal firmware e messi in loop di polling, [ipotesi sul meccanismo QEMU/PSCI]) |
-| **V3b** (opzionale) parking + senza GICD | come V3 con la MADT di V2 | `--parking --no-gicd` | come V3 | solo se V2 e V3 sono entrambi non negativi | 1-2 giorni |
-| **V4** CSRT + estensione HAL di prova | MADT/GTDT come V1; **CSRT** con un nostro resource group (vendor ID nostro, non riservato Microsoft); **SSDT** con il device ACPI collegato al gruppo (richiesto dal documento Microsoft: ogni resource group deve avere un device nello spazio dei nomi con identificatori coincidenti, [verificato: https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/acpi-system-description-tables, sezione CSRT]) | `acpigen csrt --model watari-test -o csrt.bin` (la CLI attuale `acpigen csrt` genera il gruppo "APLE" del modello t8103, [verificato: `t8103_model.c`]); SSDT: da creare | Se Windows tenta di caricare la DLL (`lm` mostra il modulo; messaggio `DbgPrint` dalla DLL; voce nel `Ntbtlog.txt`); se il caricamento fallisce, con quale errore; se il device ACPI viene enumerato; se `testsigning` basta o la DLL viene rifiutata; dove nel boot avviene | **DLL caricata e il nostro punto d'ingresso eseguito**: il meccanismo CSRT → estensione HAL funziona con firma di test per codice nostro (positivo per Q4; ricava la forma reale dell'interfaccia, da confrontare con A1). **Non viene caricata**: cause da separare — (a) CSRT/SSDT errati (V1-like validazione), (b) formato del gruppo CSRT o associazione INF/registro diversi da quelli assunti, (c) Windows carica estensioni solo per tipi di risorsa che conosce → conclusione sul "vuoto di documentazione"; il progetto deve allora ottenere le informazioni da A1/WDK, non indovinare. **Caricata ma Windows bugchecka alla prima chiamata**: ottimo segnale informativo: l'interfaccia esiste, i parametri sono sbagliati | 5-10 giorni: compilare la DLL richiede VM Windows con WDK/SDK [UMANO]; dipende fortemente da A1 per entry point e firma [ipotesi, da confermare con A1] |
-| **V5** timer | MADT come V1; **GTDT** (a) assente, (b) con GSIV non valido, (c) con flag/PPI alterati; resto V1 | (a) nessun file GTDT: l'override *rimuove* la tabella; (b),(c) `acpigen gtdt --model qemu-virt --virt-gsiv N ...` (opzioni da creare) | Se Windows parte senza GTDT; se il tick di sistema funziona (orologio, `Get-Date`, `!pcr`); messaggi/bugcheck; quanto tarda prima che il sistema si blocchi; effetto sul contatore `QueryPerformanceCounter` vs. interrupt del timer | **(a) Windows parte e il tempo scorre**: Windows ha una sorgente di tick alternativa (diversa dal GTDT) usabile senza descrizione ACPI: se esiste un tick non-GIC, riduce R-03 [ipotesi, andrebbe separato da ciò che QEMU/HVF espone]. **(a) Windows non parte / tempo fermo / bugcheck "clock"**: il timer architetturale descritto in GTDT è obbligatorio e lo si riceve come interrupt GIC; sul M1 (timer solo FIQ, [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md)) la sola via resta un'estensione HAL timer o il piano B → R-03 resta critico e si cerca in A1 il meccanismo "timer da estensione HAL". **(b)/(c)**: misura la tolleranza a GSIV non coerenti con il controller (utile per l'indirizzamento GSIV scelto per l'AIC). **Nota**: V5 non è il vincolo FIQ; per quello non c'è prova in QEMU (4.1) | 2-4 giorni [ipotesi] |
-| **V6** timer come FIQ | tabelle come V1 (MADT/GTDT di V1); firmware o QEMU modificati per consegnare il timer (INTID 30 e 27) come FIQ: opzione A = driver DXE che mette i PPI in Group 0 e abilita `ICC_IGRPEN0_EL1`; opzione B = patch `virt.c` con uscita timer collegata a `ARM_CPU_FIQ` | nessuno per `acpigen`; `-accel hvf,kernel-irqchip=off` (ripiego `-accel tcg`), dettagli in 4.4 | Bugcheck, blocco, assenza di clock tick, boot completo con orologio che avanza; traccia delle FIQ consegnate | **Funziona**: Windows gestisce la FIQ del timer, decisivo per la strategia del timer (ADR-0004, R-03). **Bugcheck/blocco**: non tollera la FIQ, serve tick via IRQ o piano B. **Nessun tick**: FIQ ignorata. **FIQ non dimostrata**: inconcludente. Dettaglio in 4.4.4 | 3-4 giorni [ipotesi] |
+| **V0** baseline | all of QEMU's, our EDK2 firmware **without** override | none (`WatariAcpiOverride` disabled) | Windows installs and reaches the desktop; all cores visible (`-smp`); KDNET and/or serial attached; `bcdedit` applied; image snapshot | **OK**: valid environment, proceed. **Windows does not start / does not install**: environment problem (HVF, firmware, TPM, disk driver), not Watari's: solve it first of all, no conclusion on Q1-Q5. **Debug does not attach**: change transport before V1 | 1-3 days (installation, configuration, two debug transports) [hypothesis] |
+| **V1** generator | MADT, GTDT replaced by `acpigen` equivalents of the QEMU baseline (same CPUs, GICC, GICD, GICR, timer GSIV, flags); rest QEMU | `acpigen madt --model qemu-virt --ncpus N -o madt.bin`; `acpigen gtdt --model qemu-virt -o gtdt.bin` | Binary comparison with the QEMU tables (same fields, valid checksums); Windows behaves like V0 | **Like V0**: `acpigen` and `WatariAcpiOverride` validated, V2-V5 are interpretable. **Differences in boot or bugcheck**: bug in the generator or the override (not in Windows): fix and redo. This is the test that separates "Windows rejects" from "our table is wrong" (false negative, sec. 6) | 1-2 days, plus the work on the generator [hypothesis] |
+| **V2** GICC without GICD | MADT with 4-8 GICC and **without GICD (and without GICR)**; GTDT and the rest as V1 | `acpigen madt --model qemu-virt --no-gicd --ncpus N -o madt.bin` | Where the boot stops; bugcheck code and parameters; messages on serial/debugger; whether Windows enumerates the CPUs before failing; whether the phase is before/after `HalInitSystem` [hypothesis on names] | **Complete boot or halt in a way "not due to the controller" (e.g. no interrupt but no rejection)**: signal that the absence of GICD is not checked early -> R-02 scaled down (weak positive, see below). **Early bugcheck/halt with a cause traceable to the absence of an interrupt controller**: Windows demands a declared GIC -> R-02 confirmed; the plan moves to the "dummy GIC in the DSDT/ACPI intercepted by extension" (INTERFACES 3.1) and to plan B. **Generic rejection not attributable**: inconclusive, repeat with V2b (GICD present but invalid address) to separate "the structure is missing" from "the hardware is missing" | 2-4 days [hypothesis] |
+| **V3** parking protocol | MADT: GICC with valid `parking_version` and `parked_address` for each core, **GICD present** (to isolate the question); FADT with `arm_boot_arch` **without** PSCI_COMPLIANT (QEMU sets it with SMC/HVC, [verified: virt-acpi-build.c]); rest V1 | `acpigen madt --model qemu-virt --parking --parked-base 0x... -o madt.bin`; `acpigen fadt --model qemu-virt --no-psci -o fadt.bin` (FADT: to be created) | Whether Windows starts the secondary cores (`!pcr`/Task Manager: N active cores); whether it writes to the mailbox (observable with a watchpoint or the parking DXE driver's log); any timeouts/bugchecks; write sequence (entry point before cpu_id) to compare with [verified: Linux, `acpi_parking_protocol.c` as in INTERFACES 4] | **Secondary cores started**: Windows supports the parking protocol as expected and our mailbox is compliant (positive, but with the GIC present, see limits). **Windows stays at 1 core without errors**: the MADT/FADT was not interpreted as parking, or Windows requires PSCI; recheck the FADT flags and the protocol version (**hypothesis, from A2**). **Bugcheck at core startup**: anomaly in the mailbox, unmapped address, unreserved memory (UEFI memory map) -> fix and repeat. **Never writes the mailbox**: Windows does not use the protocol -> ADR-0003 in doubt | 4-7 days: the EDK2 parking code is needed (cores in QEMU start powered off and must be turned on with PSCI `CPU_ON` from the firmware and put into a polling loop, [hypothesis on the QEMU/PSCI mechanism]) |
+| **V3b** (optional) parking + no GICD | as V3 with the V2 MADT | `--parking --no-gicd` | as V3 | only if V2 and V3 are both non-negative | 1-2 days |
+| **V4** CSRT + test HAL extension | MADT/GTDT as V1; **CSRT** with a resource group of ours (our vendor ID, not Microsoft-reserved); **SSDT** with the ACPI device linked to the group (required by the Microsoft document: every resource group must have a device in the namespace with matching identifiers, [verified: https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/acpi-system-description-tables, CSRT section]) | `acpigen csrt --model watari-test -o csrt.bin` (the current `acpigen csrt` CLI generates the "APLE" group of the t8103 model, [verified: `t8103_model.c`]); SSDT: to be created | Whether Windows attempts to load the DLL (`lm` shows the module; `DbgPrint` message from the DLL; entry in `Ntbtlog.txt`); if loading fails, with what error; whether the ACPI device is enumerated; whether `testsigning` is enough or the DLL is rejected; where in the boot it happens | **DLL loaded and our entry point executed**: the CSRT -> HAL extension mechanism works with a test signature for our code (positive for Q4; reveals the real shape of the interface, to be compared with A1). **Not loaded**: causes to be separated — (a) wrong CSRT/SSDT (V1-like validation), (b) CSRT group format or INF/registry association different from the assumed ones, (c) Windows loads extensions only for resource types it knows -> conclusion on the "documentation gap"; the project must then obtain the information from A1/WDK, not guess. **Loaded but Windows bugchecks on the first call**: excellent informative signal: the interface exists, the parameters are wrong | 5-10 days: building the DLL requires a Windows VM with WDK/SDK [HUMAN]; depends heavily on A1 for entry point and signing [hypothesis, to be confirmed with A1] |
+| **V5** timer | MADT as V1; **GTDT** (a) absent, (b) with invalid GSIV, (c) with altered flags/PPI; rest V1 | (a) no GTDT file: the override *removes* the table; (b),(c) `acpigen gtdt --model qemu-virt --virt-gsiv N ...` (options to be created) | Whether Windows starts without GTDT; whether the system tick works (clock, `Get-Date`, `!pcr`); messages/bugchecks; how long before the system hangs; effect on the `QueryPerformanceCounter` counter vs. timer interrupts | **(a) Windows starts and time flows**: Windows has an alternative tick source (other than the GTDT) usable without an ACPI description: if a non-GIC tick exists, it reduces R-03 [hypothesis, should be separated from what QEMU/HVF exposes]. **(a) Windows does not start / time frozen / "clock" bugcheck**: the architectural timer described in the GTDT is mandatory and is received as a GIC interrupt; on the M1 (FIQ-only timer, [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md)) the only way left is an HAL timer extension or plan B -> R-03 remains critical and A1 is searched for the "timer from HAL extension" mechanism. **(b)/(c)**: measures tolerance to GSIVs inconsistent with the controller (useful for the GSIV addressing chosen for the AIC). **Note**: V5 is not the FIQ constraint; for that there is no proof in QEMU (4.1) | 2-4 days [hypothesis] |
+| **V6** timer as FIQ | tables as V1 (V1 MADT/GTDT); modified firmware or QEMU to deliver the timer (INTID 30 and 27) as FIQ: option A = DXE driver that puts the PPIs in Group 0 and enables `ICC_IGRPEN0_EL1`; option B = `virt.c` patch with the timer output wired to `ARM_CPU_FIQ` | none for `acpigen`; `-accel hvf,kernel-irqchip=off` (fallback `-accel tcg`), details in 4.4 | Bugcheck, hang, absence of clock tick, complete boot with advancing clock; trace of the delivered FIQs | **Works**: Windows handles the timer FIQ, decisive for the timer strategy (ADR-0004, R-03). **Bugcheck/hang**: does not tolerate the FIQ, tick via IRQ or plan B is needed. **No tick**: FIQ ignored. **FIQ not demonstrated**: inconclusive. Detail in 4.4.4 | 3-4 days [hypothesis] |
 
-### 4.3 Dipendenze e punti incerti trasversali
+### 4.3 Cross-cutting dependencies and uncertain points
 
-- **Cosa significa "arriva al desktop"**: criteri misurabili per ogni run: (1) logo/spinner, (2) schermata di login/OOBE, (3) desktop con Task Manager, (4) PowerShell risponde; si registra l'ultimo traguardo raggiunto. Se il boot si ferma presto si legge il debugger prima di tutto.
-- **IORT/ITS e MSI** (tabelle QEMU) possono fare riferimento al GIC/ITS anche quando la MADT non li dichiara; se V2 si ferma per questo, la causa non è "Windows pretende il GIC in MADT" ma "ACPI incoerente": provare `msi=off` [verificato che l'opzione esiste; effetto: ipotesi].
-- **Differenza tra "accetta" e "usa"**: per ogni variante annotare se il bug-check avviene prima o dopo la prima chiamata al codice del controller (nel V4 per l'estensione).
-- Quali nomi interni di funzioni citare (es. `HalpInterruptRegisterController`) viene da PLAN/INTERFACES ma è [ipotesi]: non sono usati come criterio di osservazione; i criteri sono i comportamenti visibili dall'esterno.
+- **What "reaches the desktop" means**: measurable criteria for each run: (1) logo/spinner, (2) login/OOBE screen, (3) desktop with Task Manager, (4) PowerShell responds; the last milestone reached is recorded. If the boot stops early, the debugger is read first of all.
+- **IORT/ITS and MSI** (QEMU tables) may refer to the GIC/ITS even when the MADT does not declare them; if V2 stops because of this, the cause is not "Windows demands the GIC in MADT" but "inconsistent ACPI": try `msi=off` [verified that the option exists; effect: hypothesis].
+- **Difference between "accepts" and "uses"**: for each variant note whether the bugcheck happens before or after the first call to the controller code (in V4 for the extension).
+- Which internal function names to cite (e.g. `HalpInterruptRegisterController`) comes from PLAN/INTERFACES but is [hypothesis]: they are not used as an observation criterion; the criteria are the externally visible behaviors.
 
-### 4.4 V6: timer consegnato come FIQ
+### 4.4 V6: timer delivered as FIQ
 
-Task A10 (issue #18). Scopo: sul M1 il timer ARM arriva solo come FIQ ([re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) sez. 2). V5 non lo riproduce (4.1): in QEMU il timer è un PPI del GIC consegnato come IRQ. V6 chiede a scatola nera: **Windows ARM64 tollera o gestisce una FIQ del timer?** Fonti QEMU lette in questo task su `master` di github.com/qemu/qemu (la versione installata da Marco potrebbe differire: ricontrollare i file indicati).
+Task A10 (issue #18). Purpose: on the M1 the ARM timer arrives only as FIQ ([re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) sec. 2). V5 does not reproduce it (4.1): in QEMU the timer is a GIC PPI delivered as IRQ. V6 asks, as a black box: **does Windows ARM64 tolerate or handle a timer FIQ?** QEMU sources read in this task on `master` of github.com/qemu/qemu (the version installed by Marco may differ: recheck the indicated files).
 
-#### 4.4.1 Come far arrivare un PPI come FIQ in un GICv3 (QEMU)
+#### 4.4.1 How to make a PPI arrive as FIQ in a GICv3 (QEMU)
 
-- **Regola di consegna.** In `gicv3_cpuif_update()` (`hw/intc/arm_gicv3_cpuif.c`): un interrupt di Group 0 è sempre segnalato come FIQ (`case GICV3_G0: isfiq = true`); uno di Group 1 NS è segnalato come IRQ quando la CPU è non-secure. Il commento del codice rimanda alla sez. 4.6.2 della specifica GICv3 [verificato: arm_gicv3_cpuif.c, `gicv3_cpuif_update`]. La specifica Arm non è stata riletta direttamente: [ipotesi] che la sez. 4.6.2 dica la stessa cosa.
-- **Gruppo del PPI.** `gicv3_irq_group()` (`gicv3_internal.h`): per INTID < 32 il bit di `GICR_IGROUPR0` a 1 significa Group 1 NS; a 0, con `GICD_CTLR.DS=1`, significa **Group 0** [verificato]. Il PPI del timer fisico NS EL1 è INTID 30 (`ARCH_TIMER_NS_EL1_IRQ`), quello virtuale INTID 27 (`ARCH_TIMER_VIRT_IRQ`), il timer hyp NS EL2 INTID 26 [verificato: `include/hw/arm/bsa.h`].
-- **GIC a un solo security state.** Se `virt` non ha `secure=on`, la proprietà `has-security-extensions` del GIC è falsa e al reset `GICD_CTLR = DS | ARE` [verificato: `arm_gicv3_common.c` reset; `virt.c` righe 1417-1419 con `has-security-extensions = vms->secure`]. Con DS=1 un guest non-secure può scrivere `GICR_IGROUPR0` [verificato: `arm_gicv3_redist.c`, `case GICR_IGROUPR0` scrive solo se `attrs.secure || DS`]. Quindi **non servono né `secure=on` né `virtualization=on`**: bastano `gic-version=3` e una scrittura a `GICR_IGROUPR0` con il bit 30 (e 27) a 0. `secure=on` aggiungerebbe un EL3 e la regola `SCR_EL3.FIQ` (la FIQ andrebbe a EL3, che non c'è firmware per gestire): da evitare [ipotesi, ragionamento dal modello Arm; non provato].
-- **Abilitazioni necessarie perché la FIQ parta.** `icc_hppi_can_preempt()` richiede `icc_igrpen[grp] != 0`, cioè **`ICC_IGRPEN0_EL1`=1** per il Group 0 [verificato: arm_gicv3_cpuif.c:991]. Con DS=1 `GICD_CTLR.EnableGrp0` (bit 0) è scrivibile [verificato: arm_gicv3_dist.c, `case GICD_CTLR`, maschera `EN_GRP0 | EN_GRP1NS`]. Servono anche enable del PPI in `GICR_ISENABLER0` e priorità adeguata/PMR (come per ogni interrupt).
-- **Reset del gruppo.** Al reset `gicr_igroupr0 = 0` (Group 0) a meno di `irq_reset_nonsecure`, impostato solo per il boot diretto di un kernel con GIC security-aware [verificato: arm_gicv3_common.c righe 512-526, 574-600].
-- **Chi lo configura: il nostro EDK2.** Il driver `ArmPkg/Drivers/ArmGicDxe/GicV3/ArmGicV3Dxe.c` di EDK2, se `GICD_CTLR.DS=1`, scrive `0xffffffff` nel registro IGROUPR della redistributor frame SGI (tutto in Group 1 NS) e fa lo stesso per gli SPI [verificato: ArmGicV3Dxe.c, blocco "Disable Security (DS)"; la scrittura riguarda la redistributor `mGicRedistributorBase` della CPU che esegue il driver: sui core secondari il valore resta quello di reset, cioè Group 0 [ipotesi]]. Per V6 va aggiunto, **dopo** quel driver e per **ogni** CPU, un passo che azzera il bit del PPI e abilita il Group 0 (vedi 4.4.3). TF-A non c'entra in `virt` senza `secure=on`.
+- **Delivery rule.** In `gicv3_cpuif_update()` (`hw/intc/arm_gicv3_cpuif.c`): a Group 0 interrupt is always signaled as FIQ (`case GICV3_G0: isfiq = true`); a Group 1 NS one is signaled as IRQ when the CPU is non-secure. The code comment refers to sec. 4.6.2 of the GICv3 specification [verified: arm_gicv3_cpuif.c, `gicv3_cpuif_update`]. The Arm specification was not re-read directly: [hypothesis] that sec. 4.6.2 says the same thing.
+- **PPI group.** `gicv3_irq_group()` (`gicv3_internal.h`): for INTID < 32 the bit of `GICR_IGROUPR0` set to 1 means Group 1 NS; at 0, with `GICD_CTLR.DS=1`, it means **Group 0** [verified]. The NS EL1 physical timer PPI is INTID 30 (`ARCH_TIMER_NS_EL1_IRQ`), the virtual one INTID 27 (`ARCH_TIMER_VIRT_IRQ`), the NS EL2 hyp timer INTID 26 [verified: `include/hw/arm/bsa.h`].
+- **Single-security-state GIC.** If `virt` does not have `secure=on`, the GIC's `has-security-extensions` property is false and at reset `GICD_CTLR = DS | ARE` [verified: `arm_gicv3_common.c` reset; `virt.c` lines 1417-1419 with `has-security-extensions = vms->secure`]. With DS=1 a non-secure guest can write `GICR_IGROUPR0` [verified: `arm_gicv3_redist.c`, `case GICR_IGROUPR0` writes only if `attrs.secure || DS`]. So **neither `secure=on` nor `virtualization=on` is needed**: `gic-version=3` and a write to `GICR_IGROUPR0` with bit 30 (and 27) at 0 suffice. `secure=on` would add an EL3 and the `SCR_EL3.FIQ` rule (the FIQ would go to EL3, for which there is no firmware to handle it): to be avoided [hypothesis, reasoning from the Arm model; not proven].
+- **Enables needed for the FIQ to fire.** `icc_hppi_can_preempt()` requires `icc_igrpen[grp] != 0`, i.e. **`ICC_IGRPEN0_EL1`=1** for Group 0 [verified: arm_gicv3_cpuif.c:991]. With DS=1 `GICD_CTLR.EnableGrp0` (bit 0) is writable [verified: arm_gicv3_dist.c, `case GICD_CTLR`, mask `EN_GRP0 | EN_GRP1NS`]. The PPI enable in `GICR_ISENABLER0` and suitable priority/PMR are also needed (as for any interrupt).
+- **Group reset.** At reset `gicr_igroupr0 = 0` (Group 0) unless `irq_reset_nonsecure`, set only for direct boot of a kernel with a security-aware GIC [verified: arm_gicv3_common.c lines 512-526, 574-600].
+- **Who configures it: our EDK2.** EDK2's `ArmPkg/Drivers/ArmGicDxe/GicV3/ArmGicV3Dxe.c` driver, if `GICD_CTLR.DS=1`, writes `0xffffffff` to the IGROUPR register of the SGI redistributor frame (everything in Group 1 NS) and does the same for the SPIs [verified: ArmGicV3Dxe.c, "Disable Security (DS)" block; the write concerns the `mGicRedistributorBase` redistributor of the CPU running the driver: on the secondary cores the value stays the reset one, i.e. Group 0 [hypothesis]]. For V6 a step must be added, **after** that driver and for **every** CPU, that clears the PPI bit and enables Group 0 (see 4.4.3). TF-A is not involved in `virt` without `secure=on`.
 
-#### 4.4.2 HVF o TCG
+#### 4.4.2 HVF or TCG
 
-- Con HVF `gic-version=3` è accettato [verificato: `virt.c` ~2711-2717]. Ma l'irqchip HVF ha due modalità: **in-kernel** (GIC di Hypervisor.framework, `hv_gic_create`) e **userspace** (GIC emulato da QEMU). L'opzione è `-accel hvf,kernel-irqchip=on|off|split` (split non supportato) [verificato: `accel/hvf/hvf-all.c` e `hvf-accel-ops.c`]. Nelle macchine `virt` fino alla 11.0 il default per HVF è userspace; per le successive è in-kernel [verificato: `virt.c` `get_kernel_irqchip_default` e `hvf_no_kernel_irqchip_default = true` in `virt_machine_11_0_options`]. Il default dipende quindi dalla versione di QEMU: **va sempre esplicitato**.
-- **Il GIC in-kernel di Apple non è sotto il nostro controllo**: se rispetti IGROUPR/Group 0 come la specifica, non si sa [ipotesi]. **Raccomandato: `kernel-irqchip=off`**, cioè il codice GICv3 di QEMU letto sopra. In quella modalità HVF inietta una FIQ al guest con `hv_vcpu_set_pending_interrupt(..., HV_INTERRUPT_TYPE_FIQ, ...)` quando la CPU QEMU ha `CPU_INTERRUPT_FIQ` [verificato: `target/arm/hvf/hvf.c`, `hvf_inject_interrupts`], e il timer virtuale passa da `HV_EXIT_REASON_VTIMER_ACTIVATED` a `qemu_set_irq(gt_timer_outputs[GTIMER_VIRT])` [verificato: hvf.c righe ~2580-2583]. Il timer fisico (CNTP_*) in modalità userspace è emulato da QEMU (accessi intercettati [verificato: hvf.c, gestione `SYSREG_CNTP_*`]). Che l'intero percorso funzioni per una FIQ di timer in pratica: [ipotesi, da provare].
-- **TCG** (`-accel tcg`, `-cpu max`) esegue lo stesso modello GIC e la stessa logica FIQ senza dipendere da Hypervisor.framework ed è più lento (ordini di grandezza, non misurati); per un test di boot di Windows può essere molto lento [ipotesi]. È il ripiego se HVF userspace non inietta la FIQ.
-- **Comando più probabile** [ipotesi: assemblato da opzioni verificate, non eseguito]:
+- With HVF `gic-version=3` is accepted [verified: `virt.c` ~2711-2717]. But the HVF irqchip has two modes: **in-kernel** (Hypervisor.framework's GIC, `hv_gic_create`) and **userspace** (GIC emulated by QEMU). The option is `-accel hvf,kernel-irqchip=on|off|split` (split not supported) [verified: `accel/hvf/hvf-all.c` and `hvf-accel-ops.c`]. In `virt` machines up to 11.0 the default for HVF is userspace; for later ones it is in-kernel [verified: `virt.c` `get_kernel_irqchip_default` and `hvf_no_kernel_irqchip_default = true` in `virt_machine_11_0_options`]. The default therefore depends on the QEMU version: **it must always be made explicit**.
+- **Apple's in-kernel GIC is not under our control**: whether it respects IGROUPR/Group 0 as per the specification is unknown [hypothesis]. **Recommended: `kernel-irqchip=off`**, i.e. the QEMU GICv3 code read above. In that mode HVF injects a FIQ into the guest with `hv_vcpu_set_pending_interrupt(..., HV_INTERRUPT_TYPE_FIQ, ...)` when the QEMU CPU has `CPU_INTERRUPT_FIQ` [verified: `target/arm/hvf/hvf.c`, `hvf_inject_interrupts`], and the virtual timer goes from `HV_EXIT_REASON_VTIMER_ACTIVATED` to `qemu_set_irq(gt_timer_outputs[GTIMER_VIRT])` [verified: hvf.c lines ~2580-2583]. The physical timer (CNTP_*) in userspace mode is emulated by QEMU (accesses trapped [verified: hvf.c, handling of `SYSREG_CNTP_*`]). That the whole path works for a timer FIQ in practice: [hypothesis, to be proven].
+- **TCG** (`-accel tcg`, `-cpu max`) runs the same GIC model and the same FIQ logic without depending on Hypervisor.framework and is slower (orders of magnitude, not measured); for a Windows boot test it may be very slow [hypothesis]. It is the fallback if HVF userspace does not inject the FIQ.
+- **Most likely command** [hypothesis: assembled from verified options, not executed]:
 ```
 qemu-system-aarch64 -machine virt,gic-version=3,acpi=on,secure=off,virtualization=off \
   -accel hvf,kernel-irqchip=off -cpu host -smp 4 -m 8G \
   -drive if=pflash,format=raw,file=WATARI_FW_CODE.fd,readonly=on \
-  -drive if=pflash,format=raw,file=WATARI_FW_VARS.fd ... (resto come V0)
+  -drive if=pflash,format=raw,file=WATARI_FW_VARS.fd ... (rest as V0)
 ```
-  Ripiego: `-accel tcg -cpu max`. Opzioni di tracing per vedere le FIQ lato QEMU: eventi `gicv3_cpuif_set_irqs` e `hvf_inject_fiq` esistono nel codice [verificato: `trace_gicv3_cpuif_set_irqs`, `trace_hvf_inject_fiq`]; la sintassi `-trace` è [ipotesi, controllare la documentazione prima].
+  Fallback: `-accel tcg -cpu max`. Tracing options to see the FIQs on the QEMU side: events `gicv3_cpuif_set_irqs` and `hvf_inject_fiq` exist in the code [verified: `trace_gicv3_cpuif_set_irqs`, `trace_hvf_inject_fiq`]; the `-trace` syntax is [hypothesis, check the documentation first].
 
-#### 4.4.3 Come forzarlo senza modificare Windows (opzioni, valutate)
+#### 4.4.3 How to force it without modifying Windows (options, evaluated)
 
-| Opz. | Metodo | Pro | Contro | Giudizio |
+| Opt. | Method | Pros | Cons | Verdict |
 |---|---|---|---|---|
-| **A** | Patch al nostro EDK2 (driver DXE `WatariTimerFiq`, dopo `ArmGicV3Dxe`): su ogni CPU azzera i bit 27 e 30 di `GICR_IGROUPR0`, imposta `GICD_CTLR.EnableGrp0` e `ICC_IGRPEN0_EL1=1`. Nessuna patch a QEMU | Nessuna modifica a QEMU; riproduce un'operazione di firmware vera | **Windows riprogramma il GIC**: il suo driver GICv3 probabilmente imposta di nuovo i PPI in Group 1 (e abilita solo IGRPEN1) [ipotesi, non verificato: non si analizza Windows]. In quel caso la FIQ sparisce prima di arrivare e V6 darebbe un falso risultato "IRQ normale". Va controllato leggendo IGROUPR0 dopo il boot (tramite il debugger o un breakpoint QEMU) | Provarla per prima: costo basso, e il fatto che Windows la annulli o no è già un dato |
-| **B** | Patch QEMU in `hw/arm/virt.c` (~righe 1293-1307): per `GTIMER_PHYS` e `GTIMER_VIRT` collegare l'uscita del timer **direttamente** a `qdev_get_gpio_in(cpudev, ARM_CPU_FIQ)` invece che al PPI del GIC (le FIQ del GIC sono collegate allo stesso ingresso, riga ~1326: serve una porta OR a 2 ingressi) | **Indipendente da ciò che Windows fa al GIC**; è il modello più fedele al M1, dove il timer "bypasses AIC. It is wired straight to FIQ" ([re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) sez. 0) | Richiede compilare QEMU (download/installazione, backup); la modifica è nostra, ~10 righe, ma va tenuta allineata; ACPI GTDT dichiara ancora GSIV 30/27: da decidere se lasciarlo [ipotesi: Windows lo usa per scegliere/validare il timer]. Sotto HVF in userspace la FIQ passa dal percorso `hvf_inject_interrupts`: [ipotesi] funziona | **Raccomandata come metodo definitivo** se A è annullata da Windows (o per default, perché non dipende da Windows) |
-| **C** | Patch QEMU nel modello del GIC: forzare Group 0 per gli INTID 26-30 ignorando `GICR_IGROUPR0` (`gicv3_irq_group`) | Tiene il percorso "via GIC" (IGRPEN0 ancora necessario) | Più invasiva e meno fedele: nasconde al guest la propria scrittura su IGROUPR; mantiene dipendenza da `ICC_IGRPEN0_EL1` che Windows probabilmente non abilita [ipotesi] | Scartata (B è più semplice e più fedele) |
-| **D** | `secure=on` con TF-A/EDK2 che instrada via `SCR_EL3.FIQ` | Usa configurazione "standard" Arm | Serve firmware EL3 che gestisca la FIQ e la reinoltri a EL1: lavoro grosso, non è ciò che avviene sul M1 | Scartata |
+| **A** | Patch to our EDK2 (DXE driver `WatariTimerFiq`, after `ArmGicV3Dxe`): on every CPU clears bits 27 and 30 of `GICR_IGROUPR0`, sets `GICD_CTLR.EnableGrp0` and `ICC_IGRPEN0_EL1=1`. No patch to QEMU | No change to QEMU; reproduces a real firmware operation | **Windows reprograms the GIC**: its GICv3 driver probably sets the PPIs back to Group 1 (and enables only IGRPEN1) [hypothesis, not verified: Windows is not analyzed]. In that case the FIQ vanishes before arriving and V6 would give a false "normal IRQ" result. It must be checked by reading IGROUPR0 after boot (via the debugger or a QEMU breakpoint) | Try it first: low cost, and whether Windows cancels it or not is already a data point |
+| **B** | QEMU patch in `hw/arm/virt.c` (~lines 1293-1307): for `GTIMER_PHYS` and `GTIMER_VIRT` wire the timer output **directly** to `qdev_get_gpio_in(cpudev, ARM_CPU_FIQ)` instead of the GIC PPI (the GIC FIQs are wired to the same input, line ~1326: a 2-input OR gate is needed) | **Independent of what Windows does to the GIC**; it is the model most faithful to the M1, where the timer "bypasses AIC. It is wired straight to FIQ" ([re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) sec. 0) | Requires building QEMU (download/installation, backup); the change is ours, ~10 lines, but must be kept aligned; the ACPI GTDT still declares GSIV 30/27: to decide whether to leave it [hypothesis: Windows uses it to choose/validate the timer]. Under HVF in userspace the FIQ goes through the `hvf_inject_interrupts` path: [hypothesis] works | **Recommended as the definitive method** if A is cancelled by Windows (or by default, because it does not depend on Windows) |
+| **C** | QEMU patch in the GIC model: force Group 0 for INTIDs 26-30 ignoring `GICR_IGROUPR0` (`gicv3_irq_group`) | Keeps the "via GIC" path (IGRPEN0 still needed) | More invasive and less faithful: hides from the guest its own write to IGROUPR; keeps a dependence on `ICC_IGRPEN0_EL1` that Windows probably does not enable [hypothesis] | Discarded (B is simpler and more faithful) |
+| **D** | `secure=on` with TF-A/EDK2 routing via `SCR_EL3.FIQ` | Uses a "standard" Arm configuration | Requires EL3 firmware that handles the FIQ and forwards it to EL1: big job, not what happens on the M1 | Discarded |
 
-Esito della valutazione: **A come primo tentativo a basso costo, B come metodo di riferimento.** Con A, se il risultato è "tutto normale" bisogna prima dimostrare che la FIQ è davvero arrivata (traccia `hvf_inject_fiq` o `gicv3_cpuif_set_irqs ... fiqlevel=1`), altrimenti non è un risultato. Con B la consegna FIQ è garantita dalla macchina, quindi il risultato è interpretabile.
+Outcome of the evaluation: **A as a first low-cost attempt, B as the reference method.** With A, if the result is "all normal" one must first prove that the FIQ really arrived (trace `hvf_inject_fiq` or `gicv3_cpuif_set_irqs ... fiqlevel=1`), otherwise it is not a result. With B the FIQ delivery is guaranteed by the machine, so the result is interpretable.
 
-#### 4.4.4 Cosa osservare e come leggere gli esiti
+#### 4.4.4 What to observe and how to read the outcomes
 
-Registrare, come nelle altre varianti (sez. 3.4): comando QEMU, versione QEMU, hash ISO, build del kernel Windows, tracce `hvf_inject_fiq` / `gicv3_cpuif_set_irqs`, log seriale/debugger, screenshot. Precondizione: V0 e V1 verdi (stessa regola di V5).
+Record, as in the other variants (sec. 3.4): QEMU command, QEMU version, ISO hash, Windows kernel build, `hvf_inject_fiq` / `gicv3_cpuif_set_irqs` traces, serial/debugger log, screenshots. Precondition: V0 and V1 green (same rule as V5).
 
-| Osservazione | Come | Lettura |
+| Observation | How | Reading |
 |---|---|---|
-| **a. Bugcheck** | codice e parametri; dopo `bcdedit /set nocrashautoreboot on`; `!analyze -v` | Un bugcheck legato a un'eccezione non gestita o a un interrupt inatteso (nomi esatti dei codici: [ipotesi], leggerli, non indovinarli) → **Windows non tollera la FIQ**: nessun vettore/handler FIQ utile. |
-| **b. Blocco senza bugcheck** | schermo fermo, nessun I/O, il debugger non riceve | Possibile FIQ asserita e mai servita (tempesta/loop): Windows non mette la sorgente a tacere → "non gestita". Distinguere da un blocco per altri motivi con V0/V1 e con il contatore delle FIQ iniettate nella traccia QEMU (cresce in modo continuo = tempesta). |
-| **c. Nessun clock tick** | boot che prosegue ma orologio fermo, `Get-Date` non avanza, thread che non vengono schedulati con timeout, tick DPC assenti | Windows ignora la FIQ e non riceve il tick via IRQ: la FIQ è "tollerata ma inutile" per il timer. Non conclude sulla gestione della FIQ in sé: il timer resta di fatto inutilizzabile. |
-| **d. Funziona** | boot completo, orologio che avanza, Task Manager, e la traccia mostra FIQ consegnate | **Windows gestisce la FIQ del timer** (o la mappa su un percorso interno): vedi sotto. Verificare che le FIQ siano davvero consegnate e non solo programmate (altrimenti falso positivo, E-3-like). |
-| **e. Uso del debugger** | breakpoint su vettore FIQ del guest (`VBAR_EL1 + offset` della tabella dei vettori AArch64 per FIQ da EL1: calcolo da verificare nella specifica Arm [ipotesi]), `.bugcheck`, `lm`, `!pcr`, `!irql` (esistenza su ARM64: [ipotesi]) | Se il debugger è agganciato (seriale/KDNET), il kernel Windows si fermerà al bugcheck o rimarrà in break: confrontare i percorsi con V0. Se il debug cambia il risultato, registrarlo (E-6). |
+| **a. Bugcheck** | code and parameters; after `bcdedit /set nocrashautoreboot on`; `!analyze -v` | A bugcheck tied to an unhandled exception or an unexpected interrupt (exact code names: [hypothesis], read them, do not guess) -> **Windows does not tolerate the FIQ**: no useful FIQ vector/handler. |
+| **b. Hang without bugcheck** | frozen screen, no I/O, the debugger receives nothing | Possible FIQ asserted and never serviced (storm/loop): Windows does not silence the source -> "not handled". Distinguish from a hang for other reasons with V0/V1 and with the counter of injected FIQs in the QEMU trace (grows continuously = storm). |
+| **c. No clock tick** | boot that proceeds but clock frozen, `Get-Date` does not advance, threads not scheduled with timeouts, tick DPCs absent | Windows ignores the FIQ and does not receive the tick via IRQ: the FIQ is "tolerated but useless" for the timer. Does not conclude on the handling of the FIQ itself: the timer remains in effect unusable. |
+| **d. Works** | complete boot, advancing clock, Task Manager, and the trace shows delivered FIQs | **Windows handles the timer FIQ** (or maps it onto an internal path): see below. Verify that the FIQs are really delivered and not just programmed (otherwise false positive, E-3-like). |
+| **e. Debugger use** | breakpoint on the guest FIQ vector (`VBAR_EL1 + offset` of the AArch64 vector table for FIQ from EL1: calculation to be verified in the Arm specification [hypothesis]), `.bugcheck`, `lm`, `!pcr`, `!irql` (existence on ARM64: [hypothesis]) | If the debugger is attached (serial/KDNET), the Windows kernel will stop at the bugcheck or remain in break: compare the paths with V0. If debugging changes the result, record it (E-6). |
 
-Conclusioni per esito:
-- **d (positivo)**: **decisivo per la strategia del timer.** Significa che Windows ARM64 accetta una FIQ del timer (almeno in QEMU, con questa versione di Windows): la strategia "mai FIQ" ([ADR-0004](../../adr/0004-irq-instead-of-fiq.md)) e il bisogno di un timer alternativo via IRQ (watchdog IRQ 338, [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) sez. 3) perderebbero urgenza: l'AIC/FIQ del M1 potrebbe essere mappato nativamente, con un'estensione HAL che gestisce la FIQ o con un'AIC trasparente. Resta da dimostrare sull'hardware M1 e ripetere su più build di Windows (R-11).
-- **a o b (negativo)**: Windows non tollera la FIQ del timer (solo nelle condizioni di QEMU). Conferma R-03/V5: servono un'altra sorgente di tick via IRQ (estensione HAL timer con WDT o `ACC_OVRD`) o il piano B (guscio a EL2 che converte FIQ in IRQ virtuale, contrario ad ADR-0001). Cautela: con la metodologia A, prima escludere che la configurazione GIC di Windows abbia annullato la FIQ; con B il negativo è netto.
-- **c**: la FIQ è ignorata; per Windows il timer non esiste → stesso trattamento di a/b per la strategia, ma più "dolce": indica che Windows sopravvive a una FIQ spuria e che l'unico problema è dare il tick via IRQ.
-- **Inconcludente**: se non si dimostra che la FIQ sia stata consegnata (traccia assente), oppure se V0/V1 non sono verdi, oppure se HVF userspace non inietta correttamente (passare a TCG e ripetere).
+Conclusions per outcome:
+- **d (positive)**: **decisive for the timer strategy.** It means that Windows ARM64 accepts a timer FIQ (at least in QEMU, with this Windows version): the "never FIQ" strategy ([ADR-0004](../../adr/0004-irq-instead-of-fiq.md)) and the need for an alternative timer via IRQ (watchdog IRQ 338, [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) sec. 3) would lose urgency: the M1's AIC/FIQ could be mapped natively, with an HAL extension that handles the FIQ or with a transparent AIC. It remains to be demonstrated on the M1 hardware and repeated on more Windows builds (R-11).
+- **a or b (negative)**: Windows does not tolerate the timer FIQ (only under QEMU conditions). Confirms R-03/V5: another tick source via IRQ is needed (HAL timer extension with WDT or `ACC_OVRD`) or plan B (EL2 shell that converts FIQ into a virtual IRQ, contrary to ADR-0001). Caution: with method A, first rule out that Windows' GIC configuration cancelled the FIQ; with B the negative is clear-cut.
+- **c**: the FIQ is ignored; for Windows the timer does not exist -> same treatment as a/b for the strategy, but "softer": it indicates that Windows survives a spurious FIQ and that the only problem is giving the tick via IRQ.
+- **Inconclusive**: if it is not demonstrated that the FIQ was delivered (trace absent), or if V0/V1 are not green, or if HVF userspace does not inject correctly (switch to TCG and repeat).
 
-#### 4.4.5 Limiti di V6
+#### 4.4.5 Limits of V6
 
-- QEMU modella una FIQ "pura" GICv3, **non** il comportamento dell'AIC del M1 (nessun registro di stato globale, sorgenti multiple, mascheramento via `CNTP_CTL_EL0.IMASK`, [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) sez. 1). Anche un esito positivo non prova che Windows gestisca le altre FIQ del M1 (fast IPI, PMU): solo il percorso FIQ → handler del timer.
-- Il GIC in-kernel di HVF non è modificabile; con `kernel-irqchip=off` le prestazioni e il comportamento temporale del guest possono differire [ipotesi].
-- Con A il test dipende dalla riprogrammazione del GIC da parte di Windows; con B si aggira, ma si modifica QEMU (binario non standard, build da riprodurre). Con B, ACPI GTDT/MADT/GICD possono restare incoerenti con la FIQ: Windows potrebbe rifiutare per questo e non per la FIQ (vedi E-1/E-2).
-- Quale timer usi Windows ARM64 (fisico CNTP, virtuale CNTV, EL2) non è documentato qui [ipotesi]: instradare come FIQ **entrambi** (INTID 30 e 27).
-- Costo stimato: A circa 2 giorni (driver DXE + prove), B circa 1-2 giorni più compilare QEMU [ipotesi]. Download/installazioni: solo dopo backup Time Machine con conferma esplicita di Marco.
+- QEMU models a "pure" GICv3 FIQ, **not** the behavior of the M1's AIC (no global status register, multiple sources, masking via `CNTP_CTL_EL0.IMASK`, [re/f0-m1-fiq-irq.md](../../../re/f0-m1-fiq-irq.md) sec. 1). Even a positive outcome does not prove that Windows handles the M1's other FIQs (fast IPI, PMU): only the FIQ -> timer handler path.
+- HVF's in-kernel GIC is not modifiable; with `kernel-irqchip=off` the performance and timing behavior of the guest may differ [hypothesis].
+- With A the test depends on Windows' reprogramming of the GIC; with B it is bypassed, but QEMU is modified (non-standard binary, build to be reproduced). With B, ACPI GTDT/MADT/GICD may remain inconsistent with the FIQ: Windows might refuse because of this and not because of the FIQ (see E-1/E-2).
+- Which timer Windows ARM64 uses (physical CNTP, virtual CNTV, EL2) is not documented here [hypothesis]: route **both** as FIQ (INTID 30 and 27).
+- Estimated cost: A about 2 days (DXE driver + trials), B about 1-2 days plus building QEMU [hypothesis]. Downloads/installations: only after a Time Machine backup with explicit confirmation from Marco.
 
-## 5. Prerequisiti umani [UMANO]
+## 5. Human prerequisites [HUMAN]
 
-Tutti i passi sotto richiedono **prima**: backup completo Time Machine, conferma esplicita di Marco nella chat, spazio libero confermato (sez. 2.4). Gli agenti Sonnet non scaricano né installano nulla.
+All the steps below require **first**: complete Time Machine backup, explicit confirmation from Marco in chat, free space confirmed (sec. 2.4). Sonnet agents do not download or install anything.
 
-| # | Passo | Dettagli |
+| # | Step | Details |
 |---|---|---|
-| H1 | Backup Time Machine | Già confermato per la Fase 0 in `docs/STATUS.md` (commit "Backup Time Machine confermato"), **da riconfermare prima di ogni nuova installazione** [regola assoluta] |
-| H2 | Spazio disco | Decidere dove stanno le immagini (SSD esterno, disco interno liberato, o PC Windows come host debugger). Obiettivo ≥ 100 GB disponibili, vedi 2.4 |
-| H3 | Installare QEMU | es. Homebrew (`brew install qemu`) [ipotesi sul comando, controllare la formula], o compilazione; verificare con `qemu-system-aarch64 --version` |
-| H4 | Installare toolchain EDK2 e compilare firmware | passi a cura di un esecutore, dopo conferma |
-| H5 | Scaricare l'ISO Windows 11 ARM64 | sito Microsoft ufficiale; registrare versione/build e SHA-256; salvarla fuori dal repo in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato) |
-| H6 | Windows di sviluppo con WDK e debugger | una VM Windows ARM (o PC Windows): Windows SDK, WDK, Visual Studio Build Tools per compilare la DLL di V4 e per usare WinDbg. Software da scaricare dai siti Microsoft [UMANO]. Strumento di virtualizzazione per la VM sul Mac: scelta di Marco [ipotesi: UTM/Parallels/VMware; ognuna ha licenze e prezzi propri, da verificare] |
-| H7 | Licenze | Windows (non attivato per test: verificare i termini [ipotesi]); strumento di virtualizzazione della VM debugger; WDK/SDK/VS Build Tools: licenze Microsoft da leggere e accettare **da Marco**. L'accettazione dei termini non la fa un agente |
-| H8 | `swtpm` | per il TPM virtuale; installazione [UMANO]; sintassi QEMU verificata (2.1) |
-| H9 | `iasl` (compilatore ASL) | per l'SSDT di V4; è un download [UMANO]; alternativa: SSDT generato da `acpigen` (da sviluppare) |
-| H10 | Firma di test | nessun acquisto: `bcdedit /set testsigning on` nel guest target; certificato di test generato con gli strumenti del WDK (procedura da A1/documentazione Microsoft) |
-| H11 | Account Microsoft/login | Windows può richiedere un account in OOBE: scelta di Marco [ipotesi: modalità senza account dipende dalla build]. Gli agenti non inseriscono credenziali |
+| H1 | Time Machine backup | Already confirmed for Phase 0 in `docs/STATUS.md` (commit "Backup Time Machine confermato"), **to be reconfirmed before every new installation** [absolute rule] |
+| H2 | Disk space | Decide where the images live (external SSD, freed internal disk, or Windows PC as debugger host). Goal >= 100 GB available, see 2.4 |
+| H3 | Install QEMU | e.g. Homebrew (`brew install qemu`) [hypothesis on the command, check the formula], or build; verify with `qemu-system-aarch64 --version` |
+| H4 | Install the EDK2 toolchain and build the firmware | steps carried out by an executor, after confirmation |
+| H5 | Download the Windows 11 ARM64 ISO | official Microsoft site; record version/build and SHA-256; save it outside the repo in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (external disk; it must be connected) |
+| H6 | Development Windows with WDK and debugger | a Windows ARM VM (or Windows PC): Windows SDK, WDK, Visual Studio Build Tools to build the V4 DLL and to use WinDbg. Software to be downloaded from Microsoft sites [HUMAN]. Virtualization tool for the VM on the Mac: Marco's choice [hypothesis: UTM/Parallels/VMware; each has its own licenses and prices, to be verified] |
+| H7 | Licenses | Windows (non-activated for testing: verify the terms [hypothesis]); virtualization tool for the debugger VM; WDK/SDK/VS Build Tools: Microsoft licenses to be read and accepted **by Marco**. Acceptance of terms is not done by an agent |
+| H8 | `swtpm` | for the virtual TPM; installation [HUMAN]; QEMU syntax verified (2.1) |
+| H9 | `iasl` (ASL compiler) | for the V4 SSDT; it is a download [HUMAN]; alternative: SSDT generated by `acpigen` (to be developed) |
+| H10 | Test signature | no purchase: `bcdedit /set testsigning on` in the target guest; test certificate generated with the WDK tools (procedure from A1/Microsoft documentation) |
+| H11 | Microsoft account/login | Windows may require an account at OOBE: Marco's choice [hypothesis: the no-account mode depends on the build]. Agents do not enter credentials |
 
-## 6. Ordine di esecuzione e criteri di stop
+## 6. Execution order and stop criteria
 
-Ordine: **V0 → V1 → V2 → V3 → V5 → V4** (V3b dopo V2/V3). V4 è per ultima perché dipende da A1 e dal toolchain Windows e perché ha il costo maggiore; V5 è economica e informativa, si fa prima.
+Order: **V0 -> V1 -> V2 -> V3 -> V5 -> V4** (V3b after V2/V3). V4 is last because it depends on A1 and on the Windows toolchain and because it has the highest cost; V5 is cheap and informative, so it is done earlier.
 
-| Passo | Prerequisito | Criterio di successo | Criterio di stop |
+| Step | Prerequisite | Success criterion | Stop criterion |
 |---|---|---|---|
-| 0 | H1-H5 | Windows installato e funzionante sotto QEMU+HVF; snapshot "V0-ok" | Se dopo ~5 giorni V0 non parte: **stop** del Gate B, rivalutare l'ambiente (TCG invece di HVF, altra versione QEMU) prima di toccare le tabelle |
-| V1 | override DXE e `acpigen` esteso | tabelle identiche a QEMU per i campi di interesse, boot uguale a V0 | Se V1 differisce da V0 e la causa non si trova in ~3 giorni: **stop**, non si interpreta nessuna variante successiva (il generatore o l'override non sono affidabili) |
-| V2 | V1 verde | esito netto (boot o bugcheck attribuibile) | Se per tre ripetizioni indipendenti l'esito non è distinguibile (rifiuto generico): congelare il risultato come "inconcludente" e passare a V3 senza insistere |
-| V3 | V1 verde + driver di parcheggio | N core attivi, mailbox scritta | Se il driver di parcheggio EDK2 non funziona in QEMU entro ~1 settimana: sospendere V3 e annotarlo; il parcheggio sarà comunque da scrivere in `edk2-apple` |
-| V5 | V1 verde | esito per (a), (b), (c) | nessuno specifico |
-| V4 | V1 verde, A1 disponibile, H6, H9, H10 | DLL caricata o motivo del mancato caricamento identificato | Se mancano informazioni di A1 sull'interfaccia: **non si indovina**: V4 si sospende e si aspetta A1 |
+| 0 | H1-H5 | Windows installed and working under QEMU+HVF; snapshot "V0-ok" | If after ~5 days V0 does not start: **stop** Gate B, reassess the environment (TCG instead of HVF, another QEMU version) before touching the tables |
+| V1 | DXE override and extended `acpigen` | tables identical to QEMU's for the fields of interest, boot equal to V0 | If V1 differs from V0 and the cause is not found in ~3 days: **stop**, no later variant is interpreted (the generator or override are not reliable) |
+| V2 | V1 green | clear outcome (boot or attributable bugcheck) | If for three independent repetitions the outcome is not distinguishable (generic rejection): freeze the result as "inconclusive" and move on to V3 without insisting |
+| V3 | V1 green + parking driver | N cores active, mailbox written | If the EDK2 parking driver does not work in QEMU within ~1 week: suspend V3 and note it; parking will have to be written in `edk2-apple` anyway |
+| V5 | V1 green | outcome for (a), (b), (c) | none specific |
+| V4 | V1 green, A1 available, H6, H9, H10 | DLL loaded or reason for non-loading identified | If A1 information on the interface is missing: **do not guess**: V4 is suspended and A1 is awaited |
 
-**Stop globale del Gate B** (qualunque di questi): (1) due varianti consecutive (V2 e V3) con bugcheck che indicano che Windows pretende GIC/PSCI → verdetto "strada nativa in dubbio", si passa alla discussione con Marco sul piano B (ADR-0001); (2) esaurimento delle risorse concordate (tempo totale > ~4 settimane di lavoro agente, [ipotesi]). **Tutti i verdetti vanno a Marco**, nessun cambio di strategia automatico.
+**Global stop of Gate B** (any of these): (1) two consecutive variants (V2 and V3) with bugchecks indicating that Windows demands GIC/PSCI -> verdict "native road in doubt", move to discussion with Marco on plan B (ADR-0001); (2) exhaustion of the agreed resources (total time > ~4 weeks of agent work, [hypothesis]). **All verdicts go to Marco**, no automatic change of strategy.
 
-Stima totale se tutto va liscio: 3-5 settimane di calendario (lavoro condiviso agenti + Marco, che esegue download e passi in VM) [ipotesi]; il collo di bottiglia sono V0 (ambiente Windows+debug) e V3 (codice di parcheggio).
+Total estimate if everything goes smoothly: 3-5 calendar weeks (shared work agents + Marco, who runs downloads and steps in the VM) [hypothesis]; the bottlenecks are V0 (Windows + debug environment) and V3 (parking code).
 
-## 7. Rischi dell'esperimento e interpretazione di falsi negativi e falsi positivi
+## 7. Experiment risks and interpretation of false negatives and false positives
 
-| ID | Rischio | Tipo di errore | Come si controlla |
+| ID | Risk | Error type | How it is controlled |
 |---|---|---|---|
-| E-1 | Tabella generata male (checksum, lunghezza, campi) o override DXE che installa male | **Falso negativo** (Windows sembra rifiutare ma è colpa nostra) | V1 obbligatoria prima di ogni altra; verifica con un decodificatore ACPI (es. `iasl -d`) e confronto binario con QEMU; esito di V1 uguale a V0 |
-| E-2 | Altre tabelle QEMU (IORT/ITS/MCFG/DSDT/FADT) che si riferiscono al GIC o a PSCI e quindi producono errori non dovuti alla MADT | **Falso negativo** per V2/V3 | Guardare la causa del bugcheck, non solo il fatto; V2b; tentare `msi=off`; per V3 la FADT senza PSCI è parte della variante |
-| E-3 | Il GIC vero di QEMU è comunque attivo: Windows potrebbe funzionare "per caso" accedendo al GIC senza averlo in MADT | **Falso positivo** per V2/V3b | Registrare gli accessi MMIO alla regione GIC (tracing di QEMU: opzioni da documentare [ipotesi]); non concludere "Windows accetta il non-GIC" ma solo "accetta MADT senza GICD" |
-| E-4 | Firmware/immagine diversi fra le run (nessuna riproducibilità) | entrambi | Comando QEMU, versioni, hash e tabelle archiviati; snapshot del disco prima di ogni run (`qcow2`, [ipotesi sul flusso]); una sola variabile cambia per volta |
-| E-5 | HVF presenta al guest una CPU diversa dal M1 reale (registri mascherati, EL1 invece di EL2, niente FIQ/AIC) | **Falso positivo** su compatibilità CPU/timer | Dichiarare il limite nei risultati; V5 non prova nulla sul vincolo FIQ |
-| E-6 | Debugger non si aggancia o altera il comportamento (KDNET/seriale cambiano il boot) | falso negativo / interferenza | provare V0 con e senza debug; confrontare tempi e percorso; se il debug cambia il risultato, registrarlo |
-| E-7 | Aggiornamenti di Windows cambiano il comportamento (R-11) | entrambi | Congelare l'ISO, non fare Windows Update; registrare la build del kernel nel log di ogni run |
-| E-8 | V4: l'estensione non si carica per ragioni di firma (testsigning, Secure Boot attivo, catene) e non per CSRT | **Falso negativo** | Verificare in V0 che un driver di prova test-signed qualsiasi si carichi con `testsigning on`; annotare lo stato Secure Boot |
-| E-9 | Informazioni di A1/A2/A4 contraddicono le assunzioni di V3/V4 (es. versione del protocollo, tipo di risorsa CSRT) | entrambi | Riscrivere le sezioni marcate [ipotesi, da confermare con A1/A2/A4] prima dell'esecuzione; non eseguire V3/V4 senza A2/A1 |
-| E-10 | Rischio per il Mac: nessuno diretto (tutto in VM), ma i download sono rischiosi per spazio e integrità | operativo | backup (H1), spazio (2.4), download solo da fonti ufficiali con hash registrato |
-| E-11 | Costo/tempo > benefici: il Gate B è lungo e con verdetto positivo debole | strategico | decidere con Marco dopo V1-V2: se V2 è negativo in modo netto, il valore degli altri esperimenti cambia |
+| E-1 | Badly generated table (checksum, length, fields) or DXE override that installs badly | **False negative** (Windows seems to reject but it is our fault) | V1 mandatory before any other; check with an ACPI decoder (e.g. `iasl -d`) and binary comparison with QEMU; V1 outcome equal to V0 |
+| E-2 | Other QEMU tables (IORT/ITS/MCFG/DSDT/FADT) that refer to the GIC or PSCI and thus produce errors not due to the MADT | **False negative** for V2/V3 | Look at the cause of the bugcheck, not just the fact; V2b; attempt `msi=off`; for V3 the FADT without PSCI is part of the variant |
+| E-3 | QEMU's real GIC is active anyway: Windows might work "by accident" by accessing the GIC without it being in the MADT | **False positive** for V2/V3b | Record the MMIO accesses to the GIC region (QEMU tracing: options to be documented [hypothesis]); do not conclude "Windows accepts the non-GIC" but only "accepts a MADT without GICD" |
+| E-4 | Different firmware/image between runs (no reproducibility) | both | QEMU command, versions, hashes and tables archived; disk snapshot before every run (`qcow2`, [hypothesis on the workflow]); only one variable changes at a time |
+| E-5 | HVF presents the guest with a CPU different from the real M1 (masked registers, EL1 instead of EL2, no FIQ/AIC) | **False positive** on CPU/timer compatibility | State the limit in the results; V5 proves nothing about the FIQ constraint |
+| E-6 | Debugger does not attach or alters the behavior (KDNET/serial change the boot) | false negative / interference | try V0 with and without debug; compare timings and path; if debugging changes the result, record it |
+| E-7 | Windows updates change the behavior (R-11) | both | Freeze the ISO, do not run Windows Update; record the kernel build in the log of every run |
+| E-8 | V4: the extension does not load for signing reasons (testsigning, Secure Boot active, chains) and not because of CSRT | **False negative** | Verify in V0 that any test-signed test driver loads with `testsigning on`; note the Secure Boot state |
+| E-9 | Information from A1/A2/A4 contradicts the assumptions of V3/V4 (e.g. protocol version, CSRT resource type) | both | Rewrite the sections marked [hypothesis, to be confirmed with A1/A2/A4] before execution; do not run V3/V4 without A2/A1 |
+| E-10 | Risk to the Mac: none direct (all in VM), but downloads are risky for space and integrity | operational | backup (H1), space (2.4), downloads only from official sources with the hash recorded |
+| E-11 | Cost/time > benefits: Gate B is long and with a weak positive verdict | strategic | decide with Marco after V1-V2: if V2 is clearly negative, the value of the other experiments changes |
 
-Regola di lettura dei risultati: un esito **positivo** in QEMU si scrive "le precondizioni delle tabelle non sono state rifiutate in QEMU" e **non** "il M1 funzionerà". Un esito **negativo** si scrive "Windows rifiuta questa variante di tabella in QEMU con questa causa" solo dopo che V1 e il controllo di E-2 sono verdi.
+Rule for reading results: a **positive** outcome in QEMU is written "the table preconditions were not rejected in QEMU" and **not** "the M1 will work". A **negative** outcome is written "Windows rejects this table variant in QEMU with this cause" only after V1 and the E-2 check are green.
 
-## 8. Esito atteso e variante decisiva
+## 8. Expected outcome and decisive variant
 
-| Domanda | Variante | Esito più informativo |
+| Question | Variant | Most informative outcome |
 |---|---|---|
-| R-02 / Q2 | **V2** | Bugcheck chiaramente legato all'assenza di GICD → Windows pretende un GIC in MADT (impatto alto: ripiego "GIC fittizio" o piano B). Boot completo → il vincolo non c'è nelle tabelle |
-| R-06 / Q3 | **V3** | Core avviati con la mailbox e senza PSCI → ADR-0003 regge sul lato Windows; resta aperto il wakeup via AIC |
-| Q4 | **V4** | Caricamento della DLL da CSRT con il punto d'ingresso eseguito → unico esperimento che avvicina la domanda decisiva (ma non la chiude) |
-| R-03 / Q5 | **V5(a)** | Windows non parte senza GTDT → il timer è architetturale obbligatorio, quindi o estensione HAL timer o piano B |
+| R-02 / Q2 | **V2** | Bugcheck clearly tied to the absence of GICD -> Windows demands a GIC in the MADT (high impact: "dummy GIC" fallback or plan B). Complete boot -> the constraint is not in the tables |
+| R-06 / Q3 | **V3** | Cores started with the mailbox and without PSCI -> ADR-0003 holds on the Windows side; the wakeup via AIC remains open |
+| Q4 | **V4** | DLL loaded from CSRT with the entry point executed -> the only experiment that approaches the decisive question (but does not close it) |
+| R-03 / Q5 | **V5(a)** | Windows does not start without GTDT -> the architectural timer is mandatory, so either an HAL timer extension or plan B |
 
-Il risultato **decisivo contro** la strada nativa sarebbe: V2 negativo netto *e* (V4 non caricabile con informazioni di A1 che confermano l'impossibilità). Il risultato **decisivo a favore** (solo come precondizione) sarebbe: V2 e V3 positivi, V4 carica la DLL e A1 conferma l'interfaccia di registrazione del controller; la conferma finale rimane l'hardware (Fase 3).
+The **decisive result against** the native road would be: clear-cut negative V2 *and* (V4 not loadable with A1 information confirming the impossibility). The **decisive result in favor** (only as a precondition) would be: V2 and V3 positive, V4 loads the DLL and A1 confirms the controller registration interface; final confirmation remains the hardware (Phase 3).
 
-## 9. Fonti consultate in questo task
+## 9. Sources consulted in this task
 
 - QEMU `virt`: https://www.qemu.org/docs/master/system/arm/virt.html (gic-version, virtualization, acpi, msi, CPU, HVF).
-- QEMU invocazione: https://www.qemu.org/docs/master/system/invocation.html (`-acpitable` solo i386; `-accel`).
-- QEMU TPM: https://www.qemu.org/docs/master/specs/tpm.html (swtpm + `tpm-tis-device` su ARM virt).
-- QEMU sorgente: `hw/arm/virt-acpi-build.c` (MADT/GICR, GTDT, DBG2, SPCR, IORT, flag PSCI nella FADT) su github.com/qemu/qemu.
-- EDK2: `ArmVirtPkg/ArmVirtQemu.dsc` e `OvmfPkg/AcpiPlatformDxe/AcpiPlatformDxe.inf` su github.com/tianocore/edk2.
-- Microsoft: https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/acpi-system-description-tables (MADT/GIC inbox, GTDT, CSRT/HAL extension e requisito del device ACPI, DBG2, FADT hardware-reduced); https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--dbgsettings ; https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--set ; https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/supported-ethernet-nics-for-network-kernel-debugging-in-windows-10 .
-- Repository: `docs/PLAN.md`, ADR 0001/0003/0004/bozza Fase 0, INTERFACES, RISKS, `re/f0-m1-fiq-irq.md`, `tools/acpigen`.
+- QEMU invocation: https://www.qemu.org/docs/master/system/invocation.html (`-acpitable` i386 only; `-accel`).
+- QEMU TPM: https://www.qemu.org/docs/master/specs/tpm.html (swtpm + `tpm-tis-device` on ARM virt).
+- QEMU source: `hw/arm/virt-acpi-build.c` (MADT/GICR, GTDT, DBG2, SPCR, IORT, PSCI flag in the FADT) on github.com/qemu/qemu.
+- EDK2: `ArmVirtPkg/ArmVirtQemu.dsc` and `OvmfPkg/AcpiPlatformDxe/AcpiPlatformDxe.inf` on github.com/tianocore/edk2.
+- Microsoft: https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/acpi-system-description-tables (MADT/GIC inbox, GTDT, CSRT/HAL extension and the ACPI device requirement, DBG2, hardware-reduced FADT); https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--dbgsettings ; https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/bcdedit--set ; https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/supported-ethernet-nics-for-network-kernel-debugging-in-windows-10 .
+- Repository: `docs/PLAN.md`, ADR 0001/0003/0004/Phase 0 draft, INTERFACES, RISKS, `re/f0-m1-fiq-irq.md`, `tools/acpigen`.
 
-## 10. Prossimi passi proposti (nessuno eseguito)
+## 10. Proposed next steps (none executed)
 
-1. Attendere A1, A2, A4 e aggiornare le sezioni marcate; in particolare: versione GIC attesa da Windows, requisiti di FADT/parking, entry point e firma dell'estensione HAL.
-2. Task per un esecutore: estendere `acpigen` (modello `qemu-virt`, opzioni, GICR, FADT, SSDT) con test.
-3. Task per un esecutore (dopo H1/H4): `WatariQemuPkg` + driver `WatariAcpiOverride`.
-4. Decidere con Marco: dove stanno le immagini (spazio) e quale strumento per la VM debugger.
-5. Solo dopo conferma di backup: H3, H5, V0.
+1. Wait for A1, A2, A4 and update the marked sections; in particular: GIC version expected by Windows, FADT/parking requirements, entry point and signing of the HAL extension.
+2. Task for an executor: extend `acpigen` (`qemu-virt` model, options, GICR, FADT, SSDT) with tests.
+3. Task for an executor (after H1/H4): `WatariQemuPkg` + `WatariAcpiOverride` driver.
+4. Decide with Marco: where the images live (space) and which tool for the debugger VM.
+5. Only after backup confirmation: H3, H5, V0.

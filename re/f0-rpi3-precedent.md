@@ -1,104 +1,104 @@
-# F0 / A4: il precedente Raspberry Pi 3 (Windows senza GIC)
+# F0 / A4: the Raspberry Pi 3 precedent (Windows without a GIC)
 
-Issue #7. Ricerca solo in lettura (`gh api`, WebSearch/WebFetch). Nessun download, nessun binario Microsoft.
-Convenzione: [verificato: fonte] oppure [ipotesi].
+Issue #7. Read-only research (`gh api`, WebSearch/WebFetch). No download, no Microsoft binary.
+Convention: [verified: source] or [hypothesis].
 
-## Sintesi
+## Summary
 
-Sul Pi 3 (BCM2837) Windows non ha ricevuto il controller di interrupt da un componente di terze parti.
-Il firmware ACPI descrive il BCM2836 "ARM local" come se fosse una GIC (GICC con base 0x40000000), e il **supporto
-al controller Broadcom è dentro l'HAL di Windows** (arm32 per IoT Core, arm64 per le build ARM64 successive).
-Non esiste, nei repository esaminati, alcuna HAL extension, alcun driver di terze parti e nessun gruppo CSRT per il controller di interrupt.
-Il precedente quindi NON dimostra che una terza parte possa fornire un interrupt controller a Windows ARM64.
+On the Pi 3 (BCM2837) Windows did not receive the interrupt controller from a third-party component.
+The ACPI firmware describes the BCM2836 "ARM local" as if it were a GIC (GICC with base 0x40000000), and the **support
+for the Broadcom controller is inside the Windows HAL** (arm32 for IoT Core, arm64 for the later ARM64 builds).
+In the repositories examined there is no HAL extension, no third-party driver and no CSRT group for the interrupt controller.
+The precedent therefore does NOT show that a third party can supply an interrupt controller to Windows ARM64.
 
-## Prove raccolte
+## Evidence collected
 
-### 1. MADT finta del Pi 3 (la prova principale)
-- [verificato: edk2-platforms `Platform/RaspberryPi/AcpiTables/Madt.aslc`] La MADT del Pi 3 contiene 4 strutture GICC (una per core) e, solo per Pi != 3,
-  la GIC Distributor (`#if (RPI_MODEL != 3)`). Quindi sul Pi 3 **non c'è nessun GICD**.
-- [verificato: stesso file + `RPi3.dsc` righe 345 e 424] Il campo "Physical Base Address" del GICC è `PcdGicInterruptInterfaceBase = 0x40000000`,
-  cioè l'indirizzo dei registri "ARM local" del BCM2836 (non una GIC). `PcdInterruptBaseAddress` vale lo stesso 0x40000000.
-- [verificato: stesso file, `RPi3.dsc` righe 425-428] `PerformanceInterruptGsiv` = 9 per tutti i core (nella numerazione locale BCM2836, 9 = PMU_FAST;
-  [verificato: binding Linux brcm,bcm2836-l1-intc, riportato dalla ricerca web]).
-- [verificato: commento in `Madt.aslc`] "Use 1 for GICR Base Address below, since Windows 10 on Raspberry Pi 3 does not boot otherwise, and this is
-  the value that Microsoft had in their IoT blobs." Cioè Windows legge i campi GICC e un valore sbagliato impedisce il boot.
-- [verificato: andreiw/RaspberryPiPkg `AcpiTables/Madt.aslc`, blob binario preso dalle tabelle MS-IoT] Commento: "Even though the BCM2836 doesn't contain a GIC, these
+### 1. The fake Pi 3 MADT (the main evidence)
+- [verified: edk2-platforms `Platform/RaspberryPi/AcpiTables/Madt.aslc`] The Pi 3 MADT contains 4 GICC structures (one per core) and, only for Pi != 3,
+  the GIC Distributor (`#if (RPI_MODEL != 3)`). So on the Pi 3 **there is no GICD**.
+- [verified: same file + `RPi3.dsc` lines 345 and 424] The GICC "Physical Base Address" field is `PcdGicInterruptInterfaceBase = 0x40000000`,
+  i.e. the address of the BCM2836 "ARM local" registers (not a GIC). `PcdInterruptBaseAddress` has the same value 0x40000000.
+- [verified: same file, `RPi3.dsc` lines 425-428] `PerformanceInterruptGsiv` = 9 for all cores (in the BCM2836 local numbering, 9 = PMU_FAST;
+  [verified: Linux binding brcm,bcm2836-l1-intc, reported by the web search]).
+- [verified: comment in `Madt.aslc`] "Use 1 for GICR Base Address below, since Windows 10 on Raspberry Pi 3 does not boot otherwise, and this is
+  the value that Microsoft had in their IoT blobs." That is, Windows reads the GICC fields and a wrong value prevents boot.
+- [verified: andreiw/RaspberryPiPkg `AcpiTables/Madt.aslc`, binary blob taken from the MS-IoT tables] Comment: "Even though the BCM2836 doesn't contain a GIC, these
   GICC definitions enable multi-core support (with PSCI). Mind the signatures in the header, they must be kept."
-  Decodifica dei byte (mia): OEM ID "BC2836", OEM Table ID "EDK2    ", Creator ID "MSFT", revisione 3, lunghezza 0x16C = 44 + 4 x 80;
-  GICC con flags=1, PerfGsiv=9, ParkedAddress=0, ParkingVersion=0, PhysicalBase=0x40000000, GICV/GICH/VGIC=0.
-- [ipotesi] L'HAL riconosce il Pi 3 dai campi sopra (base 0x40000000, GICR=1 e/o OEM ID "BC2836") e non da un driver; non ho prove su quale campo sia decisivo.
-- [verificato: pftf/RPi3 Readme, tianocore RPi3 Readme] Windows 10 ARM64 (GUI completo) risulta avviabile con questo firmware senza altri componenti.
-  Linux in modalità ACPI invece va in crash in `acpi_register_gsi()` ([verificato: messaggio di commit del Readme di pftf/RPi3]), segno che la "GIC" è finta.
+  Byte decoding (mine): OEM ID "BC2836", OEM Table ID "EDK2    ", Creator ID "MSFT", revision 3, length 0x16C = 44 + 4 x 80;
+  GICC with flags=1, PerfGsiv=9, ParkedAddress=0, ParkingVersion=0, PhysicalBase=0x40000000, GICV/GICH/VGIC=0.
+- [hypothesis] The HAL recognizes the Pi 3 from the fields above (base 0x40000000, GICR=1 and/or OEM ID "BC2836") and not from a driver; I have no evidence on which field is decisive.
+- [verified: pftf/RPi3 Readme, tianocore RPi3 Readme] Windows 10 ARM64 (full GUI) is reported as bootable with this firmware without other components.
+  Linux in ACPI mode instead crashes in `acpi_register_gsi()` ([verified: commit message in the pftf/RPi3 Readme]), a sign that the "GIC" is fake.
 
-### 2. Nessuna HAL extension né driver per l'interrupt controller
-- [verificato: `gh api repos/ms-iot/rpi-iotcore/contents/drivers`] I driver sono: RpiLanPropertyChange, audio, gpio, i2c, mailbox, misc, pwm, sd, spi, uart. Nessun HalExt,
-  nessun driver del controller di interrupt. I file `interrupt.c` trovati appartengono ai driver mailbox, vchiq, PL011 e PWM/DMA (gestori di ISR dei dispositivi, non il controller).
-  `raspberrypi/windows-drivers` ha la stessa struttura (stessa lista di directory).
-- [verificato: `worproject/RPi-Windows-Drivers`] Il repository contiene solo README e release di binari. Il README parla di driver di periferica e di override DSDT/SSDT, mai di interrupt controller.
-  Limite: i binari delle release non sono stati ispezionati.
-- [verificato: CSRT in `Csrt.aslc`] La CSRT contiene un solo resource group, quello DMA (DeviceId DMA, controller + canali). Nessun gruppo per interrupt controller o timer.
-  È la parte "Microsoft" (copyright Microsoft nel file), usata per il DMA (`EFI_ACPI_CSRT_DEVICE_ID_DMA`).
-- [verificato: `Pep.asl`] Il PEP è un dispositivo virtuale `BCM2854` senza risorse; descrive processore, stati coordinati e dispositivi per la gestione energetica, non gli interrupt.
-- [verificato: `edk2-platforms/Platform/RaspberryPi/Drivers`] `InterruptDxe` (Bcm283x) serve solo a UEFI (solo i 4 interrupt timer locali, registro +0x40); sparisce all'ExitBootServices.
+### 2. No HAL extension or driver for the interrupt controller
+- [verified: `gh api repos/ms-iot/rpi-iotcore/contents/drivers`] The drivers are: RpiLanPropertyChange, audio, gpio, i2c, mailbox, misc, pwm, sd, spi, uart. No HalExt,
+  no interrupt controller driver. The `interrupt.c` files found belong to the mailbox, vchiq, PL011 and PWM/DMA drivers (device ISR handlers, not the controller).
+  `raspberrypi/windows-drivers` has the same structure (same directory list).
+- [verified: `worproject/RPi-Windows-Drivers`] The repository contains only a README and binary releases. The README talks about peripheral drivers and DSDT/SSDT overrides, never about an interrupt controller.
+  Limit: the binaries of the releases were not inspected.
+- [verified: CSRT in `Csrt.aslc`] The CSRT contains a single resource group, the DMA one (DeviceId DMA, controller + channels). No group for interrupt controller or timer.
+  It is the "Microsoft" part (Microsoft copyright in the file), used for DMA (`EFI_ACPI_CSRT_DEVICE_ID_DMA`).
+- [verified: `Pep.asl`] The PEP is a virtual `BCM2854` device without resources; it describes processor, coordinated states and devices for power management, not interrupts.
+- [verified: `edk2-platforms/Platform/RaspberryPi/Drivers`] `InterruptDxe` (Bcm283x) serves only UEFI (only the 4 local timer interrupts, register +0x40); it disappears at ExitBootServices.
 
-### 3. Chi supportava il BCM nell'HAL
-- [verificato: issue andreiw/RaspberryPiPkg#12, andreiw, aprile 2018] "there appears to be a check in Hal validating PIC is not a BCM PIC. That's why you need a debugger attached
-  to patch out the 'bls' following the subtraction and compare." Quindi nelle build ARM64 di aprile 2018 (17125-17134) l'HAL **conosceva** il PIC Broadcom
-  ma lo rifiutava; per avviare serviva una patch in memoria con WinDbg. Andreiw: "science project, given the need to hot-patch Win10 Hal today just to boot".
-- [verificato: stessa issue, thchi12] Citazione di un utente: "Windows has built in support for BCM interrupts" (da un post zhihu; non verificato di persona). Un altro utente indica che
-  le build RS5 sopra 17723 "should have official support for RPi3 boot" (affermazione di terzi, non confermata da Microsoft).
-- [ipotesi, confidenza media] Dalla build RS5 in poi l'HAL ARM64 ha accettato il PIC BCM senza patch: nelle fonti successive (pftf/RPi3, WoR) non c'è più traccia di patch dell'HAL,
-  e il commento sul valore "GICR=1" dice che il boot dipende dalla MADT dei blob MS.
-- [verificato: andreiw readme] Il progetto HypDxe (hypervisor EL2 che sposta UEFI in EL1, intercetta SMC/PSCI, MMIO e log del kernel) serviva a debug e ricerca; il suo autore dice che
-  serviva "to eventually support MMIO traps so I could emulate a GIC" (issue #130). HypDxe **non** è in edk2-platforms/pftf RPi3 ([verificato: lista `Platform/RaspberryPi/Drivers`]), quindi il boot finale non lo richiede.
+### 3. Who supported the BCM in the HAL
+- [verified: issue andreiw/RaspberryPiPkg#12, andreiw, April 2018] "there appears to be a check in Hal validating PIC is not a BCM PIC. That's why you need a debugger attached
+  to patch out the 'bls' following the subtraction and compare." So in the April 2018 ARM64 builds (17125-17134) the HAL **knew** the Broadcom PIC
+  but rejected it; to boot, an in-memory patch with WinDbg was needed. Andreiw: "science project, given the need to hot-patch Win10 Hal today just to boot".
+- [verified: same issue, thchi12] Quote from a user: "Windows has built in support for BCM interrupts" (from a zhihu post; not personally verified). Another user states that
+  the RS5 builds above 17723 "should have official support for RPi3 boot" (third-party claim, not confirmed by Microsoft).
+- [hypothesis, medium confidence] From the RS5 build onward the ARM64 HAL accepted the BCM PIC without a patch: in later sources (pftf/RPi3, WoR) there is no longer any trace of HAL patches,
+  and the comment on the "GICR=1" value says that boot depends on the MADT of the MS blobs.
+- [verified: andreiw readme] The HypDxe project (EL2 hypervisor that moves UEFI to EL1, intercepts SMC/PSCI, MMIO and kernel logs) was for debugging and research; its author says it
+  was needed "to eventually support MMIO traps so I could emulate a GIC" (issue #130). HypDxe is **not** in edk2-platforms/pftf RPi3 ([verified: list `Platform/RaspberryPi/Drivers`]), so the final boot does not require it.
 
-### 4. Avvio dei core secondari
-- [verificato: issue #12, andreiw] I blob ACPI MS-IoT originali riportavano **MPPP** (Multiprocessor Parking Protocol) e non PSCI nel FADT (IoT Core era ARM32).
-  Per ARM64 andreiw ha usato **PSCI**: "Apr 24th 2018: SMP support in WoA" ([verificato: readme]).
-- [verificato: `Fadt.aslc`] FADT con `EFI_ACPI_6_3_ARM_PSCI_COMPLIANT` (ArmBootArchFlags) e `HW_REDUCED_ACPI`. Il metodo è PSCI CPU_ON gestito da ARM Trusted Firmware (BL31) nel firmware.
-  Nella MADT: `ParkedAddress=0`, `ParkingProtocolVersion=0`, MPIDR di ciascun core presente (`GET_MPID(0,n)`).
-- Senza GIC il risveglio non usa SGI della GIC: è il firmware (TF-A) a svegliare i core (sul Pi 3 con i registri mailbox/spin del VideoCore/ARM local), invisibile a Windows, che chiama solo PSCI_CPU_ON.
-  [ipotesi] per i dettagli interni di TF-A su Pi 3 (non verificati qui).
-- [verificato: issue #12] Il primo bug con 4 core era PROCESS1_INITIALIZATION_FAILED (0x6b) con core secondari abilitati, tolto con "Processor Enabled=0", poi risolto (SMP funzionante).
-- IPI: [ipotesi] Windows li invia tramite i registri "mailbox" per-core dell'ARM local (offset 0x80+), cioè il percorso nativo del BCM2836; non ho trovato conferma diretta.
+### 4. Secondary core startup
+- [verified: issue #12, andreiw] The original MS-IoT ACPI blobs reported **MPPP** (Multiprocessor Parking Protocol) and not PSCI in the FADT (IoT Core was ARM32).
+  For ARM64 andreiw used **PSCI**: "Apr 24th 2018: SMP support in WoA" ([verified: readme]).
+- [verified: `Fadt.aslc`] FADT with `EFI_ACPI_6_3_ARM_PSCI_COMPLIANT` (ArmBootArchFlags) and `HW_REDUCED_ACPI`. The method is PSCI CPU_ON handled by ARM Trusted Firmware (BL31) in the firmware.
+  In the MADT: `ParkedAddress=0`, `ParkingProtocolVersion=0`, MPIDR of each core present (`GET_MPID(0,n)`).
+- Without a GIC the wake-up does not use GIC SGIs: it is the firmware (TF-A) that wakes the cores (on the Pi 3 with the VideoCore/ARM local mailbox/spin registers), invisible to Windows, which only calls PSCI_CPU_ON.
+  [hypothesis] for the internal details of TF-A on the Pi 3 (not verified here).
+- [verified: issue #12] The first bug with 4 cores was PROCESS1_INITIALIZATION_FAILED (0x6b) with secondary cores enabled, removed with "Processor Enabled=0", then resolved (SMP working).
+- IPI: [hypothesis] Windows sends them through the per-core "mailbox" registers of the ARM local (offset 0x80+), i.e. the native BCM2836 path; I found no direct confirmation.
 
 ### 5. Timer
-- [verificato: `Gtdt.aslc`, `RPi3.dsc` righe 346-349] GTDT con GSIV: Secure PL1 = 0, NonSecure PL1 = 1, Virtual = 3, Hyp (NS PL2) = 2, con flag di polarità attiva-bassa.
-  Sono i numeri sorgente locali del BCM2836 (CNTPSIRQ=0, CNTPNSIRQ=1, CNTHPIRQ=2, CNTVIRQ=3 [verificato: binding Linux]) e non PPI di una GIC (PPI sarebbero 16-31; 0-3 in una GIC sarebbero SGI).
-- Quindi Windows usa il **generic timer ARM** (contatore a 19.2 MHz, [verificato: issue #12, andreiw "timer configured as expected (19.2Mhz)"]) e l'interrupt arriva tramite
-  il registro "timer interrupt control" per-core dell'ARM local (offset 0x40, [verificato: `BCM2836_INTC_TIMER_CONTROL_OFFSET` in Bcm2836.h]).
-- Il fatto che i GSIV siano 0-3 e siano accettati è un'altra prova che l'HAL interpreta i numeri secondo il modello BCM, non GIC [ipotesi].
-- Periferiche (DSDT, es. `Interrupt(ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2836_USB_INTERRUPT }`): [verificato: `GpuDevs.asl`] usano la forma Extended Interrupt standard con numeri nel dominio BCM.
-  I valori numerici non sono stati letti.
+- [verified: `Gtdt.aslc`, `RPi3.dsc` lines 346-349] GTDT with GSIV: Secure PL1 = 0, NonSecure PL1 = 1, Virtual = 3, Hyp (NS PL2) = 2, with active-low polarity flags.
+  These are the BCM2836 local source numbers (CNTPSIRQ=0, CNTPNSIRQ=1, CNTHPIRQ=2, CNTVIRQ=3 [verified: Linux binding]) and not GIC PPIs (PPIs would be 16-31; 0-3 in a GIC would be SGIs).
+- So Windows uses the **ARM generic timer** (19.2 MHz counter, [verified: issue #12, andreiw "timer configured as expected (19.2Mhz)"]) and the interrupt arrives through
+  the per-core "timer interrupt control" register of the ARM local (offset 0x40, [verified: `BCM2836_INTC_TIMER_CONTROL_OFFSET` in Bcm2836.h]).
+- The fact that the GSIVs are 0-3 and are accepted is further evidence that the HAL interprets the numbers according to the BCM model, not GIC [hypothesis].
+- Peripherals (DSDT, e.g. `Interrupt(ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2836_USB_INTERRUPT }`): [verified: `GpuDevs.asl`] use the standard Extended Interrupt form with numbers in the BCM domain.
+  The numeric values were not read.
 
-## Che cosa si può riusare come modello per l'M1
+## What can be reused as a model for the M1
 
-| Elemento | Riusabile? | Nota |
+| Element | Reusable? | Note |
 |---|---|---|
-| Struttura CSRT (resource group DMA) | Sì, per il DMA/DART | Non contiene interrupt; è il meccanismo MS per risorse di sistema |
-| MADT con GICC "finti" + nessun GICD | Solo come idea | Funziona **perché l'HAL ha già il codice BCM**; per l'AIC non c'è un equivalente noto [ipotesi] |
-| PSCI via TF-A/firmware per i core secondari | Sì, la parte più portabile | Pi 3: PSCI_CPU_ON; per l'M1 serve un firmware che lo implementi (m1n1/EL2 stub) |
-| Timer: GTDT con GSIV non-GIC | Parziale | Sul M1 il timer ARM arriva come FIQ/IRQ sulla AIC (vedi lavori A8-A10) |
-| HAL extension / ACPI CSRT per interrupt controller | **No** | Non esiste sul Pi 3: nessun precedente |
-| HypDxe (trap MMIO per emulare una GIC) | Come banco di prova | Violerebbe il vincolo "nativo"; è un hypervisor (piano B) |
+| CSRT structure (DMA resource group) | Yes, for DMA/DART | Contains no interrupts; it is the MS mechanism for system resources |
+| MADT with "fake" GICC + no GICD | Only as an idea | It works **because the HAL already has the BCM code**; for the AIC there is no known equivalent [hypothesis] |
+| PSCI via TF-A/firmware for secondary cores | Yes, the most portable part | Pi 3: PSCI_CPU_ON; for the M1 a firmware that implements it is needed (m1n1/EL2 stub) |
+| Timer: GTDT with non-GIC GSIV | Partial | On the M1 the ARM timer arrives as FIQ/IRQ on the AIC (see work A8-A10) |
+| HAL extension / ACPI CSRT for interrupt controller | **No** | Does not exist on the Pi 3: no precedent |
+| HypDxe (MMIO traps to emulate a GIC) | As a test bench | Would violate the "native" constraint; it is a hypervisor (plan B) |
 
-## Verdetto
+## Verdict
 
-- Sul Pi 3 il controller di interrupt era **supporto interno a Windows** (HAL, scelto dai dati della MADT), non un componente di terze parti.
-  Confidenza: **media-alta (circa 75%)**. Prove: assenza di HalExt/driver nei repo ms-iot, raspberrypi e WoR; commento
-  "Hal validating PIC is not a BCM PIC"; MADT con base 0x40000000 e "valori dei blob Microsoft"; GSIV del timer 0-3.
-- Il precedente **non** dimostra che Windows ARM64 giri senza GIC con un componente di terze parti: dimostra che l'HAL Microsoft include almeno un
-  percorso non-GIC (BCM2836), ma solo per quel controller. Per l'M1 (AIC) un percorso equivalente non è replicabile senza modificare l'HAL
-  (patch del binario, vietata come soluzione finale) oppure senza far apparire l'AIC come una GIC (emulazione/hypervisor, piano B).
-- Confidenza che l'HAL ARM64 retail contenga ancora un ramo BCM attivo senza patch: **media (circa 60-65%)**, perché la prova più forte (andreiw) è del 2018 e dice che all'epoca era rifiutato.
-- Lacune: non ho letto i binari (vietato), non ho accesso a worproject.com (la ricerca non lo ha restituito) e non ho verificato se le build Windows più recenti
-  mantengono il ramo BCM. Una HAL extension (HalExt*, GUID in CSRT con DeviceId proprio) per interrupt controller resta, per Windows ARM64, un meccanismo **da dimostrare** sul M1,
-  non un precedente.
+- On the Pi 3 the interrupt controller was **internal Windows support** (HAL, chosen from the MADT data), not a third-party component.
+  Confidence: **medium-high (about 75%)**. Evidence: absence of HalExt/drivers in the ms-iot, raspberrypi and WoR repos; the comment
+  "Hal validating PIC is not a BCM PIC"; MADT with base 0x40000000 and "Microsoft blob values"; timer GSIVs 0-3.
+- The precedent does **not** show that Windows ARM64 runs without a GIC with a third-party component: it shows that the Microsoft HAL includes at least one
+  non-GIC path (BCM2836), but only for that controller. For the M1 (AIC) an equivalent path is not replicable without modifying the HAL
+  (binary patching, forbidden as a final solution) or without making the AIC appear as a GIC (emulation/hypervisor, plan B).
+- Confidence that the retail ARM64 HAL still contains an active BCM branch without a patch: **medium (about 60-65%)**, because the strongest evidence (andreiw) is from 2018 and says that at the time it was rejected.
+- Gaps: I did not read the binaries (forbidden), I have no access to worproject.com (the search did not return it) and I did not verify whether the most recent Windows builds
+  keep the BCM branch. A HAL extension (HalExt*, GUID in CSRT with its own DeviceId) for an interrupt controller remains, for Windows ARM64, a mechanism **to be demonstrated** on the M1,
+  not a precedent.
 
-## Fonti
+## Sources
 - edk2-platforms: `Platform/RaspberryPi/AcpiTables/{Madt.aslc,Csrt.aslc,Gtdt.aslc,Fadt.aslc,Pep.asl,Dsdt.asl,GpuDevs.asl}`, `RPi3/RPi3.dsc`, `RPi3/Readme.md`,
   `Silicon/Broadcom/Bcm283x/{Include/IndustryStandard/Bcm2836.h,Drivers/InterruptDxe}`
-- github.com/andreiw/RaspberryPiPkg (readme, `AcpiTables/Madt.aslc`, `Drivers/HypDxe`, issue #12, #88, #130), repo ora archiviato in worproject/RaspberryPiPkg
+- github.com/andreiw/RaspberryPiPkg (readme, `AcpiTables/Madt.aslc`, `Drivers/HypDxe`, issues #12, #88, #130), repo now archived in worproject/RaspberryPiPkg
 - github.com/ms-iot/rpi-iotcore, github.com/raspberrypi/windows-drivers, github.com/worproject/RPi-Windows-Drivers, github.com/pftf/RPi3
-- Binding Linux `brcm,bcm2836-l1-intc` (numerazione delle sorgenti locali)
-- windowslatest.com 2018/02/09 (primo boot di Windows 10 ARM64 su Pi 3 con un solo core, UNSUPPORTED_PROCESSOR casuale)
+- Linux binding `brcm,bcm2836-l1-intc` (numbering of the local sources)
+- windowslatest.com 2018/02/09 (first Windows 10 ARM64 boot on the Pi 3 with a single core, random UNSUPPORTED_PROCESSOR)

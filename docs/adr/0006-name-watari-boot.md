@@ -1,18 +1,18 @@
-# ADR-0006: Nome del progetto "Watari Boot"
+# ADR-0006: Project name "Watari Boot"
 
-- Data: 2026-10-12 · Stato: **accettato**
+- Date: 2026-10-12 · Status: **accepted**
 
-## Contesto
-Il progetto si chiamava provvisoriamente "ProvaImpossibile". Serviva un nome definitivo che facesse capire subito di cosa si tratta (come "Asahi Linux") e che non creasse problemi di marchio.
+## Context
+The project was provisionally called "ProvaImpossibile" ("ImpossibleTest"). A definitive name was needed that would make clear at once what it is about (like "Asahi Linux") and would not create trademark problems.
 
-## Decisione
-Il nome è **Watari Boot**. 渡 (watari) vuol dire "attraversare, passare da una riva all'altra"; "Boot" dice che è un progetto di avvio di sistema.
-Va sempre accompagnato dal sottotitolo fisso: **"Windows nativo su Apple Silicon"** (in inglese: "Native Windows on Apple Silicon").
+## Decision
+The name is **Watari Boot**. 渡 (watari) means "to cross, to pass from one bank to the other"; "Boot" says it is a system boot project.
+It must always be accompanied by the fixed subtitle: **"Windows nativo su Apple Silicon"** (in English: "Native Windows on Apple Silicon").
 
-## Alternative scartate
-- **AsahiWindows**: "Windows" è un marchio Microsoft, che vieta di usarlo nel nome di prodotti di terzi (precedente: Lindows → Linspire, dopo una causa di Microsoft). "Asahi" farebbe pensare che il progetto sia di Asahi Linux o approvato da loro.
-- **Watari Silicon / Labs / Project / Hashi / Zero / Gate**: comunicano meno bene di cosa si tratta.
+## Alternatives (rejected)
+- **AsahiWindows**: "Windows" is a Microsoft trademark, which forbids its use in the names of third-party products (precedent: Lindows → Linspire, after a Microsoft lawsuit). "Asahi" would suggest that the project belongs to, or is endorsed by, Asahi Linux.
+- **Watari Silicon / Labs / Project / Hashi / Zero / Gate**: they convey less clearly what the project is about.
 
-## Conseguenze
-- "Windows", "Apple" e "Apple Silicon" compaiono solo in forma descrittiva (sottotitolo, descrizioni), mai nel nome, nel logo o nel nome dell'organizzazione.
-- Repo: `ZonatedCord/WatariBoot` (privata). Cartella locale: `~/Documents/02_PROGETTI/WatariBoot`. Cartella dei dati esterni: `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato).
+## Consequences
+- "Windows", "Apple" and "Apple Silicon" appear only in descriptive form (subtitle, descriptions), never in the name, logo or organization name.
+- Repo: `ZonatedCord/WatariBoot` (private). Local folder: `~/Documents/02_PROGETTI/WatariBoot`. External data folder: `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (external disk; it must be connected).

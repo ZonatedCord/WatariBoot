@@ -1,39 +1,39 @@
-# ADR (bozza): Esito preliminare della Fase 0 e soglia del piano B
+# ADR (draft): Preliminary outcome of Phase 0 and the plan B threshold
 
-- Data: 2026-10-13 · Stato: **proposto**. Il numero si assegna al merge. Non modifica ADR-0001 né ADR-0004: ne precisa le condizioni di revisione.
-- Collegamenti: [re/f0-preliminary-verdict.md](../../re/f0-preliminary-verdict.md) · [ADR-0001](0001-native-boot-without-hypervisor.md) · [ADR-0004](0004-irq-instead-of-fiq.md) · [bozza strategia timer](draft-timer-fiq-strategy.md) · [ESPERIMENTO-F0](../design/watariboot/EXPERIMENT-F0.md) · [RISKS R-01, R-02, R-03, R-06](../design/watariboot/RISKS.md)
+- Date: 2026-10-13 · Status: **proposed**. The number is assigned at merge. It does not modify ADR-0001 or ADR-0004: it clarifies their review conditions.
+- Links: [re/f0-preliminary-verdict.md](../../re/f0-preliminary-verdict.md) · [ADR-0001](0001-native-boot-without-hypervisor.md) · [ADR-0004](0004-irq-instead-of-fiq.md) · [timer strategy draft](draft-timer-fiq-strategy.md) · [EXPERIMENT-F0](../design/watariboot/EXPERIMENT-F0.md) · [RISKS R-01, R-02, R-03, R-06](../design/watariboot/RISKS.md)
 
-## Contesto
-Le ricerche A1-A6 e A8-A10 sono concluse. Lo stato delle prove, severo:
-- Nessuna prova dimostra che un'estensione HAL di terze parti possa registrare un controller di interrupt non-GIC. La specifica CSRT prevede il tipo "Interrupt Controller", ma gli unici esempi pubblici di estensioni sono timer e DMA (A1).
-- Il precedente del Raspberry Pi 3 indica che il supporto al controller non-GIC era **dentro l'HAL Microsoft** (A4, confidenza circa 75%). Non è un precedente per un controller fornito da terzi.
-- Il timer architetturale del M1 è solo FIQ; nessuna pista per averlo in IRQ è dimostrata (A3, A9). Il parking protocol senza GIC è compatibile con la specifica, ma non si sa se Windows moderno lo usi (A2).
-- La strategia "niente FIQ" non vale per AICv2 (M1 Pro/Max e successivi), che non ha le IPI legacy (A3).
-- QEMU non può togliere il GIC: il Gate B dà un "no" affidabile ma solo un "sì" debole (A5).
-- Stima soggettiva dello stato delle conoscenze, solo per interrupt, timer e avvio dei core: nativo puro circa 12%, piano B (shim EL2 con vGIC) circa 53%, altro o fallimento circa 35%.
+## Context
+Research items A1-A6 and A8-A10 are concluded. The state of the evidence, strictly:
+- No evidence shows that a third-party HAL extension can register a non-GIC interrupt controller. The CSRT specification provides for the "Interrupt Controller" type, but the only public examples of extensions are timers and DMA (A1).
+- The Raspberry Pi 3 precedent indicates that support for the non-GIC controller was **inside the Microsoft HAL** (A4, confidence about 75%). It is not a precedent for a controller provided by third parties.
+- The M1 architectural timer is FIQ-only; no route to get it as an IRQ is demonstrated (A3, A9). The parking protocol without a GIC is compatible with the specification, but it is not known whether modern Windows uses it (A2).
+- The "no FIQ" strategy does not hold for AICv2 (M1 Pro/Max and later), which has no legacy IPIs (A3).
+- QEMU cannot remove the GIC: Gate B gives a reliable "no" but only a weak "yes" (A5).
+- Subjective estimate of the state of knowledge, for interrupts, timer and core bring-up only: pure native about 12%, plan B (EL2 shim with vGIC) about 53%, other or failure about 35%.
 
-## Decisione proposta
-1. **Proseguire con il Gate B**, con ordine: V0, V1, poi **V4** (caricamento di un'estensione HAL da CSRT) e **V6** (timer consegnato come FIQ) in priorità, poi V2 e V3 come verifiche rapide. Il modello AIC per QEMU (A8, circa 8-9 giorni) e il test hardware HW-1 si fanno solo se i risultati lo giustificano: il modello solo se esiste un'interfaccia di registrazione di un controller, HW-1 solo se V6 è negativo.
-2. **Prima di V4, leggere l'header `nthalext.h` del WDK**, se l'utente consente il download (backup Time Machine confermato, licenza accettata dall'utente). Non va copiato nel repository (ADR-0005).
-3. **Definire adesso la soglia che fa scattare la discussione sul piano B**, prima di vedere i risultati. La discussione parte quando si verifica **una** di queste condizioni:
-   - T1: né l'header né V4 mostrano alcuna via per registrare un controller di interrupt;
-   - T2: V2 e V4 producono bugcheck attribuibili al fatto che Windows richiede un GIC dichiarato;
-   - T3: V6 negativo netto, HW-1 negativo (o non eseguibile) e nessuna estensione timer praticabile;
-   - T4: nessuna chiusura entro circa 4 settimane di lavoro agente (stop globale di A5), da riportare come inconclusiva.
-4. **Il piano B lo decide l'utente.** Il verdetto della Fase 0 viene presentato così com'è, nessun cambio di strategia automatico (ADR-0001). Nel frattempo si prepara, senza adottarlo, uno studio di progetto del piano B con `morasca-agent`, includendo anche l'alternativa meno invasiva di un solo stub PSCI/HVC a EL2 per l'avvio dei core.
-5. Un esito positivo in QEMU si scrive "precondizioni non rifiutate in QEMU", mai "il M1 funzionerà": la conferma è la Fase 3 su hardware.
+## Proposed decision
+1. **Proceed with Gate B**, in this order: V0, V1, then **V4** (loading a HAL extension from CSRT) and **V6** (timer delivered as FIQ) as priorities, then V2 and V3 as quick checks. The AIC model for QEMU (A8, about 8-9 days) and the hardware test HW-1 are done only if the results justify them: the model only if an interface for registering a controller exists, HW-1 only if V6 is negative.
+2. **Before V4, read the WDK header `nthalext.h`**, if the user consents to the download (Time Machine backup confirmed, license accepted by the user). It must not be copied into the repository (ADR-0005).
+3. **Define now the threshold that triggers the plan B discussion**, before seeing the results. The discussion starts when **one** of these conditions occurs:
+   - T1: neither the header nor V4 shows any way to register an interrupt controller;
+   - T2: V2 and V4 produce bugchecks attributable to Windows requiring a declared GIC;
+   - T3: V6 clearly negative, HW-1 negative (or not executable) and no viable timer extension;
+   - T4: no closure within about 4 weeks of agent work (global stop of A5), to be reported as inconclusive.
+4. **The user decides plan B.** The Phase 0 verdict is presented as it is, with no automatic change of strategy (ADR-0001). In the meantime, a plan B design study is prepared with `morasca-agent`, without adopting it, also including the less invasive alternative of a single PSCI/HVC stub at EL2 for core bring-up.
+5. A positive outcome in QEMU is written as "preconditions not rejected in QEMU", never "the M1 will work": confirmation is Phase 3 on hardware.
 
-## Alternative
-- **A. Fermare subito la strada nativa e passare al piano B.** Pro: evita settimane di esperimenti. Contro: le prove non dimostrano che il nativo sia impossibile (A1: circa 20% di sì), e il piano B stesso ha costo alto e contraddice ADR-0001. Scartata per ora, da riconsiderare se T1 si verifica.
-- **B. Continuare con il piano originale (Gate B completo con modello AIC subito).** Pro: banco di prova più fedele. Contro: 8-9 giorni di lavoro prima di sapere se esiste un'interfaccia da provare; il GIC di QEMU resta presente. Scartata nella forma anticipata.
-- **C. Fare reverse engineering di `ntoskrnl` e HAL con Ghidra (come nel PLAN originale).** Pro: risponde direttamente alla domanda decisiva. Contro: contrario alla scelta di scatola nera della bozza ADR di Fase 0; rischio legale e di metodo (R-13); richiede un binario Microsoft. Non proposta qui; resta una decisione dell'utente se il passo 0 e V4 non bastano.
-- **D. Patch dell'HAL.** Non nativo come soluzione finale (ADR-0001, piano B b). Esclusa.
-- **E. Rimandare il giudizio all'hardware (Fase 3).** Pro: l'unica prova definitiva. Contro: richiede prima firmware EDK2 e debug host, e un fallimento alla Fase 3 costerebbe molto di più di un fallimento ora. Scartata come unica strategia.
+## Alternatives (rejected)
+- **A. Stop the native path immediately and move to plan B.** Pro: avoids weeks of experiments. Con: the evidence does not show that native is impossible (A1: about 20% yes), and plan B itself has a high cost and contradicts ADR-0001. Rejected for now, to be reconsidered if T1 occurs.
+- **B. Continue with the original plan (full Gate B with the AIC model right away).** Pro: more faithful test bench. Con: 8-9 days of work before knowing whether there is an interface to test; QEMU's GIC remains present. Rejected in the anticipated form.
+- **C. Reverse engineer `ntoskrnl` and the HAL with Ghidra (as in the original PLAN).** Pro: answers the decisive question directly. Con: contrary to the black-box choice of the Phase 0 ADR draft; legal and methodological risk (R-13); requires a Microsoft binary. Not proposed here; remains a user decision if step 0 and V4 are not enough.
+- **D. HAL patch.** Not native as a final solution (ADR-0001, plan B (b)). Excluded.
+- **E. Defer the judgment to the hardware (Phase 3).** Pro: the only definitive proof. Con: requires EDK2 firmware and host debugging first, and a failure at Phase 3 would cost much more than a failure now. Rejected as the sole strategy.
 
-## Conseguenze
-- La Fase 0 ha un criterio di chiusura esplicito (documentato in `re/f0-preliminary-verdict.md` sez. 4) e una soglia fissata in anticipo, che riduce il rischio di spostare l'asticella a posteriori.
-- Il Gate B resta lungo (3-5 settimane di calendario [ipotesi]) e con spazio disco insufficiente (75-115 GiB necessari, circa 53 GiB liberi, A5): serve una decisione dell'utente su disco esterno o altro host del debugger.
-- Ogni download (WDK, QEMU, ISO, toolchain) richiede il backup Time Machine confermato dall'utente.
-- Se T1, T2 o T3 si verificano, l'utente dovrà scegliere fra piano B (EL2 con emulazione di GICD e GICR, che non è "minimo" e va stimato [ipotesi]), uno stub PSCI/HVC limitato al solo avvio dei core, reverse engineering, oppure l'abbandono dell'obiettivo nativo. Il costo del piano B non è ancora noto.
-- ADR-0004 resta "Accettata con ipotesi non verificate": il timer solo-FIQ la rende la decisione più fragile.
-- Documentazione da aggiornare a fine sessione: `docs/STATUS.md`, diario di sessione, `RISKS.md` (R-01 e R-03: la probabilità passa da M ad A-M [ipotesi]).
+## Consequences
+- Phase 0 has an explicit closing criterion (documented in `re/f0-preliminary-verdict.md` sec. 4) and a threshold fixed in advance, which reduces the risk of moving the goalposts afterwards.
+- Gate B remains long (3-5 calendar weeks [hypothesis]) and with insufficient disk space (75-115 GiB needed, about 53 GiB free, A5): a user decision on an external disk or another debugger host is needed.
+- Every download (WDK, QEMU, ISO, toolchain) requires the Time Machine backup confirmed by the user.
+- If T1, T2 or T3 occur, the user will have to choose between plan B (EL2 with GICD and GICR emulation, which is not "minimal" and must be estimated [hypothesis]), a PSCI/HVC stub limited to core bring-up only, reverse engineering, or abandoning the native goal. The cost of plan B is not yet known.
+- ADR-0004 remains "Accepted with unverified hypotheses": the FIQ-only timer makes it the most fragile decision.
+- Documentation to update at the end of the session: `docs/STATUS.md`, session diary, `RISKS.md` (R-01 and R-03: probability goes from M to H-M [hypothesis]).

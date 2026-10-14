@@ -1,23 +1,23 @@
-# Gate B: loop autonomo (Ralph) dal 2026-10-14
+# Gate B: autonomous loop (Ralph) from 2026-10-14
 
-Marco è via: Opus lavora da solo con un Ralph loop. Branch unico: **`marco/f11-acpi`** (mai main, mai merge, mai force-push). **Una sola PR** alla fine, verso main, senza merge.
+Marco is away: Opus works alone with a Ralph loop. Single branch: **`marco/f11-acpi`** (never main, never merge, never force-push). **A single PR** at the end, towards main, without merging.
 
-## Regole (oltre a CLAUDE.md)
-- Esecuzione delegata a subagenti **Sonnet** (`model: "sonnet"`). Opus verifica di persona (screenshot con Read, test rieseguiti) prima di spuntare.
-- Download e installazioni: **nessuno nuovo** (solo QEMU, iasl, llvm, EDK2, ISO e disco Windows già presenti). Niente analisi di binari Microsoft.
-- Disco di Windows sempre con `snapshot=on` nei test. **Mai due QEMU sullo stesso disco.** Prima di lanciarne uno, `pgrep -fl qemu-system`: se c'è un QEMU di un agente ancora attivo, aspetta.
-- Dati solo in `/tmp/watari-data` (= disco esterno). Ogni cosa nuova va in `docs/INSTALLED.md`.
-- **Ogni fallimento** in `docs/FAILURES.md` (formato F-NN), ogni risultato in `ralph/PROGRESS-gateb.md`.
-- Commit e push dopo ogni task. Niente commenti o assegnazioni su GitHub.
-- **Budget:** i limiti di utilizzo sono vicini. Agenti con prompt mirati, al massimo 2 in parallelo; fermati se un task fallisce due volte.
+## Rules (in addition to CLAUDE.md)
+- Execution delegated to **Sonnet** subagents (`model: "sonnet"`). Opus verifies in person (screenshots with Read, tests re-run) before ticking.
+- Downloads and installations: **none new** (only the QEMU, iasl, llvm, EDK2, ISO and Windows disk already present). No analysis of Microsoft binaries.
+- The Windows disk always with `snapshot=on` in the tests. **Never two QEMUs on the same disk.** Before launching one, `pgrep -fl qemu-system`: if an agent's QEMU is still active, wait.
+- Data only in `/tmp/watari-data` (= external disk). Everything new goes in `docs/INSTALLED.md`.
+- **Every failure** in `docs/FAILURES.md` (F-NN format), every result in `ralph/PROGRESS-gateb.md`.
+- Commit and push after every task. No comments or assignments on GitHub.
+- **Budget:** the usage limits are close. Agents with focused prompts, at most 2 in parallel; stop if a task fails twice.
 
-## Task (in ordine; un task per iterazione, quelli indipendenti si possono fare in parallelo)
-- [x] **G1 · F-11 / V1.** *(riuscito: mancava la GIC MSI Frame, vedi F-11)* Windows arriva al desktop con le nostre MADT+GTDT (`acpigen -m qemu-virt` via `WatariAcpiOverride`). Un agente ci sta già lavorando (iniziato alle 09:05); **non rilanciarlo** se `re/f11-acpi-comparison.md` è in scrittura o c'è un QEMU attivo. Criterio: screenshot `logs/screens/v1-ok.png` con il desktop.
-- [x] **G2 · V2.** *(Windows richiede il GICD: F-14)* Come V1 ma con la MADT **senza GICD** (solo GICC + GICR). Esito atteso: in un caso o nell'altro, documentare. Se Windows non parte, catturare il bugcheck (screenshot e seriale) → voce F-NN. Criterio: esito documentato con prove.
-- [!] **G3 · V6.** *(inconcludente: i PPI tornano in Group 1 subito dopo, zero FIQ consegnate; vedi F-13; il metodo B richiede di compilare QEMU, decide Marco)* Il timer consegnato come FIQ. Metodo "A" da `EXPERIMENT-F0.md` §4.4: un driver DXE (in `WatariQemuPkg`) che dopo `ArmGicDxe` mette i PPI 27 e 30 in Group 0, con `kernel-irqchip=off` sotto HVF. Prima verifica (seriale e trace di QEMU) che il timer arrivi davvero come FIQ, poi avvia Windows. Criterio: esito (Windows parte e l'orologio avanza / blocco / bugcheck) documentato con prove. Se Windows riporta il timer in Group 1, documentalo e prepara la patch "B" a QEMU **senza compilarla** (compilare QEMU richiede download: chiedi a Marco).
-- [x] **G4 · V3 (preparazione).** *(build fatta: `--parking`, test V3 ancora da fare)* Parking protocol reale: codice di parcheggio in EDK2 (`WatariQemuPkg`) per i core secondari, MADT con parking v1, FADT senza PSCI. Criterio: build riuscita e, se possibile, un test su Windows con 4 CPU. Esito documentato.
-- [x] **G5 · Chiusura.**
-  - aggiornare `docs/STATUS.md`, `docs/sessions/2026-10-14-marco-01.md` e il contatore dei token;
-  - un **riepilogo per Marco** in `ralph/PROGRESS-gateb.md`;
-  - aprire **una** PR `marco/f11-acpi → main` (senza merge);
-  - poi emettere la promise.
+## Tasks (in order; one task per iteration, independent ones can be done in parallel)
+- [x] **G1 · F-11 / V1.** *(succeeded: the GIC MSI Frame was missing, see F-11)* Windows reaches the desktop with our MADT+GTDT (`acpigen -m qemu-virt` via `WatariAcpiOverride`). An agent is already working on it (started at 09:05); **do not relaunch it** if `re/f11-acpi-comparison.md` is being written or a QEMU is active. Criterion: screenshot `logs/screens/v1-ok.png` with the desktop.
+- [x] **G2 · V2.** *(Windows requires the GICD: F-14)* Like V1 but with the MADT **without GICD** (only GICC + GICR). Expected outcome: either way, document it. If Windows does not boot, capture the bugcheck (screenshot and serial) → F-NN entry. Criterion: outcome documented with evidence.
+- [!] **G3 · V6.** *(inconclusive: the PPIs go back to Group 1 right after, zero FIQs delivered; see F-13; method B requires building QEMU, Marco decides)* The timer delivered as FIQ. Method "A" from `EXPERIMENT-F0.md` §4.4: a DXE driver (in `WatariQemuPkg`) that after `ArmGicDxe` puts PPIs 27 and 30 in Group 0, with `kernel-irqchip=off` under HVF. First verify (serial and QEMU trace) that the timer really arrives as FIQ, then boot Windows. Criterion: outcome (Windows boots and the clock advances / hang / bugcheck) documented with evidence. If Windows puts the timer back in Group 1, document it and prepare the QEMU patch "B" **without building it** (building QEMU requires a download: ask Marco).
+- [x] **G4 · V3 (preparation).** *(build done: `--parking`, V3 test still to do)* Real parking protocol: parking code in EDK2 (`WatariQemuPkg`) for the secondary cores, MADT with parking v1, FADT without PSCI. Criterion: successful build and, if possible, a test on Windows with 4 CPUs. Outcome documented.
+- [x] **G5 · Closing.**
+  - update `docs/STATUS.md`, `docs/sessions/2026-10-14-marco-01.md` and the token counter;
+  - a **summary for Marco** in `ralph/PROGRESS-gateb.md`;
+  - open **one** PR `marco/f11-acpi → main` (without merging);
+  - then emit the promise.

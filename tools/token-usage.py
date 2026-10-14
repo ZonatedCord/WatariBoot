@@ -90,7 +90,7 @@ def render(ledgers):
             for model, c in s["models"].items():
                 tot_model[model].update(c)
                 tot_cost[autore] += cost(model, c) or 0
-    rows = ["| Modello | Input | Output | Cache scritta | Cache letta | Costo stimato |", "|---|---:|---:|---:|---:|---:|"]
+    rows = ["| Model | Input | Output | Cache written | Cache read | Estimated cost |", "|---|---:|---:|---:|---:|---:|"]
     grand = 0.0
     for model, c in sorted(tot_model.items()):
         k = cost(model, c)
@@ -98,14 +98,14 @@ def render(ledgers):
         rows.append(f"| `{model}` | {c['input']:,} | {c['output']:,} | {c['cache_write_5m'] + c['cache_write_1h']:,} | "
                     f"{c['cache_read']:,} | {'$%.2f' % k if k is not None else 'n/d'} |")
     tokens = sum(sum(c.values()) for c in tot_model.values())
-    per_aut = ", ".join(f"{a}: {nsess[a]} sessioni, ${tot_cost[a]:.2f}" for a in sorted(ledgers))
+    per_aut = ", ".join(f"{a}: {nsess[a]} sessions, ${tot_cost[a]:.2f}" for a in sorted(ledgers))
     today = datetime.date.today().isoformat()
     return "\n".join([
-        f"**Token totali: {tokens:,} · Costo stimato: ${grand:.2f}** (aggiornato {today}; {per_aut})", "",
+        f"**Total tokens: {tokens:,} · Estimated cost: ${grand:.2f}** (updated {today}; {per_aut})", "",
         *rows, "",
-        "<sub>Stima a prezzi API Anthropic, calcolata dai transcript locali di Claude Code con `tools/token-usage.py`. "
-        "Con un abbonamento (Pro/Max) la spesa reale è il canone: questo è il costo equivalente a consumo. "
-        "L'output dei subagenti può essere sottostimato nei log.</sub>"])
+        "<sub>Estimate at Anthropic API prices, computed from local Claude Code transcripts with `tools/token-usage.py`. "
+        "With a subscription (Pro/Max) the real cost is the subscription fee: this is the equivalent pay-as-you-go cost. "
+        "Subagent output may be under-reported in the logs.</sub>"])
 
 
 def main():

@@ -1,30 +1,30 @@
-# INTERFACES: contratti fra componenti
+# INTERFACES: contracts between components
 
-- Progetto: Watari Boot · Data: 2026-10-12 · Versione: 0.1 · Stato: draft
-- Documenti collegati: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
+- Project: Watari Boot · Date: 2026-10-12 · Version: 0.1 · Status: draft
+- Related documents: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
 
-## Legenda
-- `[verificato: fonte]`: riscontrato su fonte citata.
-- `[ipotesi]`: non verificato. Le sezioni marcate **IPOTESI (dipende da Fase 0)** non vanno implementate in modo definitivo finche' lo spike di Fase 0 non e' concluso. Il codice scritto prima va isolato dietro un'interfaccia sostituibile.
-- `[proposta]`: scelta di design nostra (non un fatto esterno); modificabile con ADR.
+## Legend
+- `[verified: source]`: confirmed against the cited source.
+- `[hypothesis]`: not verified. Sections marked **HYPOTHESIS (depends on Phase 0)** must not be implemented definitively until the Phase 0 spike is concluded. Code written before that must be isolated behind a replaceable interface.
+- `[proposal]`: our own design choice (not an external fact); modifiable via ADR.
 
 ---
-## 1. Handoff m1n1 -> EDK2  [proposta; formato non esistente upstream, da definire]
-Stato: nessuna fonte verificata su un meccanismo di handoff m1n1 -> EDK2 esistente. Il contratto sotto e' una proposta. [ipotesi] m1n1 puo' caricare un payload e passare un puntatore all'ADT (comportamento tipico di m1n1 con payload Linux/boot args Apple; da verificare in `src/` di m1n1).
+## 1. Handoff m1n1 -> EDK2  [proposal; format does not exist upstream, to be defined]
+Status: no verified source on an existing m1n1 -> EDK2 handoff mechanism. The contract below is a proposal. [hypothesis] m1n1 can load a payload and pass a pointer to the ADT (typical m1n1 behavior with Linux payloads/Apple boot args; to be verified in m1n1 `src/`).
 
-| Elemento | Contratto proposto |
+| Element | Proposed contract |
 |---|---|
-| Entry | EDK2 ricevuto in RAM a indirizzo fisico fisso, esecuzione a EL2 o EL1 (da decidere: [ipotesi] il M1 parte a EL2; verificare), MMU off o identity-mapped, interrupt mascherati (IRQ e FIQ) |
-| Registro x0 | puntatore fisico a `PI_HANDOFF` (struttura sotto) |
-| ADT | blob ADT in memoria, immutato rispetto a quello di iBoot, non rilocato dopo l'handoff |
-| Framebuffer | base fisica, larghezza, altezza, stride, formato pixel, dimensione |
-| Mappa memoria | elenco di regioni (base, size, tipo: usabile/riservata firmware/MMIO) calcolato da m1n1 |
-| UART/debug | base MMIO UART di debug + velocita' |
-| Cosa m1n1 deve avere fatto | PMGR dei blocchi richiesti, clock, framebuffer, PHY/DWC3 USB in host (da piano; [ipotesi] la fattibilita' di ciascun punto dipende dal supporto m1n1 per t8103) |
-| Cosa EDK2 non deve piu' chiedere a m1n1 | nessuna chiamata di ritorno dopo l'handoff |
+| Entry | EDK2 received in RAM at a fixed physical address, execution at EL2 or EL1 (to be decided: [hypothesis] the M1 starts at EL2; verify), MMU off or identity-mapped, interrupts masked (IRQ and FIQ) |
+| Register x0 | physical pointer to `PI_HANDOFF` (structure below) |
+| ADT | ADT blob in memory, unchanged from the one from iBoot, not relocated after the handoff |
+| Framebuffer | physical base, width, height, stride, pixel format, size |
+| Memory map | list of regions (base, size, type: usable/firmware-reserved/MMIO) computed by m1n1 |
+| UART/debug | debug UART MMIO base + speed |
+| What m1n1 must have done | PMGR of the required blocks, clocks, framebuffer, USB PHY/DWC3 in host mode (from the plan; [hypothesis] the feasibility of each point depends on m1n1 support for t8103) |
+| What EDK2 must no longer ask of m1n1 | no call back after the handoff |
 
 ```c
-/* proposta, versione 1 */
+/* proposal, version 1 */
 typedef struct {
   UINT32 Magic;        /* 'PIHF' */
   UINT32 Version;      /* 1 */
@@ -35,91 +35,91 @@ typedef struct {
   UINT64 Reserved[8];
 } PI_HANDOFF;
 ```
-Errori: Magic/Version errati -> EDK2 si ferma con messaggio su framebuffer/UART. Compatibilita': campi aggiunti solo in `Reserved`; cambio di significato = incremento di Version.
+Errors: wrong Magic/Version -> EDK2 halts with a message on framebuffer/UART. Compatibility: fields are added only in `Reserved`; a change of meaning = increment of Version.
 
-## 2. Modello dati ADT -> tabelle  [proposta]
-`M-ADT-PARSE` espone un modello neutro: lista CPU (id, cluster, classe P/E, MPIDR [ipotesi: fornito dall'ADT]), blocchi MMIO, interrupt (numero AIC), clock/PMGR. M-ACPI-GEN consuma solo questo modello. Contratto: nessun dato letto due volte dall'ADT in moduli diversi.
+## 2. ADT data model -> tables  [proposal]
+`M-ADT-PARSE` exposes a neutral model: CPU list (id, cluster, P/E class, MPIDR [hypothesis: provided by the ADT]), MMIO blocks, interrupts (AIC number), clocks/PMGR. M-ACPI-GEN consumes only this model. Contract: no data is read twice from the ADT in different modules.
 
-## 3. Tabelle ACPI
+## 3. ACPI tables
 
-Regola generale: i layout binari delle tabelle ACPI standard sono definiti dalla specifica ACPI; qui si dichiara solo come li popoliamo. [ipotesi] I campi esatti devono essere riscontrati con la specifica ACPI corrente prima dell'implementazione (Fase 1).
+General rule: the binary layouts of the standard ACPI tables are defined by the ACPI specification; here we only declare how we populate them. [hypothesis] The exact fields must be checked against the current ACPI specification before implementation (Phase 1).
 
-### 3.1 MADT  **IPOTESI (dipende da Fase 0)**
-- [ipotesi] Una MADT "senza GIC" (nessuna struttura GICD) e' accettata da Windows se un'estensione HAL fornisce il controller. Questo e' il punto centrale e **non e' verificato**.
-- [ipotesi] Windows potrebbe richiedere strutture GICC per enumerare i processori (la struttura GICC contiene ACPI Processor UID, flag, parking protocol version e parked address). [verificato: Linux `acpi_parking_protocol.c`] il kernel Linux ricava indirizzo di parcheggio e `parking_version` dalla struttura GICC della MADT. Quindi per il parking protocol si usa GICC *senza* esporre un GIC funzionante: coesistenza da validare in Fase 0/1 (RISKS R-02).
-- Alternativa se Windows pretende GICD: descrivere un GIC fittizio (dispositivo non accessibile) e intercettarlo con l'estensione HAL - **ipotesi di piano B interno**, non nel piano originale.
-- Una GICC per core (8), con ACPI Processor UID sequenziale, `Parking Protocol Version` != 0 e `Parked Address` = mailbox del core [verificato: Linux, controlla `mailbox_addr && version`].
+### 3.1 MADT  **HYPOTHESIS (depends on Phase 0)**
+- [hypothesis] A "GIC-less" MADT (no GICD structure) is accepted by Windows if an HAL extension provides the controller. This is the central point and it is **not verified**.
+- [hypothesis] Windows might require GICC structures to enumerate processors (the GICC structure contains ACPI Processor UID, flags, parking protocol version and parked address). [verified: Linux `acpi_parking_protocol.c`] the Linux kernel obtains the parking address and `parking_version` from the MADT GICC structure. So for the parking protocol a GICC is used *without* exposing a working GIC: coexistence to be validated in Phase 0/1 (RISKS R-02).
+- Alternative if Windows insists on GICD: describe a dummy GIC (inaccessible device) and intercept it with the HAL extension - **internal plan B hypothesis**, not in the original plan.
+- One GICC per core (8), with sequential ACPI Processor UID, `Parking Protocol Version` != 0 and `Parked Address` = the core's mailbox [verified: Linux, checks `mailbox_addr && version`].
 
-### 3.2 GTDT  **IPOTESI (dipende da Fase 0)**
-- [ipotesi] Windows ARM64 si aspetta il timer architetturale descritto in GTDT con interrupt (tipicamente GSIV di PPI GIC). Sul M1 il timer arriva come FIQ [verificato: irq-apple-aic.c, FIQ per timer ARM]. Strategia di piano: sorgente timer in IRQ fornita da estensione HAL timer [ipotesi: meccanismo da confermare in Fase 0; [ipotesi] sulla possibilita' hardware di instradare il timer in IRQ - da verificare con documentazione Asahi/m1n1].
-- Campi da definire dopo Fase 0: GSIV per timer secure/non-secure/virtuale/hyp, flag di polarita'/trigger, eventuale uso di Platform Timer / Memory-mapped timer.
+### 3.2 GTDT  **HYPOTHESIS (depends on Phase 0)**
+- [hypothesis] Windows ARM64 expects the architectural timer described in the GTDT with an interrupt (typically a GIC PPI GSIV). On the M1 the timer arrives as FIQ [verified: irq-apple-aic.c, FIQ for ARM timer]. Plan strategy: timer source on IRQ provided by an HAL timer extension [hypothesis: mechanism to be confirmed in Phase 0; [hypothesis] on the hardware possibility of routing the timer to IRQ - to be verified with Asahi/m1n1 documentation].
+- Fields to be defined after Phase 0: GSIV for secure/non-secure/virtual/hyp timers, polarity/trigger flags, possible use of Platform Timer / Memory-mapped timer.
 
-### 3.3 CSRT  **IPOTESI (dipende da Fase 0)**
-- [verificato: Linux `drivers/acpi/csrt.c`; Microsoft HLK] CSRT e' una tabella ACPI con risorse per dispositivi non nel DSDT (esempio DMA); Windows associa una HAL extension a un PNP ID ACPI.
-- [ipotesi] Layout: gruppi di risorse con Vendor ID, Device ID, Subsystem ID, Revision, Resource Descriptors (tipo, sottotipo, UID); la HAL extension di AIC e quella timer richiedono un gruppo ciascuna con ID dedicati. Valori degli ID: **da decidere** (non si usano ID Microsoft riservati; da definire con il nostro vendor ID).
-- [ipotesi] Il nome del file DLL e l'associazione CSRT -> DLL (INF/registro/`HalExtension`) sono dettagli di Fase 0.
+### 3.3 CSRT  **HYPOTHESIS (depends on Phase 0)**
+- [verified: Linux `drivers/acpi/csrt.c`; Microsoft HLK] CSRT is an ACPI table with resources for devices not in the DSDT (e.g. DMA); Windows associates an HAL extension with an ACPI PNP ID.
+- [hypothesis] Layout: resource groups with Vendor ID, Device ID, Subsystem ID, Revision, Resource Descriptors (type, subtype, UID); the AIC HAL extension and the timer one require one group each with dedicated IDs. ID values: **to be decided** (reserved Microsoft IDs are not used; to be defined with our own vendor ID).
+- [hypothesis] The DLL file name and the CSRT -> DLL association (INF/registry/`HalExtension`) are Phase 0 details.
 
 ### 3.4 PPTT
-- [ipotesi, dal piano] Core P/E descritti con gerarchia processore/cluster/cache e classi di efficienza (campo Efficiency Class in ACPI PPTT per processor hierarchy node, da specifica ACPI >= 6.x). Contratto: 1 nodo cluster P (4 core), 1 nodo cluster E (4 core), cache L1/L2 per cluster; valori letti da ADT. [ipotesi] Le dimensioni di cache dall'ADT sono disponibili; da verificare.
-- Verifica: confronto con ciò che Windows riporta (Task Manager/`Get-CimInstance`) in Fase 4.
+- [hypothesis, from the plan] P/E cores described with processor/cluster/cache hierarchy and efficiency classes (Efficiency Class field in the ACPI PPTT processor hierarchy node, from ACPI spec >= 6.x). Contract: 1 P cluster node (4 cores), 1 E cluster node (4 cores), L1/L2 cache per cluster; values read from the ADT. [hypothesis] Cache sizes from the ADT are available; to be verified.
+- Verification: compare with what Windows reports (Task Manager/`Get-CimInstance`) in Phase 4.
 
 ### 3.5 DSDT/SSDT
-Dispositivi minimi (ID da assegnare, non inventati qui):
-| Nodo | Scopo | Fase |
+Minimal devices (IDs to be assigned, not invented here):
+| Node | Purpose | Phase |
 |---|---|---|
-| Device AIC (HID nostro) | Aggancio dell'estensione HAL | 3 |
-| Device timer IRQ | Aggancio estensione timer | 3 |
-| xHCI (compatibile con `PNP0D10`? [ipotesi]) | Controller USB per UsbXhci | 4 |
-| ANS | Aggancio del miniport StorPort | 4 |
-| Processori con `_CPC` | DVFS | 5 |
-| SPI/HID, batteria, PEP | periferiche | 5 |
-Contratto: ogni device ha `_HID`/`_UID`, `_CRS` con MMIO e interrupt AIC, `_STA`. Gli interrupt nel `_CRS` usano GSIV logici assegnati dall'estensione HAL [ipotesi: modello GSIV da verificare in Fase 0].
+| AIC device (our HID) | Hook for the HAL extension | 3 |
+| IRQ timer device | Hook for the timer extension | 3 |
+| xHCI (compatible with `PNP0D10`? [hypothesis]) | USB controller for UsbXhci | 4 |
+| ANS | Hook for the StorPort miniport | 4 |
+| Processors with `_CPC` | DVFS | 5 |
+| SPI/HID, battery, PEP | peripherals | 5 |
+Contract: every device has `_HID`/`_UID`, `_CRS` with MMIO and AIC interrupt, `_STA`. Interrupts in `_CRS` use logical GSIVs assigned by the HAL extension [hypothesis: GSIV model to be verified in Phase 0].
 
-### 3.6 Altre tabelle
-FADT (flag HW-reduced [ipotesi: necessario, non c'e' hardware ACPI legacy]), DBG2 per il debug seriale [ipotesi: usato da KDCOM], SPCR, XSDT/RSDP. Tutte da verificare contro le specifiche in Fase 1.
+### 3.6 Other tables
+FADT (HW-reduced flag [hypothesis: needed, there is no legacy ACPI hardware]), DBG2 for serial debug [hypothesis: used by KDCOM], SPCR, XSDT/RSDP. All to be verified against the specifications in Phase 1.
 
-## 4. Mailbox del parking protocol
-- [verificato: https://codebrowser.dev/linux/linux/arch/arm64/kernel/acpi_parking_protocol.c.html] Struttura per core:
+## 4. Parking protocol mailbox
+- [verified: https://codebrowser.dev/linux/linux/arch/arm64/kernel/acpi_parking_protocol.c.html] Per-core structure:
 ```c
 struct parking_protocol_mailbox {  /* little-endian */
-  UINT32 cpu_id;      /* firmware: 0xFFFFFFFF finche' parcheggiata */
+  UINT32 cpu_id;      /* firmware: 0xFFFFFFFF while parked */
   UINT32 reserved;
-  UINT64 entry_point; /* indirizzo fisico di ingresso dell'OS */
+  UINT64 entry_point; /* physical entry address of the OS */
 };
 ```
-- [verificato: stessa fonte] Sequenza OS: scrive entry_point, poi cpu_id con l'ID dell'interfaccia GIC della CPU, poi invia IPI di risveglio. Nota Linux: mapping device nGnRE al posto di nGnRnE dichiarato "innocuo".
-- [verificato: stessa fonte, dettaglio ottenuto da un riassunto, da riguardare nella specifica] Ogni CPU ha una pagina da 4K con codice di spin e mailbox (riferimento a patch U-Boot).
-- [ipotesi] Specifica ufficiale ("Multi-processor Startup for ARM Platforms") non letta: ordine di barriere, attributi di memoria e comportamento esatto del "wake" vanno controllati prima dell'implementazione.
-- **Punto di design aperto [ipotesi]**: il protocollo usa un IPI di risveglio (nel mondo GIC un SGI). Qui non c'e' GIC; il core parcheggiato dovrebbe attendere su `WFE`/polling della mailbox oppure su IPI AIC (due IPI per CPU [verificato: irq-apple-aic.c]). Il codice di parcheggio EDK2 fa polling di `cpu_id` con `WFE` e l'invio di un evento/IPI AIC come sveglia opzionale. Se Windows invia il wakeup tramite l'interfaccia del controller registrato dall'estensione HAL, l'estensione deve implementare `sendIPI`. **Da verificare in Fase 0** (come Windows invia l'IPI di avvio).
-- `cpu_id` atteso = identificativo nella GICC (campo CPU Interface Number); in assenza di GIC useremo un indice 0..7 [proposta].
-- Errori: se entry_point resta non valido, il core resta parcheggiato; EDK2 non riceve notifica; il test di Fase 2 deve verificare che tutti e 8 siano nello stato "parcheggiato" prima dell'handoff a bootmgr.
+- [verified: same source] OS sequence: writes entry_point, then cpu_id with the CPU's GIC interface ID, then sends a wake-up IPI. Linux note: device nGnRE mapping instead of nGnRnE declared "harmless".
+- [verified: same source, detail obtained from a summary, to be re-checked in the specification] Each CPU has a 4K page with spin code and mailbox (reference to U-Boot patches).
+- [hypothesis] The official specification ("Multi-processor Startup for ARM Platforms") was not read: barrier ordering, memory attributes and the exact behavior of the "wake" must be checked before implementation.
+- **Open design point [hypothesis]**: the protocol uses a wake-up IPI (in the GIC world an SGI). Here there is no GIC; the parked core should wait on `WFE`/mailbox polling or on an AIC IPI (two IPIs per CPU [verified: irq-apple-aic.c]). The EDK2 parking code polls `cpu_id` with `WFE` and sending an AIC event/IPI is an optional wake-up. If Windows sends the wakeup through the interface of the controller registered by the HAL extension, the extension must implement `sendIPI`. **To be verified in Phase 0** (how Windows sends the boot IPI).
+- Expected `cpu_id` = identifier in the GICC (CPU Interface Number field); in the absence of a GIC we will use an index 0..7 [proposal].
+- Errors: if entry_point remains invalid, the core stays parked; EDK2 receives no notification; the Phase 2 test must verify that all 8 are in the "parked" state before the handoff to bootmgr.
 
-## 5. Interfaccia estensione HAL  **IPOTESI (dipende da Fase 0)**
-Nulla qui e' verificato. Le funzioni e le strutture seguenti sono segnaposto concettuali che Fase 0 deve confermare, rinominare o scartare.
+## 5. HAL extension interface  **HYPOTHESIS (depends on Phase 0)**
+Nothing here is verified. The following functions and structures are conceptual placeholders that Phase 0 must confirm, rename or discard.
 
-Fatti verificati: [verificato: Microsoft HLK, link in ARCHITECTURE sez. 1] esistono HAL Extension DLL agganciate a un PNP ID ACPI e caricate/valutate in base a CSRT.
+Verified facts: [verified: Microsoft HLK, link in ARCHITECTURE sec. 1] HAL Extension DLLs exist, hooked to an ACPI PNP ID and loaded/evaluated based on CSRT.
 
-Ipotesi di lavoro (da piano):
-| Elemento | Ipotesi | Stato |
+Working hypotheses (from the plan):
+| Element | Hypothesis | Status |
 |---|---|---|
-| Punto di ingresso | Funzione esportata di inizializzazione della estensione (`HalExtension`-like) | non verificato |
-| Registrazione controller | Chiamata equivalente a `HalpInterruptRegisterController` con tabella funzioni (`_INTERRUPT_FUNCTION_TABLE`) e un `KnownType` per controller non-GIC | non verificato: esistenza e accessibilita' da estensioni di terzi sconosciute |
-| Funzioni del controller | enable/disable linea, EOI, accept interrupt, set affinity, send IPI, query/mapping GSIV | non verificato |
-| Timer | registrazione sorgente timer da HAL ext (meccanismo "documentato" secondo il piano) | non verificato |
-| Import | l'estensione puo' importare solo da `hal.dll`/`ntoskrnl.exe` secondo il test HLK "no imports" [ipotesi, pagina HLK incompleta] | non verificato |
-| Firma | test-signing in sviluppo; firma Microsoft per distribuzione | piano |
+| Entry point | Exported initialization function of the extension (`HalExtension`-like) | not verified |
+| Controller registration | Call equivalent to `HalpInterruptRegisterController` with a function table (`_INTERRUPT_FUNCTION_TABLE`) and a `KnownType` for non-GIC controllers | not verified: existence and accessibility from third-party extensions unknown |
+| Controller functions | enable/disable line, EOI, accept interrupt, set affinity, send IPI, query/mapping GSIV | not verified |
+| Timer | timer source registration from the HAL ext ("documented" mechanism according to the plan) | not verified |
+| Imports | the extension may import only from `hal.dll`/`ntoskrnl.exe` according to the HLK "no imports" test [hypothesis, HLK page incomplete] | not verified |
+| Signing | test-signing in development; Microsoft signing for distribution | plan |
 
-Obbligo di processo: ogni funzione in questa tabella passa a `[verificato]` solo con riferimento a un report in `re/` (indirizzo, funzione, pseudocodice). Fino ad allora il codice di `halext-aic` implementa un'interfaccia interna `IIrqController` (registrazione, mask, unmask, eoi, setAffinity, sendIpi, mapGsiv) che isola il back-end e permette di cambiare l'ABI esterna senza toccare la logica AIC [proposta].
+Process obligation: every function in this table becomes `[verified]` only with a reference to a report in `re/` (address, function, pseudocode). Until then the `halext-aic` code implements an internal interface `IIrqController` (registration, mask, unmask, eoi, setAffinity, sendIpi, mapGsiv) that isolates the back-end and allows the external ABI to change without touching the AIC logic [proposal].
 
-### 5.1 Interfaccia interna dell'AIC [proposta, parte hardware verificata]
-[verificato: irq-apple-aic.c] 896 IRQ level-triggered, mask/affinity per IRQ, 2 IPI per CPU, registri evento/IPI-send/IPI-ack/IPI-mask (offset esatti nel sorgente Linux; non riprodotti qui). Il porting parte dal sorgente Linux con header di provenienza (licenza da controllare).
-Precondizione: FIQ mascherate (PSTATE.F=1) in tutto il percorso Windows [ipotesi: Windows non le smaschera]. Postcondizione: nessun uso di Fast IPI, nessuna dipendenza da FIQ per il timer (ADR-0004).
+### 5.1 Internal AIC interface [proposal, hardware part verified]
+[verified: irq-apple-aic.c] 896 level-triggered IRQs, per-IRQ mask/affinity, 2 IPIs per CPU, event/IPI-send/IPI-ack/IPI-mask registers (exact offsets in the Linux source; not reproduced here). The port starts from the Linux source with a provenance header (license to be checked).
+Precondition: FIQs masked (PSTATE.F=1) throughout the Windows path [hypothesis: Windows does not unmask them]. Postcondition: no use of Fast IPI, no dependence on FIQ for the timer (ADR-0004).
 
-## 6. Driver
-- ANS StorPort: ingressi StorPort standard (HwFindAdapter, HwInitialize, HwStartIo, HwInterrupt) [verificato: struttura standard dei miniport StorPort nel WDK, da riconfermare]. Parte NVMe riusabile, init ANS/SART da portare [ipotesi, dal piano].
-- DART/SART: libreria interna usata da ANS/SPI-HID. Pagine DART da 16K vs 4K di Windows [ipotesi, dal piano]; contratto: `DartMap(dev, va, pa, len)` con len multiplo di 16K, o bypass.
-- PEP: callback del Platform Extension Plugin [ipotesi: interfaccia dal WDK]. Registri PMGR per DVFS [ipotesi].
-- SPI HID: minidriver KMDF HID; protocollo MTP/SPI da driver Asahi [ipotesi].
+## 6. Drivers
+- ANS StorPort: standard StorPort entry points (HwFindAdapter, HwInitialize, HwStartIo, HwInterrupt) [verified: standard structure of StorPort miniports in the WDK, to be reconfirmed]. NVMe part reusable, ANS/SART init to be ported [hypothesis, from the plan].
+- DART/SART: internal library used by ANS/SPI-HID. DART 16K pages vs Windows 4K [hypothesis, from the plan]; contract: `DartMap(dev, va, pa, len)` with len a multiple of 16K, or bypass.
+- PEP: Platform Extension Plugin callbacks [hypothesis: interface from the WDK]. PMGR registers for DVFS [hypothesis].
+- SPI HID: KMDF HID minidriver; MTP/SPI protocol from the Asahi driver [hypothesis].
 
-## 7. Convenzioni
-Nomi: prefisso `Pi` per tipi di piattaforma, `Aic` per AIC; errori come codici `EFI_STATUS` (firmware) e `NTSTATUS` (Windows); ogni modulo documenta precondizioni/postcondizioni nei commenti.
+## 7. Conventions
+Names: prefix `Pi` for platform types, `Aic` for AIC; errors as `EFI_STATUS` codes (firmware) and `NTSTATUS` (Windows); every module documents preconditions/postconditions in comments.
