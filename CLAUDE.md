@@ -1,6 +1,6 @@
 # Watari Boot: istruzioni per Claude
 
-Obiettivo: dual boot **nativo** di Windows ARM64 su Apple Silicon. Si parte da un MacBook Pro 13" M1 (t8103, j293) e poi si generalizza a tutti gli Apple Silicon. Il piano completo è in `docs/PLAN.md`.
+Obiettivo: **dual boot** di Windows ARM64 su Apple Silicon, **senza macOS sotto**, sopra uno strato EL2 minimo (piano B, adottato il 2026-10-14: `docs/adr/bozza-piano-b-strato-el2.md`). Si parte da un MacBook Pro 13" M1 (t8103, j293) e poi si generalizza a tutti gli Apple Silicon. Il piano completo è in `docs/PLAN.md`.
 
 ## ⚠️ BACKUP OBBLIGATORIO (regola assoluta dell'utente)
 **Prima di scaricare o installare QUALSIASI cosa sul Mac** (toolchain, test, ISO, pacchetti brew, repo grandi, qualunque cosa), fermarsi e **ricordare all'utente di fare il backup completo** (Time Machine). Si procede solo dopo che l'utente ha **confermato esplicitamente** che il backup è fatto. Nessuna eccezione, anche per download piccoli.
@@ -28,7 +28,7 @@ Obiettivo: dual boot **nativo** di Windows ARM64 su Apple Silicon. Si parte da u
 - Ralph loop: solo sul proprio branch `ralph/...`, una sola istanza per volta, istruzioni in `ralph/README.md`.
 
 ## Vincoli
-- **Nativo**: niente hypervisor, emulatore o VM come soluzione finale, salvo decisione esplicita dell'utente (vedi il piano B in `docs/PLAN.md`). QEMU si usa solo come banco di prova.
+- **Dual boot, strato minimo**: niente macOS sotto, niente VM "classiche" (Parallels/UTM). È consentito **solo** lo strato EL2 minimo (vGIC, PSCI, timer, IPI) deciso da Marco il 2026-10-14; tutto il resto deve restare nativo (core a piena velocità, periferiche reali). QEMU si usa solo come banco di prova.
 - **Nessun binario o codice Microsoft nel repository**: ntoskrnl, PDB, ISO e dump vanno in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (disco esterno; va collegato), fuori dal repository. Gli appunti di reverse engineering vanno in `re/`, scritti con parole nostre e citando gli indirizzi, senza incollare grandi blocchi di codice decompilato.
 - Il codice Asahi (MIT / GPL-2.0 / dual) si riusa rispettando la licenza, con un header di provenienza.
 - Ogni affermazione tecnica va marcata come **verificato** (con evidenza) o **ipotesi**.

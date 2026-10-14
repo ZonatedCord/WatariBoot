@@ -1,6 +1,7 @@
 # Stato del progetto
 
 **Aggiornato:** 2026-10-14 (sessione marco-01, notte chiusa)
+**Strategia (2026-10-14):** **piano B adottato**, Windows in dual boot sopra uno strato EL2 minimo (`docs/adr/bozza-piano-b-strato-el2.md`, `re/pianoB-fattibilita.md`). La strada nativa pura è chiusa: GIC obbligatorio (V2), parking in deadlock (V3, F-15).
 **Fase corrente:** 0, lo spike sul HAL di Windows ARM64 e i controller di interrupt non-GIC
 
 ## Traguardi

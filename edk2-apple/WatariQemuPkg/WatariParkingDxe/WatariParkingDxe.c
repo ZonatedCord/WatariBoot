@@ -23,6 +23,9 @@
 #include <Guid/EventGroup.h>
 #include <Protocol/WatariParking.h>
 
+#ifndef WATARI_PMODE
+#define WATARI_PMODE 0
+#endif
 #define PSCI_CPU_ON_64     0xC4000003ULL
 #define PARKING_NCPUS      4            // deve coincidere con -smp (e con qemu_virt_model in acpigen)
 #define GICR_FRAME_STRIDE  0x20000      // GICv3: RD_base + SGI_base = 2 x 64 KB per redistributor
@@ -57,9 +60,18 @@ OnReadyToBoot (
     // 1. redistributor del core: ProcessorSleep = 0 (puo' farlo il BSP via MMIO).
     Waker = (UINTN)PcdGet64 (PcdGicRedistributorsBase) + Cpu * GICR_FRAME_STRIDE + GICR_WAKER;
     V     = MmioRead32 (Waker);
+#if !(WATARI_PMODE & 16)
     MmioWrite32 (Waker, V & ~0x2U);
     for (Tries = 0; Tries < 100000 && (MmioRead32 (Waker) & 0x4U) != 0; Tries++) {
     }
+#else
+    Tries = 0;  // PMODE bit 4: redistributor lasciato a Windows
+    (VOID)V;
+    (VOID)Tries;
+#endif
+#if WATARI_PMODE & 4
+    continue;   // PMODE bit 2: nessun CPU_ON (controllo: i core restano spenti per PSCI di Windows)
+#endif
 
     // 2. PSCI CPU_ON(target = MPIDR Aff0 = indice, entry = stub, context = mailbox).
     ZeroMem (&Args, sizeof (Args));
@@ -111,6 +123,7 @@ WatariParkingEntry (
     *(UINT32 *)(P + WATARI_PARK_OFF_PROCESSOR_ID) = 0xFFFFFFFFU;
     *(UINT64 *)(P + WATARI_PARK_OFF_JUMP_ADDRESS) = 0;
     *(UINT32 *)(P + WATARI_PARK_OFF_EXPECT_ID)    = (UINT32)Cpu;
+    *(UINT32 *)(P + WATARI_PARK_OFF_PMODE)        = (UINT32)WATARI_PMODE;
     if (Cpu != 0) {
       CopyMem (P + WATARI_PARK_OFF_CODE, ParkStubStart, StubSize);
     }

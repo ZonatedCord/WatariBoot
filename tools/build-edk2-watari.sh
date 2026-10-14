@@ -70,7 +70,7 @@ make -C BaseTools -j"$(sysctl -n hw.ncpu)" >/dev/null
 
 FIQ_DEFS=()
 [ "$FIQ" = 1 ] && FIQ_DEFS=(-D WATARI_TIMER_FIQ=TRUE)
-[ "$PARK" = 1 ] && FIQ_DEFS=(-D WATARI_PARKING=TRUE)
+[ "$PARK" = 1 ] && FIQ_DEFS=(-D WATARI_PARKING=TRUE -D WATARI_PMODE="${WATARI_PMODE:-0}")
 [ "$NOGICD" = 1 ] && FIQ_DEFS=(-D WATARI_NOGICD=TRUE)
 # F-12: EDK2 non rileva le modifiche agli header di acpigen (percorso fuori da PACKAGES_PATH):
 # senza questo il driver puo' restare compilato con un layout vecchio di acpigen_model. Si rifa' il modulo.

@@ -20,6 +20,10 @@
 #include <Guid/EventGroup.h>
 #include <Protocol/WatariParking.h>
 
+#ifndef WATARI_PMODE
+#define WATARI_PMODE 0
+#endif
+
 #include "acpigen.h"
 
 #define WATARI_BUF_SIZE 1024
@@ -143,8 +147,13 @@ OnReadyToBoot (
   if (!EFI_ERROR (Status) && (Park->CpuCount == Model->ncpus) && (Model->ncpus <= WATARI_PARKING_MAX_CPUS)) {
     for (I = 0; I < Model->ncpus; I++) {
       Cpus[I]                 = Model->cpus[I];
+#if WATARI_PMODE & 2
+      Cpus[I].parking_version = 0;   // PMODE bit 1: MADT senza parking (controllo F-15)
+      Cpus[I].parked_address  = 0;
+#else
       Cpus[I].parking_version = Park->Version;
       Cpus[I].parked_address  = Park->MailboxAddress[I];
+#endif
       DEBUG ((DEBUG_INFO, "WatariAcpiOverride: cpu%lu parking v%u mailbox 0x%lx\n",
               (UINT64)I, Park->Version, Cpus[I].parked_address));
     }
@@ -176,7 +185,17 @@ OnReadyToBoot (
     // FADT acpigen: HW_REDUCED_ACPI, ArmBootArchFlags = 0 (PSCI_COMPLIANT = 0). I puntatori a DSDT e
     // FACS li rimette AcpiTableDxe all'installazione.
     ZeroMem (Buf, WATARI_BUF_SIZE);
+#if WATARI_PMODE & 1
+    // PMODE bit 0: PSCI_COMPLIANT | PSCI_USE_HVC (come la FADT di QEMU senza EL3)
+    {
+      acpigen_fadt_cfg  FadtCfg;
+      ZeroMem (&FadtCfg, sizeof (FadtCfg));
+      FadtCfg.arm_boot_arch = ACPI_FADT_ARM_PSCI_COMPLIANT | ACPI_FADT_ARM_PSCI_USE_HVC;
+      Len = acpigen_build_fadt (Buf, WATARI_BUF_SIZE, NULL, &FadtCfg);
+    }
+#else
     Len = acpigen_build_fadt (Buf, WATARI_BUF_SIZE, NULL, NULL);
+#endif
     if (Len > 0) {
       DEBUG ((DEBUG_INFO, "WatariAcpiOverride: FADT generata da acpigen: %ld byte (PSCI_COMPLIANT=0)\n", Len));
       ReplaceTable (AcpiTable, Sdt, "FADT", SIGNATURE_32 ('F', 'A', 'C', 'P'), Buf, (UINTN)Len);

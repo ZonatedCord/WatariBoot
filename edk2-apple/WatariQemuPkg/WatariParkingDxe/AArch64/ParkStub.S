@@ -15,6 +15,23 @@
 
 ParkStubStart:
     mov     x19, x0
+    ldr     w21, [x19, #0xFEC]          // PMODE: bit3 = non toccare la CPU interface GIC, bit5 = azzera i GPR al salto
+    // diagnostica (tentativo A): stato del core all'ingresso, in +0xF00 (area firmware della mailbox)
+    mrs     x1, CurrentEL
+    str     x1, [x19, #0xF00]
+    mrs     x1, SCTLR_EL1
+    str     x1, [x19, #0xF08]
+    mrs     x1, DAIF
+    str     x1, [x19, #0xF10]
+    mrs     x1, MPIDR_EL1
+    str     x1, [x19, #0xF18]
+    mrs     x1, S3_0_C12_C12_5          // ICC_SRE_EL1 (prima della scrittura)
+    str     x1, [x19, #0xF20]
+    mrs     x1, S3_0_C4_C6_0            // ICC_PMR_EL1
+    str     x1, [x19, #0xF28]
+    mrs     x1, S3_0_C12_C12_7          // ICC_IGRPEN1_EL1
+    str     x1, [x19, #0xF30]
+    tbnz    w21, #3, 4f
     mov     x1, #7                      // SRE | DFB | DIB
     msr     S3_0_C12_C12_5, x1
     isb
@@ -23,7 +40,7 @@ ParkStubStart:
     mov     x1, #1
     msr     S3_0_C12_C12_7, x1          // IGRPEN1 = 1
     isb
-    ldr     w20, [x19, #0xFF0]          // ProcessorId atteso da questo core
+4:  ldr     w20, [x19, #0xFF0]          // ProcessorId atteso da questo core
 1:  ldr     w1, [x19]                   // ProcessorId
     cmp     w1, w20
     b.ne    2f
@@ -35,5 +52,37 @@ ParkStubStart:
     str     xzr, [x19, #8]              // ack: JumpAddress = 0
     dsb     sy
     mov     x0, x19                     // X0 = indirizzo della mailbox
-    br      x2
+    tbz     w21, #5, 5f
+    mov     x16, x2                     // bit5: stato "pulito" come dopo un reset, solo X0 valido
+    mov     x1, xzr
+    mov     x2, xzr
+    mov     x3, xzr
+    mov     x4, xzr
+    mov     x5, xzr
+    mov     x6, xzr
+    mov     x7, xzr
+    mov     x8, xzr
+    mov     x9, xzr
+    mov     x10, xzr
+    mov     x11, xzr
+    mov     x12, xzr
+    mov     x13, xzr
+    mov     x14, xzr
+    mov     x15, xzr
+    mov     x17, xzr
+    mov     x18, xzr
+    mov     x19, xzr
+    mov     x20, xzr
+    mov     x21, xzr
+    mov     x22, xzr
+    mov     x23, xzr
+    mov     x24, xzr
+    mov     x25, xzr
+    mov     x26, xzr
+    mov     x27, xzr
+    mov     x28, xzr
+    mov     x29, xzr
+    mov     x30, xzr
+    br      x16
+5:  br      x2
 ParkStubEnd:

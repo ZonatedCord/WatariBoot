@@ -18,6 +18,7 @@
   DEFINE WATARI_TIMER_FIQ        = FALSE
   DEFINE WATARI_PARKING          = FALSE
   DEFINE WATARI_NOGICD           = FALSE
+  DEFINE WATARI_PMODE            = 0
 
 !include ArmVirtPkg/ArmVirtQemu.dsc
 
@@ -42,6 +43,12 @@
 !if $(WATARI_PARKING) == TRUE
 [Components.AARCH64]
   WatariQemuPkg/WatariParkingDxe/WatariParkingDxe.inf
+
+# Tentativo A (ultimo): maschera di bit per gli esperimenti sul 0x5C, vedi tools/build-edk2-watari.sh
+# (WATARI_PMODE=n nell'ambiente). 1 FADT PSCI+HVC, 2 MADT senza parking, 4 niente CPU_ON, 8 stub senza GIC,
+# 16 niente wake dei redistributor, 32 stub azzera i GPR.
+[BuildOptions]
+  GCC:*_*_AARCH64_CC_FLAGS = -DWATARI_PMODE=$(WATARI_PMODE)
 !endif
 
 # G2/V2: MADT senza GICD (modello qemu-virt-nogicd). Attivo solo con -D WATARI_NOGICD=TRUE

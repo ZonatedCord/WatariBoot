@@ -4,18 +4,18 @@
     "28f3339a-d470-4c91-a96e-c22517277cc7": {
       "models": {
         "claude-opus-5-5": {
-          "cache_read": 126596436,
-          "cache_write_1h": 3452692,
+          "cache_read": 132375258,
+          "cache_write_1h": 4080932,
           "cache_write_5m": 0,
-          "input": 702,
-          "output": 270606
+          "input": 726,
+          "output": 283481
         },
         "claude-sonnet-5-5": {
-          "cache_read": 53005772,
+          "cache_read": 60785675,
           "cache_write_1h": 0,
-          "cache_write_5m": 2916696,
-          "input": 1082,
-          "output": 133261
+          "cache_write_5m": 3231133,
+          "input": 1218,
+          "output": 152900
         }
       }
     },

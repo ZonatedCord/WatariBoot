@@ -56,3 +56,8 @@
 - ⚠️ **V6:** inconcludente, il timer torna in Group 1 (F-13). Il metodo B richiede di compilare QEMU: decidi tu.
 - Errori nostri documentati: F-12 (build EDK2 che non vede gli header), F-16 (ASSERT nella cache).
 - **Decisioni per te:** (1) merge della PR; (2) se proseguire sul nativo (V3 handshake, V6 metodo B) o aprire lo studio del piano B; (3) il via per compilare QEMU (metodo B).
+
+## A · Ultimo tentativo sul 0x5C del parking (branch marco/a-ultimo-tentativo, 2026-10-14, esecutore Sonnet, 6 test QEMU)
+- Strumenti nuovi: bit `WATARI_PMODE` (`WATARI_PMODE=n tools/build-edk2-watari.sh --parking`), diagnostica dello stub nella mailbox (+0xF00: CurrentEL, SCTLR, DAIF, MPIDR, ICC_SRE, PMR, IGRPEN1), gdbstub (`-gdb`) e trace GIC con `kernel-irqchip=off`. File: `ParkStub.S`, `WatariParkingDxe.c`, `WatariAcpiOverride.c`, `WatariQemuPkg.dsc`, `Include/Protocol/WatariParking.h`, `tools/build-edk2-watari.sh`.
+- T1 controllo (FADT PSCI+HVC, MADT v0): Windows arriva al blocco, FADT acpigen buona. T2 stato di ingresso: conforme alla spec (EL1, MMU spenta, DAIF mascherati). T3/T5 stub senza GIC e GPR puliti: AP fermo allo stesso punto. T6 `kernel-irqchip=off` + trace: 0x5C anche li; la cpu 1 fa la sua init GIC (IGRPEN1=0, PMR=0, ICENABLER0, IGROUPR0, IGRPEN1=1) e poi tace; Windows non manda alcuna SGI alla cpu 1 (solo una SGI 0 della cpu 0 verso se stessa).
+- Esito: **causa non trovata**; l'AP e' dentro il kernel Windows (routine di avvio + 0x200) e attende qualcosa che il BSP non manda. Dettaglio, ipotesi escluse e prossimi passi in `docs/FALLIMENTI.md` (F-15, tentativo A). `docs/img/v3-ok.png` non salvato (non si e' raggiunto il blocco con il parking). Prova del controllo: `docs/img/a-t1-controllo-fadt-psci-lock.png`.
