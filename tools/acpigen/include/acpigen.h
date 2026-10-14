@@ -67,6 +67,7 @@ typedef struct {
 #define ACPI_MADT_TYPE_GICC 0x0B
 #define ACPI_MADT_TYPE_GICD 0x0C
 #define ACPI_MADT_TYPE_GICR 0x0E
+#define ACPI_MADT_TYPE_GIC_MSI 0x0D
 #define ACPI_GICC_INTERFACE_INVALID 0xFFFFFFFFu /* cpu_interface_number riservato */
 #define ACPI_GICC_ENABLED (1u << 0)
 
@@ -117,6 +118,17 @@ typedef struct ACPIGEN_PACKED {
     uint32_t discovery_range_length;
 } acpi_gicr;
 
+typedef struct ACPIGEN_PACKED {
+    uint8_t  type;   /* 0x0D, GIC MSI Frame */
+    uint8_t  length; /* 24 */
+    uint16_t reserved;
+    uint32_t msi_frame_id;
+    uint64_t physical_base_address;
+    uint32_t flags;  /* bit 0: SPI Count/Base Select */
+    uint16_t spi_count;
+    uint16_t spi_base;
+} acpi_gic_msi;
+
 /* Descrizione di una CPU (condivisa da MADT e PPTT). */
 typedef struct {
     uint32_t    uid;           /* ACPI Processor UID */
@@ -125,6 +137,7 @@ typedef struct {
     uint8_t     efficiency;    /* Processor Power Efficiency Class */
     uint32_t    parking_version;
     uint64_t    parked_address;
+    uint32_t    perf_gsiv;     /* GICC Performance Interrupt GSIV (0 = nessuno) */
     int         enabled;
     int         is_thread;     /* PPTT: "Processor is a Thread" */
     const char *name;          /* solo informativo */
@@ -143,6 +156,10 @@ typedef struct {
     uint64_t gicc_gicr_base;   /* GICC.GICR base (Pi3: 1; ipotesi per t8103) */
     uint64_t gicr_range_base;  /* se gicr_range_length != 0 emette una GICR Structure (0x0E) */
     uint32_t gicr_range_length;
+    uint64_t msi_base;         /* se != 0 emette una GIC MSI Frame (0x0D) in coda (QEMU: v2m) */
+    uint32_t msi_flags;
+    uint16_t msi_spi_count, msi_spi_base;
+    int      gicd_first;       /* 1 = GICD prima dei GICC (ordine di QEMU), 0 = dopo */
 } acpigen_madt_opts;
 
 /* gicd NULL = nessuna GICD. Il GICC della CPU boot_index e' emesso per primo, le altre seguono
@@ -316,6 +333,7 @@ extern const acpigen_gicd qemu_virt_gicd;
 extern const acpigen_gtdt_cfg qemu_virt_gtdt;
 extern const acpigen_dbg2_cfg qemu_virt_dbg2;
 extern const acpigen_model qemu_virt_model;
+extern const acpigen_model qemu_virt_nogicd_model; /* V2: come qemu-virt, senza GICD */
 
 /* Cerca un modello per nome ("t8103", "qemu-virt"); NULL se sconosciuto. */
 const acpigen_model *acpigen_find_model(const char *name);

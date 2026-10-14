@@ -15,12 +15,12 @@ Fase 0: lo spike sul HAL di Windows e i controller di interrupt non-GIC. Il dett
 
 ## Token e costi
 <!-- TOKEN-COUNTER:START -->
-**Token totali: 156,944,528 · Costo stimato: $71.14** (aggiornato 2026-10-14; marco: 6 sessioni, $71.14)
+**Token totali: 230,549,593 · Costo stimato: $99.36** (aggiornato 2026-10-14; marco: 6 sessioni, $99.36)
 
 | Modello | Input | Output | Cache scritta | Cache letta | Costo stimato |
 |---|---:|---:|---:|---:|---:|
-| `claude-opus-5-5` | 772 | 338,900 | 3,080,202 | 99,132,437 | $51.25 |
-| `claude-sonnet-5-5` | 1,084 | 136,498 | 3,202,914 | 51,051,721 | $19.90 |
+| `claude-opus-5-5` | 944 | 389,069 | 4,313,065 | 148,028,728 | $71.90 |
+| `claude-sonnet-5-5` | 1,516 | 182,517 | 4,206,053 | 73,427,701 | $27.46 |
 
 <sub>Stima a prezzi API Anthropic, calcolata dai transcript locali di Claude Code con `tools/token-usage.py`. Con un abbonamento (Pro/Max) la spesa reale è il canone: questo è il costo equivalente a consumo. L'output dei subagenti può essere sottostimato nei log.</sub>
 <!-- TOKEN-COUNTER:END -->

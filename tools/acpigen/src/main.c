@@ -14,7 +14,7 @@ int main(int argc, char **argv)
         argc = 4;
     }
     if (argc != 4 || strcmp(argv[2], "-o")) {
-        fprintf(stderr, "uso: %s <madt|gtdt|pptt|csrt|fadt|dbg2> [-m t8103|qemu-virt] -o file.bin\n",
+        fprintf(stderr, "uso: %s <madt|gtdt|pptt|csrt|fadt|dbg2> [-m t8103|qemu-virt|qemu-virt-nogicd] -o file.bin\n",
                 argv[0]);
         return 2;
     }

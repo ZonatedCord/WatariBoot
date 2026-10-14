@@ -9,3 +9,10 @@
   PACKAGE_NAME                   = WatariQemuPkg
   PACKAGE_GUID                   = 6a1f0c52-3b0e-4c4d-9a57-5e2d7b8c1f10
   PACKAGE_VERSION                = 0.1
+
+[Includes]
+  Include
+
+[Protocols]
+  ## Protocollo (WatariParkingDxe -> WatariAcpiOverride): indirizzi delle mailbox di parcheggio.
+  gWatariParkingProtocolGuid = { 0x5b8e2a14, 0x9c37, 0x4d60, { 0xa1, 0x4f, 0x73, 0xd0, 0x2e, 0x96, 0xb8, 0x1c } }

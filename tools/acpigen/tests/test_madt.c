@@ -110,17 +110,34 @@ int main(void)
     /* qemu-virt: GICD + GICR Structure, 4 GICC, GICC.GICR = 0 */
     m = &qemu_virt_model;
     n = acpigen_build_madt(b, sizeof b, 0, m->cpus, m->ncpus, m->gicd, &m->madt_opts);
-    CHECK(n == 44 + 4 * 82 + 24 + 16);
+    CHECK(n == 44 + 4 * 82 + 24 + 16 + 24);
     check_table(b, n, "APIC", 6);
-    acpi_gicd d; memcpy(&d, b + 44 + 4 * 82, sizeof d);
+    /* ordine di QEMU: GICD, 4 GICC, GICR (F-11 H2) */
+    acpi_gicd d; memcpy(&d, b + 44, sizeof d);
     CHECK(d.type == 0x0C && d.physical_base_address == 0x08000000ull && d.gic_version == 3);
-    acpi_gicr r; memcpy(&r, b + 44 + 4 * 82 + 24, sizeof r);
+    acpi_gicr r; memcpy(&r, b + 44 + 24 + 4 * 82, sizeof r);
     CHECK(r.type == 0x0E && r.length == 16);
     CHECK(r.discovery_range_base == 0x080A0000ull && r.discovery_range_length == 0xF60000);
+    acpi_gic_msi ms; memcpy(&ms, b + 44 + 24 + 4 * 82 + 16, sizeof ms);
+    CHECK(ms.type == 0x0D && ms.length == 24 && ms.physical_base_address == 0x08020000ull);
+    CHECK(ms.flags == 1 && ms.spi_count == 0x40 && ms.spi_base == 0x50);
     for (size_t k = 0; k < 4; k++) {
-        acpi_gicc g = gicc_at(b, k);
+        acpi_gicc g = gicc_at(b + 24, k);
         CHECK(g.mpidr == k && g.cpu_interface_number == k && g.gicr_base_address == 0);
-        CHECK(g.parking_protocol_version == 1 && (g.parked_address & 0xFFF) == 0);
+        CHECK(g.parking_protocol_version == 0 && g.parked_address == 0); /* PSCI (F-11 H1) */
+        CHECK(g.performance_interrupt_gsiv == 23);
     }
+
+    /* qemu-virt-nogicd (V2): niente GICD, 4 GICC + GICR + MSI Frame */
+    m = acpigen_find_model("qemu-virt-nogicd");
+    CHECK(m && m->gicd == 0);
+    n = acpigen_build_madt(b, sizeof b, 0, m->cpus, m->ncpus, m->gicd, &m->madt_opts);
+    CHECK(n == 44 + 4 * 82 + 16 + 24);
+    check_table(b, n, "APIC", 6);
+    for (size_t off = 44; off < (size_t)n; ) {
+        CHECK(b[off] != 0x0C);                      /* nessuna GICD Structure */
+        off += b[off + 1];
+    }
+    CHECK(b[44] == 0x0B && b[44 + 4 * 82] == 0x0E && b[44 + 4 * 82 + 16] == 0x0D);
     TEST_END();
 }

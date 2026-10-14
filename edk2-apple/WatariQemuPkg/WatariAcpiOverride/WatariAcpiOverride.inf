@@ -20,12 +20,14 @@
   ../../../tools/acpigen/src/common.c
   ../../../tools/acpigen/src/madt.c
   ../../../tools/acpigen/src/gtdt.c
+  ../../../tools/acpigen/src/fadt.c
   ../../../tools/acpigen/src/t8103_model.c
   ../../../tools/acpigen/src/qemu_virt_model.c
 
 [Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
+  WatariQemuPkg/WatariQemuPkg.dec
 
 [LibraryClasses]
   UefiDriverEntryPoint
@@ -38,6 +40,7 @@
 [Protocols]
   gEfiAcpiTableProtocolGuid     ## SOMETIMES_CONSUMES
   gEfiAcpiSdtProtocolGuid       ## SOMETIMES_CONSUMES
+  gWatariParkingProtocolGuid    ## SOMETIMES_CONSUMES
 
 [Guids]
   gEfiEventReadyToBootGuid      ## CONSUMES

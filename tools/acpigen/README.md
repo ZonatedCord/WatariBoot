@@ -8,6 +8,7 @@ Uso: `make -C tools/acpigen` poi `build/acpigen <madt|gtdt|pptt|csrt|fadt|dbg2> 
 - GICC: `parking_protocol_version = 1` e `parked_address` non zero, allineato 4 KB, unico per CPU (BSP compresa). `acpigen_build_madt` ritorna `ACPIGEN_E_INVAL` se violato; controlla anche UID unici e `cpu_interface_number` (= indice originale in `cpus[]`) unico e != 0xFFFFFFFF. Versione 0 ammessa solo con indirizzo 0 (PSCI puro).
 - La CPU di boot (`madt_opts.boot_index`) e' il primo GICC; le altre seguono nell'ordine originale.
 - `GICC.GICR base = 1` per t8103 (come Pi3), 0 per qemu-virt. Nessuna GICD segnaposto per t8103 (`gicd = NULL`); qemu-virt ha GICD reale e una GICR Structure (tipo 0x0E).
+- qemu-virt (F-11, verificato): MADT come quella originale di QEMU: GICD per prima, parking 0 (PSCI), PMU GSIV 23, GICR e **GIC MSI Frame** (0x0D, v2m 0x08020000): senza la MSI Frame Windows si blocca. Opzioni `gicd_first`, `msi_*` in `acpigen_madt_opts`, `perf_gsiv` in `acpigen_cpu`.
 - FADT: rev 6, 276 byte, `HW_REDUCED_ACPI` sempre attivo, `ARM_BOOT_ARCH = 0` (PSCI non conforme, coerente col parking).
 - DBG2: un dispositivo seriale (0x8000), sottotipo PL011 (0x0003), GAS memoria 32 bit/DWORD.
 

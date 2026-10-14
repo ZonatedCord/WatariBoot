@@ -1,0 +1,45 @@
+## @file
+#  Watari Boot, esperimento V6 (metodo A): mette i PPI del timer (INTID 27 virtuale, 30 fisico NS)
+#  in Group 0 cosi' che il GICv3 li consegni come FIQ. Vedi WatariTimerFiqDxe.c.
+#
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WatariTimerFiqDxe
+  FILE_GUID                      = b4d2f8a6-17c3-49e0-9a5b-2e6c8d1f7a43
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariTimerFiqEntry
+
+[Sources]
+  WatariTimerFiqDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  ArmPkg/ArmPkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  BaseLib
+  DebugLib
+  IoLib
+  ArmLib
+  PcdLib
+
+[Protocols]
+  gHardwareInterruptProtocolGuid  ## CONSUMES (solo Depex)
+
+[Guids]
+  gEfiEventExitBootServicesGuid   ## CONSUMES
+
+[Pcd]
+  gArmTokenSpaceGuid.PcdGicDistributorBase
+  gArmTokenSpaceGuid.PcdGicRedistributorsBase
+
+[Depex]
+  gHardwareInterruptProtocolGuid

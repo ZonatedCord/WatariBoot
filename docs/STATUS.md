@@ -1,6 +1,7 @@
 # Stato del progetto
 
 **Aggiornato:** 2026-10-14 (sessione marco-01, notte chiusa)
+**Strategia (2026-10-14):** **piano B adottato**, Windows in dual boot sopra uno strato EL2 minimo (`docs/adr/bozza-piano-b-strato-el2.md`, `re/pianoB-fattibilita.md`). La strada nativa pura è chiusa: GIC obbligatorio (V2), parking in deadlock (V3, F-15).
 **Fase corrente:** 0, lo spike sul HAL di Windows ARM64 e i controller di interrupt non-GIC
 
 ## Traguardi
@@ -17,7 +18,12 @@
 - [x] **V0 (TCG):** il Setup di Windows 11 ARM64 (ISO ufficiale it-it build 26300, SHA-256 in `WatariBoot-data/iso/SHA256.txt`) gira in QEMU sul **nostro** EDK2. Screenshot: `WatariBoot-data/logs/screens/tcg-c1.png`. Script: `tools/run-qemu-windows.sh`.
 - [x] **HVF (risolto 2026-10-14, F-08):** il nostro EDK2 si bloccava su "Start boot option" (`[Bds]BdsWait(5)`). Diagnosi in corso (un agente stava provando il firmware incluso in QEMU, una build RELEASE, GICv2). **Da riprendere qui:** controllare `git status` sul branch locale `marco/gate-b-v0` per eventuali modifiche lasciate dall'agente.
 - [x] **Notte 2026-10-14 (chiusa, PR #27, riepilogo in `ralph/PROGRESS-notte.md`; si riparte da F-11):** lavoro autonomo pianificato secondo `ralph/NOTTE.md` (N1 HVF, N2 installazione automatica, N3 acpigen, N4 V1), sul branch `marco/notte-2026-10-14`, diario in `ralph/PROGRESS-notte.md`. **N1 e N2 fatti** (Windows 11 installato in modo automatico con HVF, desktop verificato); N3 fatto; N4 build ok ma Windows non parte con le nostre tabelle (F-11), da lì si riparte.
-- [ ] Poi: installazione di Windows nella VM (valutare il disco interno per la velocità), quindi V1 e V6.
+- [x] **V1** (2026-10-14): Windows avvia con le nostre MADT+GTDT (mancava la GIC MSI Frame, F-11 risolto). `docs/img/v1-ok.png`.
+- [x] **V2**: con la MADT senza GICD Windows si blocca, quindi sembra richiedere il GICD.
+- [x] **V3**: Windows **usa il parking protocol** (mailbox della CPU1 scritta, il nostro stub salta), poi bugcheck `HAL_INITIALIZATION_FAILED (0x5C)` (F-15): problema di handshake da risolvere.
+- [!] **V6**: inconcludente (F-13); il metodo B richiede di compilare QEMU (decide Marco).
+- **Lettura:** i core secondari via parking sono una strada reale (V3); il GIC invece sembra obbligatorio (V2), quindi il piano B resta il più probabile. Riepilogo in `docs/sessions/2026-10-14-marco-01.md`.
+- [x] ~~Poi: installazione di Windows nella VM~~ (fatta, N2) (valutare il disco interno per la velocità), quindi V1 e V6.
 - [ ] Fase 0: verdetto sì/no sull'estensione HAL per l'AIC
 - [ ] Fase 1: prototipo in QEMU
 - [ ] Fase 2: EDK2 sul MacBook
