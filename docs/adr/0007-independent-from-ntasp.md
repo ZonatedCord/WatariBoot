@@ -1,6 +1,6 @@
 # ADR-0007: Strada indipendente; NTASP solo come riferimento
 
-- Data: 2026-10-12 · Stato: **accettato** · Collegamenti: [re/ntasp-analisi.md](../../re/ntasp-analisi.md), [re/ntasp-audit-qualita.md](../../re/ntasp-audit-qualita.md), [ADR-0001](0001-boot-nativo-senza-hypervisor.md)
+- Data: 2026-10-12 · Stato: **accettato** · Collegamenti: [re/ntasp-analysis.md](../../re/ntasp-analysis.md), [re/ntasp-quality-audit.md](../../re/ntasp-quality-audit.md), [ADR-0001](0001-native-boot-without-hypervisor.md)
 
 ## Contesto
 NT for Apple Silicon (NTASP, org `NT-for-ASi`) è l'unico progetto esistente con lo stesso obiettivo. Lo abbiamo analizzato (stato e architettura) e sottoposto a un audit di qualità del codice. Opus ha ricontrollato direttamente i difetti principali.

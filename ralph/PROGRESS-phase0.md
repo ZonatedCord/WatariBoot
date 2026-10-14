@@ -22,7 +22,7 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
 - **Nota:** il layout CSRT viene dal PDF della specifica Microsoft (link da learn.microsoft.com), letto dall'agente. Non è rimasta nessuna copia del PDF nel repository.
 
 ### 2026-10-12: A5 completato (issue #8)
-- File: `docs/design/watariboot/ESPERIMENTO-F0.md` (matrice V0–V5, debug, prerequisiti, rischi).
+- File: `docs/design/watariboot/EXPERIMENT-F0.md` (matrice V0–V5, debug, prerequisiti, rischi).
 - **Verificato da Opus** sulla documentazione QEMU:
   - (1) `gic-version` accetta solo 2/3/4/x-5/host/max: il GIC non si può rimuovere, e il "non-GIC" si simula solo nelle tabelle ACPI (qemu.org, system/arm/virt);
   - (2) `-acpitable` vale solo per il target i386 (qemu.org, system/invocation). Le nostre tabelle vanno iniettate con un driver DXE in EDK2.
@@ -33,7 +33,7 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
 - **Ipotesi aperte:** sintassi `-serial`/`-chardev`/`-netdev`, e se `e1000e` di QEMU sia compatibile con KDNET.
 
 ### 2026-10-12: A7 bloccato (issue #10)
-- Motivo: **in attesa di Ciani**. `re/f0-halext-doc-pubblica.md`, `re/f0-acpi-requisiti-windows.md` e `re/f0-rpi3-precedente.md` non sono ancora su `main` (controllato su `origin/main`).
+- Motivo: **in attesa di Ciani**. `re/f0-halext-public-docs.md`, `re/f0-acpi-windows-requirements.md` e `re/f0-rpi3-precedent.md` non sono ancora su `main` (controllato su `origin/main`).
 - Si riprende in una nuova sessione o con un nuovo loop, dopo il merge delle PR di Ciani.
 
 ## Riepilogo finale del Gate A (questo giro di Ralph)
@@ -48,7 +48,7 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
 - Task: A8 (#16), A9 (#17), A10 (#18). A7 resta `[!]` in attesa di Ciani.
 
 ### 2026-10-13: A8 completato (#16), modelli AIC in QEMU
-- File: `re/f0-qemu-aic-modelli.md`.
+- File: `re/f0-qemu-aic-models.md`.
 - **Verificato da Opus:**
   - `TrungNguyen1909/qemu-t8030` esiste (archiviato, 2204 stelle, ultimo push 2022-10). Il suo `hw/intc/apple_aic.c` usa gli offset di AICv1 (0x2004 IACK, 0x3000 DEST, 0x4100 MASK_SET).
   - `ChefKissInc/Inferno` è attivo (push 2026-09).
@@ -65,7 +65,7 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
 - **Conclusioni:** macOS stesso usa il timer in FIQ (fleh_fiq → rtclock_intr) e non tocca il bit. La probabilità che HW-1 funzioni è bassa (circa 10%, stima dell'agente), ma il test costa poco e si annulla facilmente. Il watchdog resta la pista IRQ più concreta.
 
 ### 2026-10-13: A10 completato (#18), variante V6 in QEMU
-- Sezione 4.4 aggiunta in `ESPERIMENTO-F0.md`.
+- Sezione 4.4 aggiunta in `EXPERIMENT-F0.md`.
 - **Verificato da Opus:** in QEMU `hw/intc/arm_gicv3_cpuif.c` il Group 0 (`GICV3_G0`) ha un percorso dedicato (FIQ).
 - **Metodo:**
   - prima prova: un driver DXE nel nostro EDK2 che mette i PPI del timer in Group 0;
@@ -85,21 +85,21 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
 - Marco ha riassegnato a Ralph i task di Ciani (A1, A2, A4, A11) per non bloccare la Fase 0. Ordine: A1, A2 e A4 in parallelo → A11 → A7.
 
 ### 2026-10-13: A1 completato (#4), estensioni HAL
-- File: `re/f0-halext-doc-pubblica.md`.
+- File: `re/f0-halext-public-docs.md`.
 - **Verdetto: "non determinabile dalle fonti pubbliche"** (circa 30% sì / 20% no / 50% incerto).
 - **Verificato da Opus:** l'unico esempio pubblico di estensioni HAL (`ms-iot/imx-iotcore@public_preview hals/halext`) contiene solo `HalExtiMX6Timers`, `HalExtiMX7Timers` e `HalExtiMXDma`, cioè timer e DMA, nessun controller di interrupt.
 - La specifica CSRT prevede il sottotipo "Interrupt Controller", ma non c'è nessun esempio pubblico che lo usi.
 - **Nota positiva:** esistono estensioni HAL per i **timer** (i.MX), una base concreta per A11.
 
 ### 2026-10-13: A2 completato (#5), requisiti ACPI e parking protocol
-- File: `re/f0-acpi-requisiti-windows.md`.
+- File: `re/f0-acpi-windows-requirements.md`.
 - Tabelle obbligatorie: FADT (HW_REDUCED), MADT, DSDT, DBG2. Il GICD non è dichiarato obbligatorio da Microsoft.
 - Parking protocol v1 (2014): mailbox da 4 KB; risveglio con "an interrupt" non specificato; un loop WFE/polling è compatibile [ipotesi].
 - **Discrepanze bloccanti in `acpigen`:** parking version/address = 0 (va messo 1 + un indirizzo); niente GICD segnaposto; la CPU di boot deve essere la prima; GICR base = 1 come nel Pi3; mancano FADT, DBG2, SPCR e DSDT.
 - **Nota sulle regole:** WebFetch ha salvato il PDF della specifica nella cartella interna dei risultati dei tool di Claude, non nella repository.
 
 ### 2026-10-13: A4 completato (#7), il precedente del Raspberry Pi 3 (**risultato critico**)
-- File: `re/f0-rpi3-precedente.md`.
+- File: `re/f0-rpi3-precedent.md`.
 - **Verificato da Opus:** in `tianocore/edk2-platforms` `Platform/RaspberryPi/AcpiTables/Madt.aslc:51-52` c'è il commento: "Use 1 for GICR Base Address below, since Windows 10 on Raspberry Pi 3 does not boot otherwise, and this is the value that Microsoft had in their IoT blobs."
 - **Conclusione:** sul Pi 3 **nessuna terza parte** forniva il controller di interrupt. Il supporto al BCM2836 era **dentro l'HAL di Windows** (e nelle prime build ARM64 serviva perfino una patch). Il precedente quindi **non dimostra** che un'estensione HAL possa fornire un controller di interrupt.
 - Il Pi 3 ARM64 avviava i core con PSCI (tramite ATF), non con il parking protocol.
@@ -112,7 +112,7 @@ Ralph aggiunge una voce per ogni task: data, task, file prodotti, cosa ha verifi
 - **NUOVA PISTA (verificata da Opus):** `Wack0/NtHalExts` (Unlicense, push 2024-09, "Windows 8.x HAL extensions") contiene **`halextbcm2709`**, un'estensione HAL di terze parti per il controller di interrupt del BCM2709 (Raspberry Pi 2, **senza GIC**) su Windows 8.x ARM32. **Se confermato, è la prova che un controller di interrupt può essere fornito da un'estensione HAL** (almeno su Windows 8 ARM32). Da studiare per prima cosa. Attenzione: include header DDK Microsoft, quindi si legge senza copiare niente.
 
 ### 2026-10-13: A7 completato (#10), verdetto preliminare
-- File: `re/f0-verdetto-preliminare.md`, `docs/adr/bozza-esito-fase0-preliminare.md`.
+- File: `re/f0-preliminary-verdict.md`, `docs/adr/draft-phase0-preliminary-outcome.md`.
 - Stime (solo interrupt, timer e core): nativo puro **circa 12%**, piano B EL2 circa 53%, altro circa 35%.
 - **Nota di Opus:** le stime sono state fatte **prima** della scoperta di `halextbcm2709`, che alza la probabilità del ramo "controller registrabile via estensione HAL" (stimato al 20% in A7). Vanno ricalcolate dopo averlo studiato.
 - Raccomandazione: Gate B a basso costo con priorità a V4 e V6; leggere l'header del WDK `nthalext.h` (serve l'ok dell'utente per il download); soglia del piano B decisa dall'utente.

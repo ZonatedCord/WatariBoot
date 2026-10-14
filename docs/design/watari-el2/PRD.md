@@ -2,7 +2,7 @@
 
 - Progetto: Watari Boot, sottosistema **Watari EL2** · Data: 2026-10-14 · Versione: 0.1 · Stato: draft
 - Documenti collegati: [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · [DESIGN-STATUS](DESIGN-STATUS.md)
-- ADR di riferimento: `docs/adr/bozza-piano-b-strato-el2.md` (decisione di Marco), `docs/adr/bozza-el2-base-m1n1-o-nuovo.md`, `docs/adr/bozza-el2-licenza.md`
+- ADR di riferimento: `docs/adr/draft-plan-b-el2-layer.md` (decisione di Marco), `docs/adr/draft-el2-base-m1n1-or-new.md`, `docs/adr/draft-el2-license.md`
 - Marcatura: ogni affermazione tecnica è **[verificato: fonte]** oppure **[ipotesi]**. Le fonti `re/*` sono quelle del repository; le fonti web sono state lette in sola lettura il 2026-10-14.
 
 ## 1. Problema
@@ -80,12 +80,12 @@ Questo documento definisce **cosa deve fare e come si misura** quello strato. No
 | NFR-4 Modularità | il vGIC non include header di piattaforma; dipendenze solo verso interfacce (`*_ops`); grafo aciclico verificato da script (`tools/check-deps.sh`) | script in CI locale |
 | NFR-5 Estensibilità | aggiungere un SoC = nuova cartella `plat/<soc>` + voce in tabella; aggiungere un dispositivo emulato = registrare una regione MMIO; aggiungere un registro sysreg = una riga di tabella; nessuna modifica a dispatcher o vGIC | esercizio di prova in M3 (aggiunta di un handler fittizio) |
 | NFR-6 Sicurezza hardware | nessuna scrittura al disco o al boot policy dallo strato; solo lettura di ciò che non serve; ogni accesso MMIO fuori mappa → fault registrato, non propagato | revisione + test "accesso non mappato" |
-| NFR-7 Dimensione | ≤ 12.000 righe di C (esclusi test) e immagine ≤ 256 KB senza EDK2 **[ipotesi: KVM vgic ≈ 4-5 mila righe, m1n1 hv ≈ 3.700, `re/pianoB-fattibilita.md` §1-2]** | `cloc` |
-| NFR-8 Licenze | nessun codice copiato da KVM/m1n1/NTASP; header di provenienza sui file che citano fonti (vedi `bozza-el2-licenza.md`) | scansione di similarità + revisione |
+| NFR-7 Dimensione | ≤ 12.000 righe di C (esclusi test) e immagine ≤ 256 KB senza EDK2 **[ipotesi: KVM vgic ≈ 4-5 mila righe, m1n1 hv ≈ 3.700, `re/planB-feasibility.md` §1-2]** | `cloc` |
+| NFR-8 Licenze | nessun codice copiato da KVM/m1n1/NTASP; header di provenienza sui file che citano fonti (vedi `draft-el2-license.md`) | scansione di similarità + revisione |
 | NFR-9 Osservabilità | ogni hang deve lasciare una traccia: watchdog software per vCPU e dump al timeout | test di fault injection |
 
 ## 8. Criteri di successo per milestone (misurabili)
-Stime di calendario: **[ipotesi]**, un sviluppatore con agenti (vedi `re/pianoB-fattibilita.md` §9: prototipo QEMU 8-12 settimane, hardware altre 14-24).
+Stime di calendario: **[ipotesi]**, un sviluppatore con agenti (vedi `re/planB-feasibility.md` §9: prototipo QEMU 8-12 settimane, hardware altre 14-24).
 
 | Milestone | Cosa | Criterio di superamento (tutti) | Stima |
 |---|---|---|---|
@@ -119,5 +119,5 @@ Il passaggio da una milestone alla successiva richiede la revisione di Opus e la
 Sintesi (dettaglio in [RISKS](RISKS.md)): errata SEIS del M1; fedeltà del vGIC; E2H bloccato a 1 sul M1; percorso FIQ del timer non testabile in QEMU; prestazioni del trap-emulate; debug senza host; licenze (m1n1 ≥ 2.0.0 è GPL).
 
 ## 13. Riferimenti agli ADR
-- `docs/adr/bozza-piano-b-strato-el2.md` (accettato da Marco) · `docs/adr/bozza-el2-base-m1n1-o-nuovo.md` · `docs/adr/bozza-el2-licenza.md`.
+- `docs/adr/draft-plan-b-el2-layer.md` (accettato da Marco) · `docs/adr/draft-el2-base-m1n1-or-new.md` · `docs/adr/draft-el2-license.md`.
 - ADR-0001 (nativo senza hypervisor) è modificato dalla bozza del piano B; ADR-0007 (strada indipendente da NTASP) resta valido.

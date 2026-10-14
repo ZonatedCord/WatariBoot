@@ -1,10 +1,10 @@
 # F0 / A7: verdetto preliminare della Fase 0 (issue #10)
 
-Data: 2026-10-13. Autore: esecutore Sonnet (task A7), da verificare da Opus. Sintesi delle prove A1-A6, A8-A10 e del diario `ralph/PROGRESS-fase0.md`. **Nessun fatto nuovo è stato raccolto**: questo documento pesa le prove già presenti. Nessun binario o codice Microsoft usato.
+Data: 2026-10-13. Autore: esecutore Sonnet (task A7), da verificare da Opus. Sintesi delle prove A1-A6, A8-A10 e del diario `ralph/PROGRESS-phase0.md`. **Nessun fatto nuovo è stato raccolto**: questo documento pesa le prove già presenti. Nessun binario o codice Microsoft usato.
 
 Legenda: **[V: file]** = affermato e verificato nel file citato (che a sua volta cita la fonte primaria). **[I]** = ipotesi o giudizio mio, non verificato. Le percentuali sono giudizi soggettivi, non misure.
 
-File citati con sigle: A1 = `re/f0-halext-doc-pubblica.md`; A2 = `re/f0-acpi-requisiti-windows.md`; A3 = `re/f0-m1-fiq-irq.md`; A4 = `re/f0-rpi3-precedente.md`; A5/A10 = `docs/design/watariboot/ESPERIMENTO-F0.md`; A6 = `tools/acpigen/README.md`; A8 = `re/f0-qemu-aic-modelli.md`; A9 = `re/f0-timer-irq-hw.md`; PROG = `ralph/PROGRESS-fase0.md`.
+File citati con sigle: A1 = `re/f0-halext-public-docs.md`; A2 = `re/f0-acpi-windows-requirements.md`; A3 = `re/f0-m1-fiq-irq.md`; A4 = `re/f0-rpi3-precedent.md`; A5/A10 = `docs/design/watariboot/EXPERIMENT-F0.md`; A6 = `tools/acpigen/README.md`; A8 = `re/f0-qemu-aic-models.md`; A9 = `re/f0-timer-irq-hw.md`; PROG = `ralph/PROGRESS-phase0.md`.
 
 ## 0. Sintesi in cinque righe
 
@@ -65,7 +65,7 @@ Controllo: 12 + 53 + 35 = 100. L'incertezza sulle stime è grande; l'ordine (b) 
 
 ## 4. Che cosa resta da dimostrare solo sperimentalmente, e in che ordine
 
-Principio: **prima ciò che può uccidere la strada nativa a basso costo, poi ciò che costa di più**. Ogni passo richiede il backup Time Machine confermato dall'utente prima di scaricare o installare qualunque cosa, e dispone di criteri di stop già definiti in `ESPERIMENTO-F0.md` sez. 6.
+Principio: **prima ciò che può uccidere la strada nativa a basso costo, poi ciò che costa di più**. Ogni passo richiede il backup Time Machine confermato dall'utente prima di scaricare o installare qualunque cosa, e dispone di criteri di stop già definiti in `EXPERIMENT-F0.md` sez. 6.
 
 | Ordine | Esperimento | Che cosa chiude | Criterio di esito | Costo (stima A5/A10/A8) |
 |---|---|---|---|---|
@@ -90,7 +90,7 @@ Principio: **prima ciò che può uccidere la strada nativa a basso costo, poi ci
 2. **Prima di spendere settimane in QEMU, fare il passo 0**: leggere `nthalext.h`. È economico e può decidere quasi da solo la questione del controller. Serve una decisione esplicita dell'utente su due punti: scaricare il WDK (backup e licenza) e accettare la lettura di un header di un kit pubblico come "strumento" nel rispetto di ADR-0005 (nessun binario o codice Microsoft nel repository: l'header non va copiato nel repo).
 3. **Proseguire con il Gate B dando priorità a V4 e V6**, dopo V0 e V1. V4 risponde alla domanda decisiva più vicina; V6 può togliere il rischio timer senza hardware. V2 e V3 sono kill-switch economici da fare subito dopo V1.
 4. **Sviluppare in parallelo, a costo basso, le parti utili anche al piano B**: estensione di `acpigen` (senza GICD, parking con versione 1 e indirizzo valido, FADT, DBG2, DSDT) e firmware EDK2 con i core parcheggiati. Non scrivere il modello AIC per QEMU (8-9 giorni) finché V4 o l'header non mostrano che esiste un'interfaccia da provare.
-5. **Fissare adesso, prima dei risultati, la soglia che fa scattare la discussione sul piano B** (vedi bozza ADR `docs/adr/bozza-esito-fase0-preliminare.md`), per evitare di spostare l'asticella a posteriori. Decide l'utente.
+5. **Fissare adesso, prima dei risultati, la soglia che fa scattare la discussione sul piano B** (vedi bozza ADR `docs/adr/draft-phase0-preliminary-outcome.md`), per evitare di spostare l'asticella a posteriori. Decide l'utente.
 6. **Preparare il piano B senza adottarlo**: stimare con onestà il costo di uno shim EL2 con emulazione di GICD/GICR (non "minimo") e valutare in alternativa il solo stub PSCI/HVC per il parking. Sono lavori di progettazione, da affidare a `morasca-agent`, non di implementazione.
 
 ## 6. Limiti di questo documento

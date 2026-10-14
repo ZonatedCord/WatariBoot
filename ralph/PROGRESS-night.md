@@ -1,6 +1,6 @@
 # Notte 2026-10-14: diario
 
-Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risultati verificati e i fallimenti (questi anche in docs/FALLIMENTI.md).
+Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risultati verificati e i fallimenti (questi anche in docs/FAILURES.md).
 
 ## 2026-10-14 00:15, sessione principale (prima dei task notturni)
 - **N2, preparazione completata** (non ancora eseguita):
@@ -23,7 +23,7 @@ Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risu
 - Screenshot: `logs/screens/n2-boot.png` (00:18, 13%), `logs/screens/n2-0023.png` (00:23, 22%) in `/tmp/watari-data/` (= WatariBoot-data).
 - Come controllare: `echo "screendump /tmp/watari-data/logs/screens/n2-HHMM.ppm" | nc -U /tmp/watari-data/run/qemu-mon.sock -w1`, poi `sips -s format png ... --out ...png`.
 - Finita quando: schermata di login/desktop dell'utente `watari` (password `watari`, solo VM) e `C:\watari-ok.txt` creato dai FirstLogonCommands (dalla VM; non c'è rete). Riavvii multipli attesi. Se resta su "Press any key" dopo un riavvio, non premere nulla: parte dal disco.
-- Se si rompe: ferma con `echo quit | nc -U /tmp/watari-data/run/qemu-mon.sock -w1` e documenta lo screenshot in `docs/FALLIMENTI.md`.
+- Se si rompe: ferma con `echo quit | nc -U /tmp/watari-data/run/qemu-mon.sock -w1` e documenta lo screenshot in `docs/FAILURES.md`.
 
 ## 2026-10-14 00:25: N2 in corso (verificato da Opus)
 - Lo screenshot `logs/screens/n2-0023.png` mostra "Installazione di Windows 11 in corso... Completamento operazione: 22%" con HVF, senza nessuna domanda: l'unattend funziona. QEMU ha PID 1173 (in `run/n2-qemu.pid`), è vivo e staccato dalla sessione.
@@ -49,10 +49,10 @@ Ogni esecuzione notturna aggiunge qui data e ora, il task, cosa ha fatto, i risu
 - Incidente dell'agente: ha sovrascritto per errore la build di `build-edk2.sh` e l'ha rigenerata (nessun danno, la VM usa copie).
 - Il seriale mostra righe con `\SystemRoot\system32\ntoskrnl.exe` ripetute: ipotesi, traffico del debug del kernel su seriale (testsigning/debug quindi attivi); non verificato.
 - **Ripartire da:** F-11, ipotesi 1 (parking disattivato nel modello qemu-virt).
-- Tutti i QEMU sono chiusi. Nessun download/installazione. `INSTALLATO.md`: nuovi file in `edk2-apple/`, `tools/build-edk2-watari.sh`, `WATARI_DATA/build-watari/` e `vm/QEMU_EFI-watari.fd`.
+- Tutti i QEMU sono chiusi. Nessun download/installazione. `INSTALLED.md`: nuovi file in `edk2-apple/`, `tools/build-edk2-watari.sh`, `WATARI_DATA/build-watari/` e `vm/QEMU_EFI-watari.fd`.
 
 ## 2026-10-14 (esecuzione notturna 2): nessun task aperto
-- N1-N4 tutti spuntati in NOTTE.md; branch già pushato, PR #27 già aperta, nessun QEMU attivo. Nessuna azione. Ripartire da F-11 (ipotesi 1: parking disattivato in qemu-virt) in una sessione con Marco.
+- N1-N4 tutti spuntati in NIGHT.md; branch già pushato, PR #27 già aperta, nessun QEMU attivo. Nessuna azione. Ripartire da F-11 (ipotesi 1: parking disattivato in qemu-virt) in una sessione con Marco.
 
 ## 2026-10-14, esecuzione notturna 3 (chiusura): RIEPILOGO PER MARCO
 Nessun task aperto, nessun QEMU acceso (verificato con `pgrep`). Nessun download.
@@ -71,6 +71,6 @@ Nessun task aperto, nessun QEMU acceso (verificato con `pgrep`). Nessun download
 **Decisioni per Marco**
 1. Merge della PR #27 (non fatto da me).
 2. Quale ipotesi di F-11 provare per prima (consiglio: parking disattivato, poi FADT nostra).
-3. Tenere o togliere `vm/win11.qcow2` (14 GB) e `WATARI_DATA/build-watari/`: elenco in `docs/INSTALLATO.md`.
+3. Tenere o togliere `vm/win11.qcow2` (14 GB) e `WATARI_DATA/build-watari/`: elenco in `docs/INSTALLED.md`.
 
 **Da dove ripartire:** F-11, ipotesi 1, con `tools/build-edk2-watari.sh` e il disco di N2 (usare `snapshot=on`).

@@ -1,13 +1,13 @@
 # ADR (bozza): Watari EL2 è uno strato nuovo; m1n1 resta solo il loader
 
 - Data: 2026-10-14 · Stato: **proposto** (da approvare da Marco). Il numero si assegna al merge.
-- Collegamenti: `docs/adr/bozza-piano-b-strato-el2.md` (decisione di fondo), `docs/design/watari-el2/ARCHITECTURE.md` §2, `docs/adr/bozza-el2-licenza.md`, ADR-0007 (strada indipendente da NTASP).
+- Collegamenti: `docs/adr/draft-plan-b-el2-layer.md` (decisione di fondo), `docs/design/watari-el2/ARCHITECTURE.md` §2, `docs/adr/draft-el2-license.md`, ADR-0007 (strada indipendente da NTASP).
 
 ## Contesto
 Il piano B richiede uno strato a EL2 con vGICv3, PSCI, timer come interrupt e SGI→IPI. Esistono tre basi possibili: l'hypervisor di m1n1, il fork NTASP `m1n1_windows`, o codice nuovo. Fatti verificati il 2026-10-14:
-- m1n1 `hv` ha stage-2, trap MMIO, più vCPU e timer guest via FIQ virtuale, ma **non ha un vGIC**; ogni eccezione non gestita passa al proxy Python e il guest si ferma finché l'host risponde; il percorso eccezioni è lento e single-thread [V: `re/pianoB-fattibilita.md` §2].
+- m1n1 `hv` ha stage-2, trap MMIO, più vCPU e timer guest via FIQ virtuale, ma **non ha un vGIC**; ogni eccezione non gestita passa al proxy Python e il guest si ferma finché l'host risponde; il percorso eccezioni è lento e single-thread [V: `re/planB-feasibility.md` §2].
 - m1n1 dalla 2.0.0 è **GPL-2.0-or-later** (MIT fino a 1.9.9): README e file `src/hv/hv_vm.c`, `src/main.c` [V].
-- NTASP `hv_vgic.c` è incompleto (pending/active mancanti, 1 core, SGI "TODO"), ha un solo manutentore attivo e dichiara di ispirarsi a KVM [V: `re/ntasp-analisi.md`, `pianoB-fattibilita.md` §3]; `re/ntasp-audit-qualita.md` giudica "da riscrivere" il lato UEFI.
+- NTASP `hv_vgic.c` è incompleto (pending/active mancanti, 1 core, SGI "TODO"), ha un solo manutentore attivo e dichiara di ispirarsi a KVM [V: `re/ntasp-analysis.md`, `planB-feasibility.md` §3]; `re/ntasp-quality-audit.md` giudica "da riscrivere" il lato UEFI.
 - Un nucleo che gira solo su hardware Apple non si può testare nel banco QEMU TCG con `virtualization=on`, che è l'unico ambiente di sviluppo senza host di debug.
 
 ## Decisione

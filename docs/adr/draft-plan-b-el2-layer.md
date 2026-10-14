@@ -9,7 +9,7 @@ La Fase 0 e i primi esperimenti hanno chiuso, in pratica, la strada **nativa pur
 - **V3 (F-15):** Windows usa ancora il parking protocol, ma l'avvio dei core va in deadlock e poi in bugcheck 0x5C. Dopo 6 test mirati la causa non è trovata. Il controllo con PSCI invece funziona (`docs/img/a-t1-controllo-fadt-psci-lock.png`).
 - **V6 (F-13):** il timer in FIQ è inconcludente.
 
-La ricerca `re/pianoB-fattibilita.md` conclude che il piano B è **teoricamente possibile** (confidenza circa 85%):
+La ricerca `re/planB-feasibility.md` conclude che il piano B è **teoricamente possibile** (confidenza circa 85%):
 - il M1 implementa in hardware l'interfaccia CPU del GICv3 virtuale (`ICH_*`); KVM di Linux la usa, con il maintenance interrupt via `AIC_VGIC_MI` (verificato in `torvalds/linux` `irq-apple-aic.c`);
 - Windows funziona con un GICv3 + PSCI (V1 e controllo T1);
 - i mattoni di riferimento esistono (m1n1 hv, NTASP `hv_vgic.c`/`hv_psci.c`).

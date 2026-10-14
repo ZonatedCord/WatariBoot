@@ -3,16 +3,16 @@
 Ogni esecuzione notturna parte **da zero**: legge questo file e lavora sul primo task non fatto.
 
 ## Regole
-- Leggi prima `CLAUDE.md`, `docs/STATUS.md`, `docs/FALLIMENTI.md`, `docs/INSTALLATO.md` e questo file.
+- Leggi prima `CLAUDE.md`, `docs/STATUS.md`, `docs/FAILURES.md`, `docs/INSTALLED.md` e questo file.
 - Branch: **`marco/notte-2026-10-14`** (`git switch marco/notte-2026-10-14 && git pull --rebase`; se non esiste in remoto, crealo da main). Mai `main`, mai merge, mai force-push.
 - **Download e installazioni:** sono autorizzati solo QEMU, acpica, llvm/lld/nasm, EDK2 (già presenti) e la ISO già scaricata. **Niente** nuovi pacchetti, driver virtio, swtpm o binari Microsoft. Niente analisi di binari Microsoft.
 - Tutti i dati vanno in `/Volumes/Arthur Fonzarelli/WatariBoot-data/` (usa `/tmp/watari-data` tramite `tools/env.sh`). Se il disco non è montato, scrivilo in PROGRESS e fermati.
-- Ogni cosa nuova va registrata in `docs/INSTALLATO.md`, così si toglie facilmente.
+- Ogni cosa nuova va registrata in `docs/INSTALLED.md`, così si toglie facilmente.
 - Esecuzione: delega a subagenti **Sonnet** (`model: "sonnet"`); tu (Opus) verifichi almeno 2 affermazioni chiave e **guardi gli screenshot** prima di dichiarare un risultato.
-- **Documenta tutto, soprattutto i fallimenti**: ogni tentativo fallito va in `docs/FALLIMENTI.md` (formato F-NN), ogni risultato in `ralph/PROGRESS-notte.md`.
+- **Documenta tutto, soprattutto i fallimenti**: ogni tentativo fallito va in `docs/FAILURES.md` (formato F-NN), ogni risultato in `ralph/PROGRESS-night.md`.
 - Notifiche: **una sola PR** per tutta la notte. La prima esecuzione che ha qualcosa da committare la apre (titolo "Notte 2026-10-14: ..."); le successive fanno solo push. Nessun commento o assegnazione su GitHub.
 - QEMU va sempre chiuso alla fine dell'esecuzione, tranne nel caso N2 (vedi sotto).
-- Prima di finire: commit + push, aggiorna `ralph/PROGRESS-notte.md` e le righe "Notte" in `docs/STATUS.md`.
+- Prima di finire: commit + push, aggiorna `ralph/PROGRESS-night.md` e le righe "Notte" in `docs/STATUS.md`.
 
 ## Task (in ordine)
 - [x] **N1. HVF.** *(risolto poco dopo mezzanotte, vedi F-08)* Diagnosi del blocco HVF (F-08):
@@ -31,7 +31,7 @@ Ogni esecuzione notturna parte **da zero**: legge questo file e lavora sul primo
   - Ogni ~20 minuti fai uno `screendump` in `logs/screens/n2-*.png`.
   - Se l'esecuzione sta per finire e l'installazione è ancora in corso, **lascia QEMU acceso** e scrivi in PROGRESS il PID e lo stato; l'esecuzione successiva riprende da lì (controlla gli screenshot).
   - **Successo:** il desktop di Windows o la schermata di login nello screenshot.
-- [x] **N3. Correzioni di `tools/acpigen`** da `re/f0-acpi-requisiti-windows.md` (sezione discrepanze):
+- [x] **N3. Correzioni di `tools/acpigen`** da `re/f0-acpi-windows-requirements.md` (sezione discrepanze):
   - parking version 1 + indirizzo;
   - CPU di boot per prima;
   - GICR=1;

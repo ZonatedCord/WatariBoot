@@ -187,7 +187,7 @@ Questa proposta è parallela a ciò che fa il BSP i.MX; il suo funzionamento sul
 Fatti:
 - Il codice i.MX dichiara un GSI che è un **ID del GIC** e lascia la consegna all'HAL che già conosce il GIC dalla MADT **[V: §1.6]**. L'estensione non ha né un ISR né un ConnectInterrupt **[V: §1.4]**.
 - L'IRQ 338 è un numero dell'**AIC** (`AIC_IRQ 338`), non del GIC **[V: t8103.dtsi:1228]**. Sul M1 non c'è GIC: serve un livello che consegni un interrupt AIC a Windows.
-- La domanda se un'estensione HAL possa fornire un controller di interrupt non-GIC è l'**A1** ed è **non determinabile** dalle fonti pubbliche (confidenza bassa) **[V: re/f0-halext-doc-pubblica.md §5]**. Nessuna API di registrazione di controller risulta nel codice i.MX **[V: grep]**.
+- La domanda se un'estensione HAL possa fornire un controller di interrupt non-GIC è l'**A1** ed è **non determinabile** dalle fonti pubbliche (confidenza bassa) **[V: re/f0-halext-public-docs.md §5]**. Nessuna API di registrazione di controller risulta nel codice i.MX **[V: grep]**.
 
 Quindi tre scenari, con gli stessi ingredienti ma esito diverso:
 
@@ -251,7 +251,7 @@ Conseguenze per il M1 [I]:
 | R5 | Un solo timer per tutto il SoC (nessuna evidenza su `TIMER_PER_PROCESSOR`) | medio-alto | **[I]** |
 | R6 | La HAL esige un timer `ALWAYS_ON` e un contatore: se WD0 non è davvero always-on (sleep, idle), la dichiarazione è falsa | medio | **[V]** (esigenza); stato hardware **[I]** |
 | R7 | Il wrap e il confronto `>=` non modulare complicano il periodico | medio | progettazione |
-| R8 | Firma dell'estensione HAL (EKU speciale) e caricamento con test-signing: non determinabili **[V: re/f0-halext-doc-pubblica.md §1]** | alto | V4 |
+| R8 | Firma dell'estensione HAL (EKU speciale) e caricamento con test-signing: non determinabili **[V: re/f0-halext-public-docs.md §1]** | alto | V4 |
 | R9 | AICv2 (M1 Pro/Max e successivi): l'hwirq del WDT e la struttura del blocco cambiano; "tutti gli Apple Silicon" non è garantito. I compatibili per i SoC più nuovi puntano tutti a `apple,t8103-wdt` come fallback **[V: apple,wdt.yaml:16-25]**, ma l'IRQ e la mappa AIC vanno riletti per ogni SoC | medio | **[I]** |
 | R10 | Mancanza di prove sul fatto che Windows accetti un timer di sistema che arrivi tramite IPI/AIC su un solo core | medio | **[I]** |
 

@@ -53,7 +53,7 @@ Contro / non provato:
 - L'API timer osservata consegna il GSI a un controller che Windows già conosce (il GIC); non c'è un esempio pubblico dell'API per registrare un controller [verificato: HalExtension.c]. Non ho visto in `nthalext.h` alcuna funzione di registrazione di un controller (non ho letto l'header) [ipotesi che non esista nella versione pubblica].
 - Firma con EKU speciale: bloccante o no con test-signing è sconosciuto.
 
-Da verificare sperimentalmente (variante V4 in `docs/design/watariboot/ESPERIMENTO-F0.md`):
+Da verificare sperimentalmente (variante V4 in `docs/design/watariboot/EXPERIMENT-F0.md`):
 1. Se Windows carica un'estensione agganciata a un gruppo CSRT nostro (ID, voce `OSExtensionDatabase`, device ACPI abbinato) con firma di test, e con quali messaggi di errore se rifiutata.
 2. Se un resource group con tipo 0x0001/sottotipo 0x0001 viene preso in carico da un'estensione e quale interfaccia di registrazione viene richiesta.
 3. Se Windows ARM64 va avanti senza la GICD nella MADT quando c'è una estensione (collegato a V2).

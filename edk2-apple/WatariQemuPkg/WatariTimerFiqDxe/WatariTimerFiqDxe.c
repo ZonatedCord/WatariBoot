@@ -1,5 +1,5 @@
 /** @file
-  Watari Boot, V6 metodo A (docs/design/watariboot/ESPERIMENTO-F0.md sez. 4.4): configura i PPI
+  Watari Boot, V6 metodo A (docs/design/watariboot/EXPERIMENT-F0.md sez. 4.4): configura i PPI
   del timer ARM (INTID 27 = timer virtuale, INTID 30 = timer fisico NS EL1) in Group 0, abilita
   GICD_CTLR.EnableGrp0 e ICC_IGRPEN0_EL1, cosi' che il GICv3 li segnali come FIQ e non come IRQ.
 

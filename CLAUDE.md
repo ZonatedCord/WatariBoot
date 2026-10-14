@@ -1,6 +1,6 @@
 # Watari Boot: istruzioni per Claude
 
-Obiettivo: **dual boot** di Windows ARM64 su Apple Silicon, **senza macOS sotto**, sopra uno strato EL2 minimo (piano B, adottato il 2026-10-14: `docs/adr/bozza-piano-b-strato-el2.md`). Si parte da un MacBook Pro 13" M1 (t8103, j293) e poi si generalizza a tutti gli Apple Silicon. Il piano completo è in `docs/PLAN.md`.
+Obiettivo: **dual boot** di Windows ARM64 su Apple Silicon, **senza macOS sotto**, sopra uno strato EL2 minimo (piano B, adottato il 2026-10-14: `docs/adr/draft-plan-b-el2-layer.md`). Si parte da un MacBook Pro 13" M1 (t8103, j293) e poi si generalizza a tutti gli Apple Silicon. Il piano completo è in `docs/PLAN.md`.
 
 ## ⚠️ BACKUP OBBLIGATORIO (regola assoluta dell'utente)
 **Prima di scaricare o installare QUALSIASI cosa sul Mac** (toolchain, test, ISO, pacchetti brew, repo grandi, qualunque cosa), fermarsi e **ricordare all'utente di fare il backup completo** (Time Machine). Si procede solo dopo che l'utente ha **confermato esplicitamente** che il backup è fatto. Nessuna eccezione, anche per download piccoli.
@@ -19,7 +19,7 @@ Obiettivo: **dual boot** di Windows ARM64 su Apple Silicon, **senza macOS sotto*
 ## Documentazione (a ogni fine sessione, senza eccezioni)
 1. Scrivere `docs/sessions/AAAA-MM-GG-<autore>-NN.md` (un file per autore, per evitare conflitti): obiettivo, cosa è stato fatto, decisioni (con link agli ADR), risultati verificati, problemi aperti, prossimi passi.
 2. Aggiornare `docs/STATUS.md`: fase corrente, traguardi raggiunti, blocchi, da dove si riparte.
-3. Ogni decisione architetturale va in una bozza `docs/adr/bozza-<titolo>.md`; il numero si assegna al merge.
+3. Ogni decisione architetturale va in una bozza `docs/adr/draft-<title>.md`; il numero si assegna al merge.
 4. Aggiornare il contatore dei token e dei costi: `python3 -I tools/token-usage.py --autore <marco|ciani>`. Aggiorna `docs/costs/<autore>.json` e la tabella nel README.
 5. Commit e push **su un branch**, poi PR verso `main`. Mai push diretto su `main` (vedi `docs/CONTRIBUTING.md`).
 

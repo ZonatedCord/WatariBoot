@@ -2,7 +2,7 @@
 
 - Progetto: Watari Boot, sottosistema Watari EL2 · Data: 2026-10-14 · Versione: 0.1 · Stato: draft
 - Documenti: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
-- ADR (bozze): `docs/adr/bozza-el2-base-m1n1-o-nuovo.md`, `docs/adr/bozza-el2-licenza.md`; stack in `ARCHITECTURE.md` §2 (C11 freestanding + clang) e `bozza-el2-base-m1n1-o-nuovo.md` (nessun ADR-0001 separato: lo stack è imposto dal contesto del progetto).
+- ADR (bozze): `docs/adr/draft-el2-base-m1n1-or-new.md`, `docs/adr/draft-el2-license.md`; stack in `ARCHITECTURE.md` §2 (C11 freestanding + clang) e `draft-el2-base-m1n1-or-new.md` (nessun ADR-0001 separato: lo stack è imposto dal contesto del progetto).
 
 ## Fasi
 - [x] 1. Discovery — done (lettura dei documenti del repository; greenfield per il sottosistema, `edk2-apple/WatariQemuPkg/` esiste ma contiene solo driver di prova per QEMU)

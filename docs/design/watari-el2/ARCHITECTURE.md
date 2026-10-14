@@ -2,7 +2,7 @@
 
 - Progetto: Watari Boot, sottosistema Watari EL2 · Data: 2026-10-14 · Versione: 0.1 · Stato: draft
 - Documenti collegati: [PRD](PRD.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · [DESIGN-STATUS](DESIGN-STATUS.md)
-- Marcatura: **[V: fonte]** = verificato leggendo la fonte; **[I]** = ipotesi. Fonti brevi: `PB` = `re/pianoB-fattibilita.md`; `F0` = `re/f0-m1-fiq-irq.md`; `FAL` = `docs/FALLIMENTI.md`; `NTASP` = `re/ntasp-analisi.md`/`ntasp-audit-qualita.md`.
+- Marcatura: **[V: fonte]** = verificato leggendo la fonte; **[I]** = ipotesi. Fonti brevi: `PB` = `re/planB-feasibility.md`; `F0` = `re/f0-m1-fiq-irq.md`; `FAL` = `docs/FAILURES.md`; `NTASP` = `re/ntasp-analysis.md`/`ntasp-quality-audit.md`.
 
 ## 1. Fatti di base (e correzioni alle ipotesi di partenza)
 1. Il M1 implementa in hardware l'interfaccia CPU del GICv3 virtuale: 8 list register, 32 livelli di priorità, ID a 16 bit, TDIR, niente GICv4 [V: NTASP `hv_vgic.c` 51-62, via PB §1].
@@ -14,7 +14,7 @@
 7. QEMU `virt`: con `virtualization=on` e senza `secure` il conduit PSCI di QEMU è **SMC**, altrimenti HVC [V: `hw/arm/virt.c`, `machvirt_init`]. Quindi in QEMU il PSCI "guest" lo fornisce **lo strato via HVC**, e lo strato usa a sua volta il PSCI SMC di QEMU per accendere i core fisici emulati.
 
 ## 2. Scelta: estendere m1n1 hv o scrivere uno strato nuovo
-Decisione completa in `docs/adr/bozza-el2-base-m1n1-o-nuovo.md`. Sintesi:
+Decisione completa in `docs/adr/draft-el2-base-m1n1-or-new.md`. Sintesi:
 
 | Criterio | A. Estendere m1n1 hv | B. Fork di NTASP `m1n1_windows` | **C. Strato nuovo, m1n1 solo loader (scelto)** |
 |---|---|---|---|

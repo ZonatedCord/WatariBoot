@@ -10,7 +10,7 @@
 #include "acpigen.h"
 
 /* Parking protocol: versione 1 (verificato: spec MS "Multi-processor Startup for ARM Platforms" e
- * Linux/U-Boot, vedi re/f0-acpi-requisiti-windows.md). Una pagina da 4 KB distinta per CPU, BSP
+ * Linux/U-Boot, vedi re/f0-acpi-windows-requirements.md). Una pagina da 4 KB distinta per CPU, BSP
  * inclusa, a partire da T8103_PARK_BASE: base IPOTESI (da riservare davvero nell'EDK2). */
 #define T8103_PARK_BASE 0x8F0000000ull
 #define CPU(n, u, m, cl, eff) \

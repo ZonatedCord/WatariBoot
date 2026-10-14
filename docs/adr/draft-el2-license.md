@@ -1,13 +1,13 @@
 # ADR (bozza): strategia di licenza per Watari EL2 (KVM GPL-2.0, m1n1 GPL-2.0-or-later dalla 2.0.0)
 
 - Data: 2026-10-14 · Stato: **proposto** (da approvare da Marco; non è un parere legale). Il numero si assegna al merge.
-- Collegamenti: `docs/adr/bozza-el2-base-m1n1-o-nuovo.md`, `docs/design/watari-el2/RISKS.md` R-08, `CLAUDE.md` ("il codice Asahi si riusa rispettando la licenza, con un header di provenienza").
+- Collegamenti: `docs/adr/draft-el2-base-m1n1-or-new.md`, `docs/design/watari-el2/RISKS.md` R-08, `CLAUDE.md` ("il codice Asahi si riusa rispettando la licenza, con un header di provenienza").
 
 ## Contesto (fatti verificati il 2026-10-14)
 - **m1n1:** README: MIT fino alla 1.9.9; dalla 2.0.0 «GPL-2.0-or-later; any code checked in thereafter is available under the terms of the GPL exclusively». `LICENSE` = GPL-2, `LICENSE.MIT` presente, `3rdparty_licenses/`. `src/hv/hv_vm.c` e `src/main.c` hanno `SPDX: GPL-2.0-or-later`. **Il brief dava m1n1 come MIT: per il codice attuale non lo è.**
 - **KVM** (`arch/arm64/kvm/`, parte di Linux): GPL-2.0 (solo v2) [I per l'SPDX per file; la licenza di Linux nel suo insieme è GPL-2.0].
-- **Linux `irq-apple-aic.c`:** licenza non verificata (richiesta bloccata con HTTP 429); l'audit di Mu cita `m1n1/src/aic.c` come GPL-2.0-or-later [V: `re/ntasp-audit-qualita.md` §3.3]. Da controllare prima di consultarlo come riferimento esteso.
-- **NTASP `m1n1_windows`:** dichiarato MIT (`hv_vgic.c`: `BSD-2-Clause-Patent OR MIT`; `hv_psci.c`: `MIT OR BSD-3-Clause`), ma l'header del vGIC dice «Inspiration borrowed from the KVM vGIC driver»: stato incerto [V: `re/ntasp-analisi.md` §6].
+- **Linux `irq-apple-aic.c`:** licenza non verificata (richiesta bloccata con HTTP 429); l'audit di Mu cita `m1n1/src/aic.c` come GPL-2.0-or-later [V: `re/ntasp-quality-audit.md` §3.3]. Da controllare prima di consultarlo come riferimento esteso.
+- **NTASP `m1n1_windows`:** dichiarato MIT (`hv_vgic.c`: `BSD-2-Clause-Patent OR MIT`; `hv_psci.c`: `MIT OR BSD-3-Clause`), ma l'header del vGIC dice «Inspiration borrowed from the KVM vGIC driver»: stato incerto [V: `re/ntasp-analysis.md` §6].
 - **EDK2:** BSD-2-Clause-Patent. **Windows:** nessun codice Microsoft nel repository (ADR-0005).
 - Il repository Watari Boot non ha ancora un file `LICENSE` nella radice (verificato con `ls`).
 - Fatti di interfaccia (indirizzi dei registri, posizioni dei bit, ordine delle operazioni richiesto dall'hardware o dalla specifica ARM) non sono espressione creativa; lo sono la struttura, i nomi, i commenti e le scelte di implementazione di un'opera.

@@ -17,12 +17,12 @@ Formato di ogni voce:
 ## F-02 · Ripartire dal lavoro di NTASP (2026-10-12)
 - **Provato:** valutare il progetto esistente "NT for Apple Silicon" come base.
 - **Successo:** non è nativo (usa l'hypervisor m1n1 con vGIC e PSCI emulati); l'estensione HAL AIC non esiste ("Nothing's implemented yet"); il driver AICv1 è uno stub; c'è un bug in `AIC_MASK_BIT` (segnalato: NT-for-ASi/apple_silicon_platforms_mu#23).
-- **Lezione:** prima di costruire sul codice di altri, va controllata la qualità e non solo l'esistenza (`re/ntasp-audit-qualita.md`). Decisione: strada indipendente (ADR-0007).
+- **Lezione:** prima di costruire sul codice di altri, va controllata la qualità e non solo l'esistenza (`re/ntasp-quality-audit.md`). Decisione: strada indipendente (ADR-0007).
 
 ## F-03 · "Basta non usare le FIQ" (ADR-0004), 2026-10-12/13
 - **Provato:** progettare un M1 in cui Windows riceve tutto come IRQ.
 - **Successo:** il **timer architetturale ARM del M1 è cablato solo in FIQ** (DTS `t8103.dtsi`, `AIC_FIQ`). Non esiste un modo documentato per averlo in IRQ, e macOS stesso lo usa in FIQ. Il bit `ACC_OVRD_CONVERT_SIQ_TO_IRQ` esiste in m1n1 ma nessuno l'ha mai usato (`re/f0-m1-fiq-irq.md`, `re/f0-timer-irq-hw.md`).
-- **Lezione:** l'ipotesi "niente FIQ" era sbagliata in partenza per il timer. Le piste rimaste sono in `docs/adr/bozza-strategia-timer-fiq.md`.
+- **Lezione:** l'ipotesi "niente FIQ" era sbagliata in partenza per il timer. Le piste rimaste sono in `docs/adr/draft-timer-fiq-strategy.md`.
 
 ## F-04 · Il precedente del Raspberry Pi 3 come prova (2026-10-13)
 - **Provato:** usare Windows su Pi 3, che non ha GIC, come prova che un controller non-GIC si può fornire da fuori.
@@ -32,12 +32,12 @@ Formato di ogni voce:
 ## F-05 · Estensioni HAL per controller di interrupt (2026-10-13)
 - **Provato:** cercare un meccanismo ufficiale con cui un'estensione HAL fornisca il controller di interrupt.
 - **Successo:** secondo l'autore di `Wack0/NtHalExts`, le estensioni HAL per i controller di interrupt *"were added in 789x but removed again in 799x"*, cioè rimosse prima di Windows 8 RTM. Il suo `halextbcm2709` funziona cercando per pattern le funzioni interne non esportate, ed è collaudato solo su Windows 8 ARM32. Gli unici esempi pubblici moderni (i.MX) sono timer e DMA.
-- **Lezione:** non esiste una via ufficiale; resta quella "con funzioni interne", fragile (`re/f0-nthalexts-pista.md`).
+- **Lezione:** non esiste una via ufficiale; resta quella "con funzioni interne", fragile (`re/f0-nthalexts-lead.md`).
 
 ## F-06 · Togliere il GIC in QEMU per gli esperimenti (2026-10-12)
 - **Provato:** usare QEMU `virt` senza GIC.
 - **Successo:** `gic-version` accetta solo 2/3/4/x-5/host/max; `-acpitable` vale solo per i386.
-- **Lezione:** in QEMU il "non-GIC" si simula solo nelle tabelle ACPI, quindi gli esperimenti danno un "no" affidabile ma solo un "sì" debole. Un vero banco senza GIC richiede un modello AIC scritto da noi (`re/f0-qemu-aic-modelli.md`).
+- **Lezione:** in QEMU il "non-GIC" si simula solo nelle tabelle ACPI, quindi gli esperimenti danno un "no" affidabile ma solo un "sì" debole. Un vero banco senza GIC richiede un modello AIC scritto da noi (`re/f0-qemu-aic-models.md`).
 
 ## F-07 · Percorsi con spazi (2026-10-13)
 - **Successo:** `edksetup.sh` di EDK2 e il comando `screendump` del monitor QEMU falliscono se il percorso contiene spazi (il disco si chiama "Arthur Fonzarelli").
@@ -62,7 +62,7 @@ Formato di ogni voce:
 
 ## F-11 · Windows non avvia con MADT+GTDT di acpigen (modello qemu-virt) (2026-10-14) — RISOLTO
 - **Provato:** firmware `QEMU_EFI-watari.fd` (driver `WatariAcpiOverride`, che a ReadyToBoot sostituisce MADT e GTDT con quelle di `acpigen -m qemu-virt`) e avvio del Windows 11 installato (N2), con HVF, disco `snapshot=on`. Windows caricava `ntoskrnl.exe` e si bloccava (CPU 100%, logo TianoCore). Con il firmware originale: desktop in meno di 2 minuti (`logs/screens/n4w-base.png`).
-- **Causa (verificato):** nella nostra MADT mancava la **GIC MSI Frame** (sottotabella tipo 0x0D, QEMU v2m a 0x08020000, SPI base 0x50, count 0x40). Senza MSI Windows non può usare gli interrupt MSI di NVMe/xHCI e si blocca dopo il caricamento del kernel (spiegazione ipotesi; l'effetto e' verificato dall'ablazione sotto). Il confronto campo per campo e' in `re/f11-confronto-acpi.md` (tabelle originali lette dalla RAM del guest).
+- **Causa (verificato):** nella nostra MADT mancava la **GIC MSI Frame** (sottotabella tipo 0x0D, QEMU v2m a 0x08020000, SPI base 0x50, count 0x40). Senza MSI Windows non può usare gli interrupt MSI di NVMe/xHCI e si blocca dopo il caricamento del kernel (spiegazione ipotesi; l'effetto e' verificato dall'ablazione sotto). Il confronto campo per campo e' in `re/f11-acpi-comparison.md` (tabelle originali lette dalla RAM del guest).
 - **Esiti delle ipotesi** (script `/tmp/watari-data/run-f11/t.sh`, 4 minuti, `snapshot=on`; "blocco" = ancora sul logo TianoCore a 230 s):
   - H0 (ripetizione del problema, firmware com'era): blocco. Riprodotto.
   - H1 (parking disattivato: version 0, address 0): blocco da solo. Non e' la causa.

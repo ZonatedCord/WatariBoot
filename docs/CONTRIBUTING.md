@@ -34,7 +34,7 @@ Regole:
 |---|---|
 | `docs/STATUS.md` | Si modifica **solo** nella PR che chiude un traguardo, oppure nella PR di fine sessione. Mai in PR che fanno altro. |
 | Diario delle sessioni | Un file per autore e per sessione: `docs/sessions/AAAA-MM-GG-<autore>-NN.md`. Così due persone non scrivono mai lo stesso file. |
-| ADR | La bozza si scrive come `docs/adr/bozza-<titolo>.md`. **Il numero si assegna al merge** (il primo libero), così non ci sono collisioni. |
+| ADR | La bozza si scrive come `docs/adr/draft-<title>.md`. **Il numero si assegna al merge** (il primo libero), così non ci sono collisioni. |
 | `docs/PLAN.md` | Si cambia solo insieme a un ADR. |
 | `CLAUDE.md` | Si cambia solo se siete d'accordo tutti e due. |
 

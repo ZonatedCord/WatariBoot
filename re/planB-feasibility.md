@@ -7,7 +7,7 @@ Metodo: solo lettura (`gh api`, WebSearch, WebFetch), niente clone, niente downl
 Il piano B e` **teoricamente possibile: SI, confidenza alta (~85%)**. Non c'e` nessun ostacolo architetturale; i rischi sono di ingegneria e di tempo, non di fattibilita.
 
 Le tre prove piu` forti:
-1. **Windows ARM64 avvia su un GICv3 con CPU interface virtuale e distributor emulato.** Nel nostro repo V1 (QEMU/HVF, GICD + GICR + MSI frame + PSCI) arriva alla schermata di blocco [verificato: docs/FALLIMENTI.md F-11, F-14 "V1 ... la raggiunge a 120 s"]. In piu` Windows 11 ARM64 gira come guest KVM su M1 sotto Asahi Linux (`-cpu host -enable-kvm`, ramfb) [verificato: AsahiLinux/docs `docs/sw/windows-11-vm.md`]: la combinazione "M1 + vGICv3 hardware + Windows" e` gia` in uso, anche se con ARM virtio e non con periferiche reali.
+1. **Windows ARM64 avvia su un GICv3 con CPU interface virtuale e distributor emulato.** Nel nostro repo V1 (QEMU/HVF, GICD + GICR + MSI frame + PSCI) arriva alla schermata di blocco [verificato: docs/FAILURES.md F-11, F-14 "V1 ... la raggiunge a 120 s"]. In piu` Windows 11 ARM64 gira come guest KVM su M1 sotto Asahi Linux (`-cpu host -enable-kvm`, ramfb) [verificato: AsahiLinux/docs `docs/sw/windows-11-vm.md`]: la combinazione "M1 + vGICv3 hardware + Windows" e` gia` in uso, anche se con ARM virtio e non con periferiche reali.
 2. **L'M1 ha l'interfaccia CPU GICv3 virtuale in hardware, con 8 list register.** [verificato: NTASP/hv_vgic.c righe 51-62: "8 list registers", 32 livelli di priorita`, 16 bit di ID, TDIR supportato, no GICv4, no legacy; KVM/hyp/vgic-v3-sr.c ricava `max_lr_idx` da `ICH_VTR_EL2`, e KVM fa girare guest GICv3 su M1 dal 5.14.] Va emulato solo il distributor/redistributor (MMIO), cosa che lo stage-2 consente.
 3. **I pezzi di hypervisor su M1 esistono e funzionano**: m1n1 `hv` (stage-2, trap MMIO, piu` vCPU, timer guest via FIQ, PSCI/smp) e il patch set KVM "Initial host support for the Apple M1" (Zyngier, 2021, in 5.14). E NTASP li ha gia` uniti in un `hv_vgic.c` (incompleto).
 
@@ -35,12 +35,12 @@ Cosa sa fare:
 
 ## 3. NTASP `m1n1_windows`
 
-- Righe: `hv_vgic.c` **1900**, `hv_psci.c` **1744** [verificato: `gh api ... | wc -l`]. Licenza: SPDX `BSD-2-Clause-Patent OR MIT` (vgic), `MIT OR BSD-3-Clause` (psci) [verificato: re/ntasp-analisi.md par. 6]. L'intestazione di hv_vgic.c dice "Inspiration borrowed from the KVM vGIC driver": rischio di contaminazione GPL-2.0 da verificare file per file [verificato: header; conseguenza: ipotesi].
+- Righe: `hv_vgic.c` **1900**, `hv_psci.c` **1744** [verificato: `gh api ... | wc -l`]. Licenza: SPDX `BSD-2-Clause-Patent OR MIT` (vgic), `MIT OR BSD-3-Clause` (psci) [verificato: re/ntasp-analysis.md par. 6]. L'intestazione di hv_vgic.c dice "Inspiration borrowed from the KVM vGIC driver": rischio di contaminazione GPL-2.0 da verificare file per file [verificato: header; conseguenza: ipotesi].
 - **Stato di completezza** (marcatori nel sorgente) [verificato: hv_vgic.c]: ISPENDR/ICPENDR/ISACTIVER/ICACTIVER "not implemented" (righe 487, 527, 565, 602); "bank GICD_IGROUPR0 for cores 0-7 ... since we're booting with 1 core atm, we can ignore" (368, 708); molte `TODO: do the AIC operation associated with this` (1082-1224); "we only support the timer interrupt right now" (634, 795); GICD_SGIR e ICC_SGI1R: azioni "TODO: actually do the action here" (1005, 1014); ITS mappato ma "Disabled for now" (1880-1887). `ENABLE_VGIC_MODULE` e` una macro di compilazione.
 - **Iniezione timer**: `hv_exc.c` di NTASP chiama `hv_vgic3_inject_irq` per i timer quando c'e` un LR libero, altrimenti accoda in `timer_queue` (righe 186-239, "TODO: proper injection") [verificato]. Priorita` lette per INTID 17/18: da controllare (PPI timer EL1 sono 27/30 in GIC standard) [ipotesi: potrebbe essere una mappatura interna].
 - **PSCI**: `hv_psci.c` e` "a straight port of the implementation in ARM Trusted Firmware-A", con `CPU_ON` (righe 487-488, 1687), alberi di power domain per T8103/T8112/T600x, ma molti "TODO" (SYSTEM_OFF come placeholder reboot, deep sleep non fatto) [verificato].
-- **Windows ci fa il boot?** Non c'e` prova pubblica. Il README di Mu dice "hangs on the handoff between bootloader and kernel"; il sito dice "barely booting ... only Windows to Go boots tested" (vedi `re/ntasp-analisi.md` par. 4) [verificato per quanto pubblico; in tensione tra loro].
-- **Riuso**: come **riferimento di struttura e di registri** (offset GICD/GICR, layout LR, albero PSCI) ha valore; come codice da portare e` immaturo (1 core, pending/active mancanti, nessun SMP provato). Meglio un nostro vGIC piccolo e testato, guardando NTASP e KVM come riferimento [ipotesi]. Il giudizio di qualita` del loro lato UEFI (`re/ntasp-audit-qualita.md`: "da riscrivere") suggerisce cautela anche qui.
+- **Windows ci fa il boot?** Non c'e` prova pubblica. Il README di Mu dice "hangs on the handoff between bootloader and kernel"; il sito dice "barely booting ... only Windows to Go boots tested" (vedi `re/ntasp-analysis.md` par. 4) [verificato per quanto pubblico; in tensione tra loro].
+- **Riuso**: come **riferimento di struttura e di registri** (offset GICD/GICR, layout LR, albero PSCI) ha valore; come codice da portare e` immaturo (1 core, pending/active mancanti, nessun SMP provato). Meglio un nostro vGIC piccolo e testato, guardando NTASP e KVM come riferimento [ipotesi]. Il giudizio di qualita` del loro lato UEFI (`re/ntasp-quality-audit.md`: "da riscrivere") suggerisce cautela anche qui.
 
 ## 4. Timer e FIQ nel piano B
 
@@ -54,7 +54,7 @@ Cosa sa fare:
 
 - **Windows -> ICC_SGI1R_EL1**: trap a EL2 (`ICH_HCR_EL2.TALL1`... o TC; KVM usa `vgic_v3_dispatch_sgi` in `vgic-mmio-v3.c` riga 1101 [verificato]) e routing verso la vCPU destinataria; la vCPU di destinazione viene "sbloccata" da `kvm_vcpu_kick` (vgic.c righe 452/508/850) [verificato].
 - **Sul M1** l'IPI fisico e` AIC: AICv1 ha IPI legacy (`AIC_IPI_SEND 0x2008` con bit per CPU) e Fast IPI (registri `IPI_*` di sistema) [verificato: irq-apple-aic.c riga 88-93, 843; hv_exc.c 649]. Linux su M1 usa IPI via AIC nella variante `aic1_fipi_info` / `aic1_local_fipi_info` [verificato: irq-apple-aic.c 272-316]. Nel nostro strato: SGI di Windows -> aggiunge l'SGI al pending della vCPU target -> invia un IPI AIC (legacy o fast) alla CPU fisica -> a EL2 la FIQ/IRQ IPI inietta nell'LR. Hypervisor 1:1 vCPU = core fisico, nessuno scheduler. [ipotesi di progetto, supportata dai singoli meccanismi verificati]. m1n1 fa gia` il pezzo inferiore (`smp_send_ipi`, hv.c righe 375-401).
-- **Nota di sicurezza**: il nostro stesso `docs/FALLIMENTI.md` F-15 mostra che Windows con parking protocol va in 0x5C; con PSCI+vGIC (V1) invece e` stato visto avviare con `-smp 4`. Con il piano B si usa PSCI (CPU_ON), che e` il percorso gia` collaudato. [verificato: F-15, V1]
+- **Nota di sicurezza**: il nostro stesso `docs/FAILURES.md` F-15 mostra che Windows con parking protocol va in 0x5C; con PSCI+vGIC (V1) invece e` stato visto avviare con `-smp 4`. Con il piano B si usa PSCI (CPU_ON), che e` il percorso gia` collaudato. [verificato: F-15, V1]
 
 ## 6. Periferiche in passthrough
 
@@ -97,7 +97,7 @@ Stima del lavoro (uno sviluppatore + agenti Sonnet, ore di calendario realistich
 | Debug su hardware (hang, DART, cache, errata) | 4-8 |
 | **(b) Aggiunta fino alla schermata di blocco** | **14-24** |
 
-Percorso minimo consigliato per ridurre (b): avvio da **USB-C** con tastiera e disco USB (XHCI standard) e **senza** ANS nativo, come fa NTASP ("Windows to Go") [verificato: re/ntasp-analisi.md par. 4, 5]; ANS e SPI dopo il traguardo.
+Percorso minimo consigliato per ridurre (b): avvio da **USB-C** con tastiera e disco USB (XHCI standard) e **senza** ANS nativo, come fa NTASP ("Windows to Go") [verificato: re/ntasp-analysis.md par. 4, 5]; ANS e SPI dopo il traguardo.
 
 Rischi principali, in ordine:
 1. **Errata SEIS/SError dell'M1 sul vGIC** (trap non gestiti = panic dell'hypervisor) [verificato: commit KVM d11a327ed9, cae889302e]. Alto, ma KVM mostra la strada.

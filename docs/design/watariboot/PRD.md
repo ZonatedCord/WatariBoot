@@ -2,7 +2,7 @@
 
 - Progetto: Watari Boot (Windows ARM64 nativo su Apple Silicon, primo target MacBook Pro 13" M1, SoC t8103, board j293)
 - Data: 2026-10-12 · Versione: 0.1 · Stato: draft
-- Documenti collegati: [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · ADR: [0001](../../adr/0001-boot-nativo-senza-hypervisor.md), [0002](../../adr/0002-edk2-invece-di-uboot.md), [0003](../../adr/0003-parking-protocol-invece-di-psci.md), [0004](../../adr/0004-irq-invece-di-fiq.md), [0005](../../adr/0005-nessun-binario-microsoft-nel-repo.md)
+- Documenti collegati: [ARCHITECTURE](ARCHITECTURE.md) · [INTERFACES](INTERFACES.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md) · ADR: [0001](../../adr/0001-native-boot-without-hypervisor.md), [0002](../../adr/0002-edk2-instead-of-uboot.md), [0003](../../adr/0003-parking-protocol-instead-of-psci.md), [0004](../../adr/0004-irq-instead-of-fiq.md), [0005](../../adr/0005-no-microsoft-binaries-in-repo.md)
 
 ## Convenzione di marcatura
 Ogni affermazione hardware o su Windows e' marcata `[verificato: fonte]` oppure `[ipotesi]`. Le affermazioni che arrivano solo da `docs/PLAN.md` e non sono state riscontrate su fonti indipendenti sono `[ipotesi]` (anche se plausibili). Quasi tutto cio' che riguarda gli interni di Windows resta `[ipotesi]` finche' la Fase 0 non e' conclusa.
@@ -11,13 +11,13 @@ Ogni affermazione hardware o su Windows e' marcata `[verificato: fonte]` oppure 
 Un MacBook Pro M1 13" non puo' avviare Windows ARM64 in modo nativo. Le uniche strade esistenti usano una VM/hypervisor, che non da' accesso diretto all'hardware (GPU, tutti i core alle frequenze piene). Il progetto Asahi ha escluso il boot nativo di Windows perche' ritiene necessario modificare il kernel Windows [ipotesi: affermazione riportata dal piano, fonte primaria non verificata]. Il progetto verifica se esiste un percorso senza modificare Windows, usando solo i meccanismi di estensione previsti dalla piattaforma.
 
 ## 2. Obiettivi
-- O1. Boot nativo di Windows ARM64 non modificato sul M1 (catena m1n1 -> EDK2 -> Windows), senza hypervisor ne' emulatore ([ADR-0001](../../adr/0001-boot-nativo-senza-hypervisor.md)).
+- O1. Boot nativo di Windows ARM64 non modificato sul M1 (catena m1n1 -> EDK2 -> Windows), senza hypervisor ne' emulatore ([ADR-0001](../../adr/0001-native-boot-without-hypervisor.md)).
 - O2. Uso di tutti gli 8 core (4 P + 4 E) con scheduler consapevole delle classi di efficienza.
 - O3. Installazione e avvio da SSD interno (ANS2) con desktop utilizzabile con periferiche USB.
 - O4. Gestione energetica (frequenze, sleep) e periferiche interne (tastiera/trackpad, Wi-Fi, audio, batteria).
 - O5. A lungo termine: GPU tramite driver WDDM.
 - O6. Generalizzazione ad altri Apple Silicon (ACPI generate dall'ADT a ogni avvio).
-- O7. Riproducibilita': ogni traguardo e' ricostruibile da repo + istruzioni, con dati Microsoft fuori dal repo ([ADR-0005](../../adr/0005-nessun-binario-microsoft-nel-repo.md)).
+- O7. Riproducibilita': ogni traguardo e' ricostruibile da repo + istruzioni, con dati Microsoft fuori dal repo ([ADR-0005](../../adr/0005-no-microsoft-binaries-in-repo.md)).
 
 ## 3. Non-obiettivi
 - NG1. Modificare ntoskrnl, HAL o altri binari Microsoft (patch del kernel solo come piano B di ricerca, non distribuibile, e solo per decisione esplicita dell'utente).

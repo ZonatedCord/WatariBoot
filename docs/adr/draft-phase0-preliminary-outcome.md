@@ -1,7 +1,7 @@
 # ADR (bozza): Esito preliminare della Fase 0 e soglia del piano B
 
 - Data: 2026-10-13 · Stato: **proposto**. Il numero si assegna al merge. Non modifica ADR-0001 né ADR-0004: ne precisa le condizioni di revisione.
-- Collegamenti: [re/f0-verdetto-preliminare.md](../../re/f0-verdetto-preliminare.md) · [ADR-0001](0001-boot-nativo-senza-hypervisor.md) · [ADR-0004](0004-irq-invece-di-fiq.md) · [bozza strategia timer](bozza-strategia-timer-fiq.md) · [ESPERIMENTO-F0](../design/watariboot/ESPERIMENTO-F0.md) · [RISKS R-01, R-02, R-03, R-06](../design/watariboot/RISKS.md)
+- Collegamenti: [re/f0-preliminary-verdict.md](../../re/f0-preliminary-verdict.md) · [ADR-0001](0001-native-boot-without-hypervisor.md) · [ADR-0004](0004-irq-instead-of-fiq.md) · [bozza strategia timer](draft-timer-fiq-strategy.md) · [ESPERIMENTO-F0](../design/watariboot/EXPERIMENT-F0.md) · [RISKS R-01, R-02, R-03, R-06](../design/watariboot/RISKS.md)
 
 ## Contesto
 Le ricerche A1-A6 e A8-A10 sono concluse. Lo stato delle prove, severo:
@@ -31,7 +31,7 @@ Le ricerche A1-A6 e A8-A10 sono concluse. Lo stato delle prove, severo:
 - **E. Rimandare il giudizio all'hardware (Fase 3).** Pro: l'unica prova definitiva. Contro: richiede prima firmware EDK2 e debug host, e un fallimento alla Fase 3 costerebbe molto di più di un fallimento ora. Scartata come unica strategia.
 
 ## Conseguenze
-- La Fase 0 ha un criterio di chiusura esplicito (documentato in `re/f0-verdetto-preliminare.md` sez. 4) e una soglia fissata in anticipo, che riduce il rischio di spostare l'asticella a posteriori.
+- La Fase 0 ha un criterio di chiusura esplicito (documentato in `re/f0-preliminary-verdict.md` sez. 4) e una soglia fissata in anticipo, che riduce il rischio di spostare l'asticella a posteriori.
 - Il Gate B resta lungo (3-5 settimane di calendario [ipotesi]) e con spazio disco insufficiente (75-115 GiB necessari, circa 53 GiB liberi, A5): serve una decisione dell'utente su disco esterno o altro host del debugger.
 - Ogni download (WDK, QEMU, ISO, toolchain) richiede il backup Time Machine confermato dall'utente.
 - Se T1, T2 o T3 si verificano, l'utente dovrà scegliere fra piano B (EL2 con emulazione di GICD e GICR, che non è "minimo" e va stimato [ipotesi]), uno stub PSCI/HVC limitato al solo avvio dei core, reverse engineering, oppure l'abbandono dell'obiettivo nativo. Il costo del piano B non è ancora noto.

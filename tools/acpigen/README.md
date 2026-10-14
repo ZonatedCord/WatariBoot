@@ -4,7 +4,7 @@ Libreria C11 e CLI che generano in binario le tabelle ACPI MADT (GICC, GICD e GI
 
 Uso: `make -C tools/acpigen` poi `build/acpigen <madt|gtdt|pptt|csrt|fadt|dbg2> [-m t8103|qemu-virt] -o file.bin`. Test: `make -C tools/acpigen test`. Pulizia: `make clean`. CSRT esiste solo per t8103, DBG2 solo per qemu-virt (altrimenti errore).
 
-## Comportamento (da `re/f0-acpi-requisiti-windows.md`, tabella sez. 5)
+## Comportamento (da `re/f0-acpi-windows-requirements.md`, tabella sez. 5)
 - GICC: `parking_protocol_version = 1` e `parked_address` non zero, allineato 4 KB, unico per CPU (BSP compresa). `acpigen_build_madt` ritorna `ACPIGEN_E_INVAL` se violato; controlla anche UID unici e `cpu_interface_number` (= indice originale in `cpus[]`) unico e != 0xFFFFFFFF. Versione 0 ammessa solo con indirizzo 0 (PSCI puro).
 - La CPU di boot (`madt_opts.boot_index`) e' il primo GICC; le altre seguono nell'ordine originale.
 - `GICC.GICR base = 1` per t8103 (come Pi3), 0 per qemu-virt. Nessuna GICD segnaposto per t8103 (`gicd = NULL`); qemu-virt ha GICD reale e una GICR Structure (tipo 0x0E).

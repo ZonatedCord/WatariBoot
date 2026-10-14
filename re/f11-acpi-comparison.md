@@ -39,4 +39,4 @@ Finale: identica byte per byte all'originale, tranne OEM id/checksum. Le differe
 FADT: PSCI compliant = 1, HVC = 1, HW_REDUCED = 1 (quindi con PSCI il parking non e' usato). DBG2 originale 87 byte, la nostra 84: non installata. PPTT, IORT, MCFG, SPCR: lasciate originali.
 
 ## Conclusione
-Causa di F-11: la **GIC MSI Frame mancante**. Ablazione (`docs/FALLIMENTI.md`): H1, H2, H3 da soli o insieme non bastano; MSI Frame da sola basta (anche con parking v1, GICD dopo i GICC e GTDT tutti ALWAYS_ON).
+Causa di F-11: la **GIC MSI Frame mancante**. Ablazione (`docs/FAILURES.md`): H1, H2, H3 da soli o insieme non bastano; MSI Frame da sola basta (anche con parking v1, GICD dopo i GICC e GTDT tutti ALWAYS_ON).

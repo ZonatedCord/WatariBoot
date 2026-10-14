@@ -1,7 +1,7 @@
 # Stato del progetto
 
 **Aggiornato:** 2026-10-14 (sessione marco-01, notte chiusa)
-**Strategia (2026-10-14):** **piano B adottato**, Windows in dual boot sopra uno strato EL2 minimo (`docs/adr/bozza-piano-b-strato-el2.md`, `re/pianoB-fattibilita.md`). La strada nativa pura è chiusa: GIC obbligatorio (V2), parking in deadlock (V3, F-15).
+**Strategia (2026-10-14):** **piano B adottato**, Windows in dual boot sopra uno strato EL2 minimo (`docs/adr/draft-plan-b-el2-layer.md`, `re/planB-feasibility.md`). La strada nativa pura è chiusa: GIC obbligatorio (V2), parking in deadlock (V3, F-15).
 **Fase corrente:** 0, lo spike sul HAL di Windows ARM64 e i controller di interrupt non-GIC
 
 ## Traguardi
@@ -12,12 +12,12 @@
 - [x] Analisi e audit di NTASP: strada indipendente (ADR-0007), bug segnalato con la issue NT-for-ASi/apple_silicon_platforms_mu#23
 - [x] Gate A, primo giro: A3, A5, A6 (PR #15). Scoperta: il timer del M1 è solo FIQ, vedi la bozza di ADR "strategia timer FIQ"
 - [x] Gate A, secondo e terzo giro: A1, A2, A4, A7–A11 (PR #22 e la PR di questo giro). **Gate A completo.**
-- [x] Pista `Wack0/NtHalExts` letta (README): l'API ufficiale per i controller di interrupt è stata **rimossa** da Microsoft prima di Windows 8; l'estensione funziona cercando funzioni interne. Vedi `re/f0-nthalexts-pista.md`.
+- [x] Pista `Wack0/NtHalExts` letta (README): l'API ufficiale per i controller di interrupt è stata **rimossa** da Microsoft prima di Windows 8; l'estensione funziona cercando funzioni interne. Vedi `re/f0-nthalexts-lead.md`.
 - [ ] Studiare il codice di `halextbcm2709.c`/`halextapi.c` (solo lettura, senza copiare gli header DDK).
-- [x] **Gate B, B1+B2** (2026-10-13): QEMU 11.1.2, EDK2 `edk2-stable202608` compilato (ArmVirtQemu AARCH64, CLANGDWARF) e avviato in QEMU fino al Boot Manager UEFI. Elenco di cosa è installato e come rimuoverlo: `docs/INSTALLATO.md` + `tools/uninstall-watari.sh`.
+- [x] **Gate B, B1+B2** (2026-10-13): QEMU 11.1.2, EDK2 `edk2-stable202608` compilato (ArmVirtQemu AARCH64, CLANGDWARF) e avviato in QEMU fino al Boot Manager UEFI. Elenco di cosa è installato e come rimuoverlo: `docs/INSTALLED.md` + `tools/uninstall-watari.sh`.
 - [x] **V0 (TCG):** il Setup di Windows 11 ARM64 (ISO ufficiale it-it build 26300, SHA-256 in `WatariBoot-data/iso/SHA256.txt`) gira in QEMU sul **nostro** EDK2. Screenshot: `WatariBoot-data/logs/screens/tcg-c1.png`. Script: `tools/run-qemu-windows.sh`.
 - [x] **HVF (risolto 2026-10-14, F-08):** il nostro EDK2 si bloccava su "Start boot option" (`[Bds]BdsWait(5)`). Diagnosi in corso (un agente stava provando il firmware incluso in QEMU, una build RELEASE, GICv2). **Da riprendere qui:** controllare `git status` sul branch locale `marco/gate-b-v0` per eventuali modifiche lasciate dall'agente.
-- [x] **Notte 2026-10-14 (chiusa, PR #27, riepilogo in `ralph/PROGRESS-notte.md`; si riparte da F-11):** lavoro autonomo pianificato secondo `ralph/NOTTE.md` (N1 HVF, N2 installazione automatica, N3 acpigen, N4 V1), sul branch `marco/notte-2026-10-14`, diario in `ralph/PROGRESS-notte.md`. **N1 e N2 fatti** (Windows 11 installato in modo automatico con HVF, desktop verificato); N3 fatto; N4 build ok ma Windows non parte con le nostre tabelle (F-11), da lì si riparte.
+- [x] **Notte 2026-10-14 (chiusa, PR #27, riepilogo in `ralph/PROGRESS-night.md`; si riparte da F-11):** lavoro autonomo pianificato secondo `ralph/NIGHT.md` (N1 HVF, N2 installazione automatica, N3 acpigen, N4 V1), sul branch `marco/notte-2026-10-14`, diario in `ralph/PROGRESS-night.md`. **N1 e N2 fatti** (Windows 11 installato in modo automatico con HVF, desktop verificato); N3 fatto; N4 build ok ma Windows non parte con le nostre tabelle (F-11), da lì si riparte.
 - [x] **V1** (2026-10-14): Windows avvia con le nostre MADT+GTDT (mancava la GIC MSI Frame, F-11 risolto). `docs/img/v1-ok.png`.
 - [x] **V2**: con la MADT senza GICD Windows si blocca, quindi sembra richiedere il GICD.
 - [x] **V3**: Windows **usa il parking protocol** (mailbox della CPU1 scritta, il nostro stub salta), poi bugcheck `HAL_INITIALIZATION_FAILED (0x5C)` (F-15): problema di handshake da risolvere.
@@ -41,16 +41,16 @@
 - Serve un **debug host** (un Raspberry Pi 5 o un vecchio portatile) dalla Fase 2.
 
 ## Verdetto preliminare (A7, prima della pista halextbcm2709)
-- **Aggiornato dopo NtHalExts:** nativo pulito ~5%, nativo con funzioni interne ~20%, piano B ~50%, altro ~25% (`re/f0-nthalexts-pista.md`). Le stime di A7 sono in `re/f0-verdetto-preliminare.md`.
-- La soglia del piano B la decide l'utente (bozza ADR `bozza-esito-fase0-preliminare.md`).
+- **Aggiornato dopo NtHalExts:** nativo pulito ~5%, nativo con funzioni interne ~20%, piano B ~50%, altro ~25% (`re/f0-nthalexts-lead.md`). Le stime di A7 sono in `re/f0-preliminary-verdict.md`.
+- La soglia del piano B la decide l'utente (bozza ADR `draft-phase0-preliminary-outcome.md`).
 
 ## Per Ciani (se lavora oggi)
 Niente issue nuove, per non mandare notifiche. Scegli uno di questi, su un branch `ciani/...` e con **una sola PR** alla fine:
-1. **Studio di `halextbcm2709`** (solo lettura su GitHub): come registra il controller di interrupt nell'HAL di NT (callback, strutture, IPI). Output: una sezione in `re/f0-nthalexts-pista.md`.
-2. **Correzioni di `tools/acpigen`** da A2 (`re/f0-acpi-requisiti-windows.md`, sezione discrepanze): parking version 1 + indirizzo, CPU di boot per prima, GICR=1, niente GICD segnaposto; poi i generatori FADT e DBG2. Criterio: `make -C tools/acpigen test` verde.
+1. **Studio di `halextbcm2709`** (solo lettura su GitHub): come registra il controller di interrupt nell'HAL di NT (callback, strutture, IPI). Output: una sezione in `re/f0-nthalexts-lead.md`.
+2. **Correzioni di `tools/acpigen`** da A2 (`re/f0-acpi-windows-requirements.md`, sezione discrepanze): parking version 1 + indirizzo, CPU di boot per prima, GICR=1, niente GICD segnaposto; poi i generatori FADT e DBG2. Criterio: `make -C tools/acpigen test` verde.
 
 ## Da decidere (non bloccanti)
 - **Organizzazione GitHub:** facoltativa e rimandabile. Il nome è da scegliere (`watari` è occupato, `watariboot` è libero). Va creata dal browser, poi si trasferisce la repo (la storia si conserva e il vecchio indirizzo viene reindirizzato). Riservare il nome prima di qualsiasi annuncio pubblico.
 
 ## Da dove si riparte
-Vedi `docs/sessions/2026-10-12-marco-01.md` (ultime voci) e `ralph/PROGRESS-fase0.md`. Prima azione: analizzare `halextbcm2709` (lettura su GitHub, senza copiare gli header DDK).- Fallimenti e lezioni: `docs/FALLIMENTI.md` (letto da tutte le sessioni).
+Vedi `docs/sessions/2026-10-12-marco-01.md` (ultime voci) e `ralph/PROGRESS-phase0.md`. Prima azione: analizzare `halextbcm2709` (lettura su GitHub, senza copiare gli header DDK).- Fallimenti e lezioni: `docs/FAILURES.md` (letto da tutte le sessioni).

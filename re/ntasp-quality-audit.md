@@ -99,7 +99,7 @@ Voto: da riscrivere. Il blocco GIC/ITS va tolto, e il resto va derivato dall'ADT
 Voto: da riscrivere.
 
 ### 2.3 CSRT e BERT (T810X)
-- `T810X/AcpiTables/CSRT.aslc` (650 byte): solo header di licenza e commento "Why do we need a CSRT?", nessuna struttura dati, nessun `#include`. `CPUAcpiTables.inf` righe 19-22 elenca solo `GTDT.aslc`, `MADT_Static.aslc`, `PPTT.aslc`. Quindi la CSRT non viene mai generata per T810X. [verificato] Questo smentisce la lettura "la CSRT segnala l'AIC all'OS" di `ntasp-analisi.md` sezione 3, se intesa come funzionante per M1: e` solo un'intenzione. (Il T600X ha una CSRT da 1066 byte, non verificata.)
+- `T810X/AcpiTables/CSRT.aslc` (650 byte): solo header di licenza e commento "Why do we need a CSRT?", nessuna struttura dati, nessun `#include`. `CPUAcpiTables.inf` righe 19-22 elenca solo `GTDT.aslc`, `MADT_Static.aslc`, `PPTT.aslc`. Quindi la CSRT non viene mai generata per T810X. [verificato] Questo smentisce la lettura "la CSRT segnala l'AIC all'OS" di `ntasp-analysis.md` sezione 3, se intesa come funzionante per M1: e` solo un'intenzione. (Il T600X ha una CSRT da 1066 byte, non verificata.)
 - `T810X/AcpiTables/BERT.aslc`: usa `BOOT_ERROR_REGION_BASE` (riga 36) mentre la `#define` e` commentata (riga 25): non compila, non e` nell'INF. Commento "Original source file from AmpereAltraPkg", "Tonga/Sicily". [verificato]
 Voto: CSRT da scrivere da zero; BERT da scartare.
 
@@ -145,7 +145,7 @@ Segue lo schema di AmpereAltra, sottotipo 0xA (nel registro DBG2 e` il tipo Sams
 - Il file `.dsc` cita "WOA-Project/SurfaceDuoPkg" e "mu_andromeda_platforms" come origini. [verificato]
 
 ### 3.4 Frequenza e qualita` dei commit
-- Contributori: 3 persone (amarioguy 343 commit, JamiNeedsSleep 22, graphine27 21 secondo `ntasp-analisi.md`); le piattaforme M1 le ha aggiunte un contributore esterno in 2 giorni (2025-10-26/27) con 15 commit tipo "Update DSDT.asl" x3, "Try 2", "Fixed ACPI stuffs", "Fixed ACPI tables (again) but i didnt loose my brain cells", "Fixed some weird acpi GUID errors", "Updated GUID so stuff wont freak out", poi fixup di amarioguy. [verificato nei messaggi]
+- Contributori: 3 persone (amarioguy 343 commit, JamiNeedsSleep 22, graphine27 21 secondo `ntasp-analysis.md`); le piattaforme M1 le ha aggiunte un contributore esterno in 2 giorni (2025-10-26/27) con 15 commit tipo "Update DSDT.asl" x3, "Try 2", "Fixed ACPI stuffs", "Fixed ACPI tables (again) but i didnt loose my brain cells", "Fixed some weird acpi GUID errors", "Updated GUID so stuff wont freak out", poi fixup di amarioguy. [verificato nei messaggi]
 - Messaggi del manutentore: "miscellaneous changes" (`3c4e19de`), "changes as of 6/11/2024 (GPIO and PCIe drivers verified somewhat working, working on USB-A controller bringup)" (`4f2cb26c`), "USB is being detected, bringup almost complete" (`e770157e`). Commit grandi e misti: `5d12c63b` 2023-05-07 "add Apple Silicon ACPI platform driver" +543/-13 in 13 file; `8dbbcad5` 2026-05-29 "fix Mu build" 21 file. [verificato]
 - Attivita`: ultimo commit `861dcc49` 2026-09-06 ("do not reset on memory type information change"); lunghi buchi (2024-09 -> 2025-08; 2025-12 -> 2026-05). [verificato] Nessuna storia di review (PR minime).
 
@@ -159,7 +159,7 @@ Presuppongono vGIC/PSCI emulati [tutto verificato nei file indicati]:
 5. `PrePi/PrePi.c` riga 41 e `AppleArmGenericTimerPhyCounterLib.c` riga 96: commenti/assunzioni "running inside m1n1 or another hypervisor" / "issue reboot command through hypervisor shell" (non letto il contesto completo) [verificato per la presenza dei commenti].
 6. Il README del driver AIC dice di preferire il vGIC (`Readme.md` 33). Il percorso AIC e` quello "sperimentale".
 
-Da riscrivere per il percorso nativo: MADT (togliere GICD/GICR/ITS, decidere cosa vede Windows come interrupt controller: argomento HAL extension e CSRT, vedi `ntasp-analisi.md`), GTDT (nessun GIC, FIQ), FADT (via PSCI, serve parking protocol o altro), reset/shutdown, SMP. Si possono tenere: PPTT, albero CPU della DSDT, DBG2, MPIDR dei core, mappa MMIO (dopo controllo col DTS). Il parking protocol non esiste ne` come codice ne` come campo MADT valorizzato (ricerca "park": 0 risultati). [verificato]
+Da riscrivere per il percorso nativo: MADT (togliere GICD/GICR/ITS, decidere cosa vede Windows come interrupt controller: argomento HAL extension e CSRT, vedi `ntasp-analysis.md`), GTDT (nessun GIC, FIQ), FADT (via PSCI, serve parking protocol o altro), reset/shutdown, SMP. Si possono tenere: PPTT, albero CPU della DSDT, DBG2, MPIDR dei core, mappa MMIO (dopo controllo col DTS). Il parking protocol non esiste ne` come codice ne` come campo MADT valorizzato (ricerca "park": 0 risultati). [verificato]
 
 Stima grossolana [ipotesi]: lato ACPI/firmware, ~70% dei file ACPI andrebbe riscritto per il nativo; il driver AIC va comunque riscritto per v1.
 
