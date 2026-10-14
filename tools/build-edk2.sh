@@ -11,6 +11,13 @@ TARGET="${1:-DEBUG}"
 mkdir -p "$WATARI_LOGS"
 cd "$WATARI_EDK2"
 
+# Patch Watari (tools/edk2-hvf-gicv3.patch): con HVF (Apple Silicon) ID_AA64PFR0_EL1.GIC vale 0, quindi
+# ArmGicDxe sceglieva il driver GICv2 e nessuna interruzione (timer incluso) arrivava: blocco su BdsWait(5).
+# Idempotente: si applica solo se non e' gia' applicata.
+if git -C "$WATARI_EDK2" apply --check "$HERE/edk2-hvf-gicv3.patch" 2>/dev/null; then
+    git -C "$WATARI_EDK2" apply "$HERE/edk2-hvf-gicv3.patch"
+fi
+
 export WORKSPACE="$WATARI_EDK2"
 export PACKAGES_PATH="$WATARI_EDK2"
 export PYTHON_COMMAND="${PYTHON_COMMAND:-python3}"

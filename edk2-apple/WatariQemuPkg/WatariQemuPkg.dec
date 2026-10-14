@@ -1,0 +1,11 @@
+## @file
+#  Watari Boot: pacchetto di banco di prova per QEMU (ArmVirtQemu).
+#
+#  SPDX-License-Identifier: MIT
+##
+
+[Defines]
+  DEC_SPECIFICATION              = 0x0001001A
+  PACKAGE_NAME                   = WatariQemuPkg
+  PACKAGE_GUID                   = 6a1f0c52-3b0e-4c4d-9a57-5e2d7b8c1f10
+  PACKAGE_VERSION                = 0.1

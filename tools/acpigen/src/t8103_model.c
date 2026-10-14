@@ -9,9 +9,13 @@
  */
 #include "acpigen.h"
 
+/* Parking protocol: versione 1 (verificato: spec MS "Multi-processor Startup for ARM Platforms" e
+ * Linux/U-Boot, vedi re/f0-acpi-requisiti-windows.md). Una pagina da 4 KB distinta per CPU, BSP
+ * inclusa, a partire da T8103_PARK_BASE: base IPOTESI (da riservare davvero nell'EDK2). */
+#define T8103_PARK_BASE 0x8F0000000ull
 #define CPU(n, u, m, cl, eff) \
     { .uid = (u), .mpidr = (m), .cluster = (cl), .efficiency = (eff), \
-      .parking_version = 0, .parked_address = 0 /* ipotesi */, \
+      .parking_version = 1, .parked_address = T8103_PARK_BASE + 0x1000ull * (u), \
       .enabled = 1, .is_thread = 0, .name = (n) }
 
 const acpigen_cpu t8103_cpus[T8103_NCPUS] = {
@@ -21,8 +25,8 @@ const acpigen_cpu t8103_cpus[T8103_NCPUS] = {
     CPU("firestorm2", 6, 0x10102, 1, 1), CPU("firestorm3", 7, 0x10103, 1, 1),
 };
 /* Efficiency class 0 = E-core, 1 = P-core: ipotesi (la specifica non fissa il significato per Apple).
- * Parking protocol version 0 e parked address 0: segnaposto, ipotesi.
- * GICD segnaposto, ipotesi (il t8103 usa AIC, non GIC). */
+ * GICD segnaposto, ipotesi (il t8103 usa AIC, non GIC): NON inclusa nel modello (gicd = NULL,
+ * come Pi3, verificato in edk2-platforms; vedi tabella riga 7 del documento F0). */
 const acpigen_gicd t8103_gicd = {
     .physical_base_address = 0x0 /* ipotesi */, .gic_id = 0,
     .system_vector_base = 0, .gic_version = 3 /* ipotesi */,
@@ -47,4 +51,13 @@ const acpigen_csrt_cfg t8103_csrt = {
     .shared_info = 0, .shared_info_len = 0,
     .res_type = ACPI_CSRT_TYPE_INTERRUPT, .res_subtype = 0x0001, .res_uid = 0,
     .payload = csrt_payload, .payload_len = sizeof csrt_payload,
+};
+
+/* Modello completo. Boot CPU = cpu0 (icestorm0): IPOTESI da verificare con m1n1/UEFI.
+ * GICC.GICR base = 1 come Pi3 (verificato in edk2-platforms Madt.aslc; effetto su M1: ipotesi).
+ * Nessuna DBG2: la UART di M1 non e' ancora definita. */
+const acpigen_model t8103_model = {
+    .name = "t8103", .cpus = t8103_cpus, .ncpus = T8103_NCPUS,
+    .gicd = 0, .madt_opts = { .boot_index = 0, .gicc_gicr_base = 1 },
+    .gtdt = &t8103_gtdt, .csrt = &t8103_csrt, .dbg2 = 0, .fadt = 0,
 };

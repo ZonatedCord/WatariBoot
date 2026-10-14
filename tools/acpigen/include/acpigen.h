@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /*
- * acpigen: generazione binaria di MADT, GTDT, PPTT e CSRT.
+ * acpigen: generazione binaria di MADT, GTDT, PPTT, CSRT, FADT e DBG2.
  *
  * Fonti dei layout (verificato = confrontato con la fonte):
  *  - Header SDT comune: ACPI 6.5 sez. 5.2.6; edk2 MdePkg/Include/IndustryStandard/Acpi65.h
@@ -14,6 +14,10 @@
  *    (https://cdrdv2-public.intel.com/772760/csrt.pdf, linkato da learn.microsoft.com
  *    "ACPI System Description Tables"): sez. 2 (header), 3 (Resource Group Header, 24 byte),
  *    4 (Resource Descriptor Header, 12 byte).
+ *  - GICR Structure (MADT tipo 0x0E, 16 byte), FADT rev 6 (276 byte, HW_REDUCED_ACPI bit 20,
+ *    ARM_BOOT_ARCH a offset 129, minor version a 131), DBG2 (device info rev 0, 22 byte,
+ *    porta 0x8000 seriale, sottotipo 0x0003 = Arm PL011): layout ricavati dalla specifica ACPI 6.5
+ *    a memoria, NON confrontati con Acpi65.h (non disponibile in locale): ipotesi da verificare.
  */
 #ifndef ACPIGEN_H
 #define ACPIGEN_H
@@ -62,6 +66,8 @@ typedef struct {
 #define ACPI_MADT_REVISION 6
 #define ACPI_MADT_TYPE_GICC 0x0B
 #define ACPI_MADT_TYPE_GICD 0x0C
+#define ACPI_MADT_TYPE_GICR 0x0E
+#define ACPI_GICC_INTERFACE_INVALID 0xFFFFFFFFu /* cpu_interface_number riservato */
 #define ACPI_GICC_ENABLED (1u << 0)
 
 typedef struct ACPIGEN_PACKED {
@@ -103,6 +109,14 @@ typedef struct ACPIGEN_PACKED {
     uint8_t  reserved2[3];
 } acpi_gicd;
 
+typedef struct ACPIGEN_PACKED {
+    uint8_t  type;   /* 0x0E */
+    uint8_t  length; /* 16 */
+    uint16_t reserved;
+    uint64_t discovery_range_base;
+    uint32_t discovery_range_length;
+} acpi_gicr;
+
 /* Descrizione di una CPU (condivisa da MADT e PPTT). */
 typedef struct {
     uint32_t    uid;           /* ACPI Processor UID */
@@ -123,9 +137,23 @@ typedef struct {
     uint8_t  gic_version;
 } acpigen_gicd;
 
-/* gicd NULL = nessuna GICD. Restituisce la lunghezza o un errore negativo. 0 CPU -> E_INVAL. */
+/* Opzioni del MADT (opts NULL = tutto a zero). */
+typedef struct {
+    size_t   boot_index;       /* indice in cpus[] della CPU di boot: il suo GICC va per primo */
+    uint64_t gicc_gicr_base;   /* GICC.GICR base (Pi3: 1; ipotesi per t8103) */
+    uint64_t gicr_range_base;  /* se gicr_range_length != 0 emette una GICR Structure (0x0E) */
+    uint32_t gicr_range_length;
+} acpigen_madt_opts;
+
+/* gicd NULL = nessuna GICD. Il GICC della CPU boot_index e' emesso per primo, le altre seguono
+ * nell'ordine originale; cpu_interface_number = indice originale in cpus[].
+ * Errori: 0 CPU o boot_index fuori range -> E_INVAL. Se parking_version != 0 il parked_address
+ * deve essere non zero, allineato a 4 KB e unico tra le CPU (altrimenti E_INVAL); parking_version
+ * 0 richiede parked_address 0. UID e cpu_interface_number devono essere unici e
+ * cpu_interface_number != 0xFFFFFFFF. */
 int64_t acpigen_build_madt(uint8_t *buf, size_t cap, const acpigen_oem *oem,
-                           const acpigen_cpu *cpus, size_t ncpus, const acpigen_gicd *gicd);
+                           const acpigen_cpu *cpus, size_t ncpus, const acpigen_gicd *gicd,
+                           const acpigen_madt_opts *opts);
 
 /* ---- GTDT ---- */
 #define ACPI_GTDT_REVISION 3
@@ -227,12 +255,70 @@ typedef struct {
 int64_t acpigen_build_csrt(uint8_t *buf, size_t cap, const acpigen_oem *oem,
                            const acpigen_csrt_cfg *cfg);
 
-/* ---- Modello di esempio t8103 (src/t8103_model.c) ---- */
+/* ---- FADT (rev 6, 276 byte) ---- */
+#define ACPI_FADT_REVISION 6
+#define ACPI_FADT_MINOR_VERSION 5
+#define ACPI_FADT_LENGTH 276
+#define ACPI_FADT_HW_REDUCED_ACPI (1u << 20)
+#define ACPI_FADT_ARM_PSCI_COMPLIANT (1u << 0)
+#define ACPI_FADT_ARM_PSCI_USE_HVC (1u << 1)
+
+typedef struct {
+    uint32_t flags;             /* 0 = predefinito: HW_REDUCED_ACPI */
+    uint16_t arm_boot_arch;     /* 0 = PSCI non conforme (coerente col parking protocol) */
+    uint64_t x_dsdt;            /* 0 = non ancora noto */
+} acpigen_fadt_cfg;
+
+/* cfg NULL = predefiniti (HW_REDUCED_ACPI, ARM_BOOT_ARCH 0). */
+int64_t acpigen_build_fadt(uint8_t *buf, size_t cap, const acpigen_oem *oem,
+                           const acpigen_fadt_cfg *cfg);
+
+/* ---- DBG2 ---- */
+#define ACPI_DBG2_REVISION 0
+#define ACPI_DBG2_PORT_SERIAL 0x8000
+#define ACPI_DBG2_SUBTYPE_PL011 0x0003
+#define ACPI_DBG2_SUBTYPE_16550 0x0000
+
+typedef struct {
+    uint64_t base;          /* indirizzo MMIO della porta */
+    uint32_t size;          /* lunghezza della regione */
+    uint16_t port_subtype;
+    uint8_t  access_size;   /* GAS: 3 = DWORD */
+    uint8_t  bit_width;     /* GAS */
+} acpigen_dbg2_cfg;
+
+int64_t acpigen_build_dbg2(uint8_t *buf, size_t cap, const acpigen_oem *oem,
+                           const acpigen_dbg2_cfg *cfg);
+
+/* ---- Modelli (t8103_model.c, qemu_virt_model.c) ---- */
+typedef struct {
+    const char *name;
+    const acpigen_cpu *cpus;
+    size_t ncpus;
+    const acpigen_gicd *gicd;          /* NULL = nessuna GICD */
+    acpigen_madt_opts madt_opts;
+    const acpigen_gtdt_cfg *gtdt;
+    const acpigen_csrt_cfg *csrt;      /* NULL = nessuna CSRT */
+    const acpigen_dbg2_cfg *dbg2;      /* NULL = nessuna DBG2 */
+    const acpigen_fadt_cfg *fadt;      /* NULL = predefiniti */
+} acpigen_model;
+
 #define T8103_NCPUS 8
 extern const acpigen_cpu t8103_cpus[T8103_NCPUS];
-extern const acpigen_gicd t8103_gicd;
+extern const acpigen_gicd t8103_gicd; /* segnaposto, NON usata dal modello predefinito */
 extern const acpigen_gtdt_cfg t8103_gtdt;
 extern const acpigen_csrt_cfg t8103_csrt;
+extern const acpigen_model t8103_model;
+
+#define QEMU_VIRT_NCPUS 4
+extern const acpigen_cpu qemu_virt_cpus[QEMU_VIRT_NCPUS];
+extern const acpigen_gicd qemu_virt_gicd;
+extern const acpigen_gtdt_cfg qemu_virt_gtdt;
+extern const acpigen_dbg2_cfg qemu_virt_dbg2;
+extern const acpigen_model qemu_virt_model;
+
+/* Cerca un modello per nome ("t8103", "qemu-virt"); NULL se sconosciuto. */
+const acpigen_model *acpigen_find_model(const char *name);
 
 /* Checksum: somma dei byte della tabella = 0 mod 256. Utile ai test. */
 uint8_t acpigen_sum(const uint8_t *buf, size_t len);

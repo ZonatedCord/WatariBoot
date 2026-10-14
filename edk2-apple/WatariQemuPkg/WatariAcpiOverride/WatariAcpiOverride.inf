@@ -1,0 +1,50 @@
+## @file
+#  Driver DXE che sostituisce MADT e GTDT installate da QEMU con quelle di acpigen (modello
+#  qemu-virt). I sorgenti di acpigen (tools/acpigen/src) sono compilati cosi' come sono; il
+#  loro uso di libc (memcpy/memset/strcmp) e' coperto dallo shim string.h di questa cartella.
+#
+#  SPDX-License-Identifier: MIT
+##
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WatariAcpiOverride
+  FILE_GUID                      = 3c9e4b7a-81d2-4f6e-a0c5-7b2d19e8f364
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariAcpiOverrideEntry
+
+[Sources]
+  WatariAcpiOverride.c
+  string.h
+  ../../../tools/acpigen/src/common.c
+  ../../../tools/acpigen/src/madt.c
+  ../../../tools/acpigen/src/gtdt.c
+  ../../../tools/acpigen/src/t8103_model.c
+  ../../../tools/acpigen/src/qemu_virt_model.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  MemoryAllocationLib
+
+[Protocols]
+  gEfiAcpiTableProtocolGuid     ## SOMETIMES_CONSUMES
+  gEfiAcpiSdtProtocolGuid       ## SOMETIMES_CONSUMES
+
+[Guids]
+  gEfiEventReadyToBootGuid      ## CONSUMES
+
+[BuildOptions]
+  # -Wno-*: i sorgenti di acpigen sono pensati per l'host; qui si silenziano solo avvisi di stile.
+  GCC:*_*_*_CC_FLAGS = -I$(WATARI_ACPIGEN)/include -I$(WATARI_ACPIGEN)/src -Wno-unused-function
+
+[Depex]
+  TRUE
