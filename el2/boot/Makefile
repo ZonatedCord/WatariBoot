@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT
+# Watari EL2 M0-C skeleton. Uses the Homebrew LLVM toolchain already installed.
+LLVM  ?= /opt/homebrew/opt/llvm/bin
+CC    := $(LLVM)/clang
+LD    := ld.lld
+OBJCOPY := $(LLVM)/llvm-objcopy
+OUT   := build
+
+CFLAGS := --target=aarch64-none-elf -std=c11 -Wall -Wextra -Werror -O2 -g \
+          -ffreestanding -nostdlib -mgeneral-regs-only -fno-pic -fno-stack-protector \
+          -mno-outline-atomics -fno-builtin
+ASFLAGS := --target=aarch64-none-elf -g
+
+all: $(OUT)/wel2.bin
+
+$(OUT)/%.o: %.c | $(OUT)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/%.o: %.S | $(OUT)
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+$(OUT)/wel2.elf: $(OUT)/start.o $(OUT)/main.o linker.ld
+	$(LD) -T linker.ld -nostdlib -z norelro --no-dynamic-linker -o $@ $(OUT)/start.o $(OUT)/main.o
+
+$(OUT)/wel2.bin: $(OUT)/wel2.elf
+	$(OBJCOPY) -O binary $< $@
+
+$(OUT):
+	mkdir -p $@
+
+clean:
+	rm -rf $(OUT)
+
+.PHONY: all clean
