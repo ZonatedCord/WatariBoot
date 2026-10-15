@@ -54,4 +54,8 @@ No new issues, to avoid sending notifications. Pick one of these, on a `ciani/..
 - **GitHub organization:** optional and postponable. The name is to be chosen (`watari` is taken, `watariboot` is free). It must be created from the browser, then the repo is transferred (history is preserved and the old address is redirected). Reserve the name before any public announcement.
 
 ## Where to resume
-See `docs/sessions/2026-10-12-marco-01.md` (latest entries) and `ralph/PROGRESS-phase0.md`. First action: analyze `halextbcm2709` (read on GitHub, without copying the DDK headers).- Failures and lessons learned: `docs/FAILURES.md` (read by all sessions).
+- Latest diary: `docs/sessions/2026-10-15-marco-01.md`.
+- **Next: M1** (issue #50): wire the vGIC into Watari EL2 (stage-2, GICD/GICR traps, list registers, timer and SGI paths, PSCI CPU_ON), then boot our EDK2 at EL1 on top of the layer in QEMU TCG.
+- Tests to run first: `make -C el2 test`, `el2/boot/run-qemu.sh`, `make -C tools/acpigen test`.
+- The repository is **public** since 2026-10-15; open issues are unassigned on purpose.
+- Failures and lessons learned: `docs/FAILURES.md` (read by all sessions).
