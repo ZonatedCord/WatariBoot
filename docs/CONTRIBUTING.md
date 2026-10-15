@@ -50,6 +50,11 @@ Rules:
 - Messages in English (from 2026-10-14; earlier history is in Italian), in the imperative mood, with the "why" when it is not obvious. Example: `acpigen: add MADT checksum`.
 - The attribution lines for commits made by Claude follow the session's instructions.
 
-## 8. Ralph
+## 8. Working with Claude Code
+- [`CLAUDE.md`](../CLAUDE.md) at the repo root is loaded automatically by Claude Code, so every contributor's assistant follows the same workflow (Opus plans and verifies, Haiku scans, Sonnet edits), the same safety rules (backup before downloads, confirmation before irreversible actions) and the same documentation habits.
+- Point the data directory to your own disk with `export WATARI_DATA=/path/to/WatariBoot-data` before running `tools/` scripts.
+- Run `python3 -I tools/token-usage.py --autore <your-name>` at the end of a session to add your share to the cost table in the README.
+
+## 9. Ralph
 - It runs **only** on its own `ralph/...` branch, one at a time. It never merges.
 - The operating rules are in `ralph/README.md`.

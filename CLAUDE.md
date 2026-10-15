@@ -1,6 +1,8 @@
 # Watari Boot: instructions for Claude
 
-**Language:** all repository documentation is written in English; always talk to Marco (the user) in Italian.
+**Language:** all repository documentation is written in English. Talk to each contributor in their own language (Marco: Italian).
+
+> This file is shared on purpose: every contributor who uses Claude Code gets the same workflow, rules and safety checks. "Marco" below means the project owner; where a rule says to ask Marco (backup, irreversible actions), ask **the user you are working with**. Personal paths (e.g. the external data disk) are configurable through `WATARI_DATA` in `tools/env.sh`.
 
 ## Project
 - **Name:** Watari Boot (渡, "to cross over"). Private repo `ZonatedCord/WatariBoot`.
