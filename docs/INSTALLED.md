@@ -56,3 +56,19 @@ To compare: `comm -13 <(sort brew-prima.txt) <(brew list --formula | sort)` must
 ## Night of 2026-10-14 (N3/N4)
 - Repo: `edk2-apple/WatariQemuPkg/`, `tools/build-edk2-watari.sh`, `tools/acpigen/src/{fadt,dbg2,qemu_virt_model}.c`.
 - External disk: `WatariBoot-data/vm/QEMU_EFI-watari.fd`, `/tmp/watari-data/build-watari/` (separate EDK2 workspace), `win11.qcow2` (~14 GB, Windows 11 installed). Removal: delete these paths.
+
+## Arm specifications (task M0-A, 2026-10-15)
+The user (Marco) authorized downloading the official Arm reference documents (Time Machine backup confirmed beforehand). Nothing else was downloaded or installed: text was extracted with `pdftotext`, which was already present on the Mac.
+
+Folder: `~/WatariBoot-specs/` (internal disk, outside the repository; ~192 MB including `txt/`, the plain-text extraction made with `pdftotext -layout`, ~62 MB).
+
+| File | Size | Document | Source URL (via `documentation-service.arm.com`) |
+|---|---|---|---|
+| `DDI0487M_d_arm_arm.pdf` | 129 MB (129,014,701 bytes) | Arm Architecture Reference Manual for A-profile, DDI 0487 M.d | `https://documentation-service.arm.com/static/6abbec2a6db85c5e6614a4a1` (listed at `https://developer.arm.com/documentation/ddi0487/latest`) |
+| `IHI0069H_b_gic.pdf` | 9.9 MB (9,941,288 bytes) | Arm GIC Architecture Specification v3/v4, IHI 0069 H.b | `https://documentation-service.arm.com/static/67eaa4d098aa3c3b6eea7351` (listed at `https://developer.arm.com/documentation/ihi0069/latest`) |
+| `DEN0022F.b_PSCI.pdf` | 2.1 MB (2,085,288 bytes) | Arm Power State Coordination Interface, DEN0022 F.b | `https://documentation-service.arm.com/static/6703a8b8d7e4b739d817e10d` (listed at `https://developer.arm.com/documentation/den0022/latest`) |
+| `DEN0028_SMCCC_1_7_H.pdf` | 330 KB (330,194 bytes) | SMC Calling Convention, DEN0028 1.7 H | `https://documentation-service.arm.com/static/6a671847ec643d218065cdd5` (listed at `https://developer.arm.com/documentation/den0028/latest`) |
+
+The PDFs are the property of Arm and are **not** redistributed: they stay out of the repository. The check made with them is in `re/el2-m0-register-check.md`.
+
+How to remove: `rm -rf ~/WatariBoot-specs` (or `tools/uninstall-watari.sh --yes`, which also removes it).

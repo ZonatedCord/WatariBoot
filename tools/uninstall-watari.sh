@@ -2,14 +2,30 @@
 # SPDX-License-Identifier: MIT
 # Disinstallazione completa di Watari Boot dal Mac.
 #  - disinstalla SOLO i pacchetti brew che non erano in brew-prima.txt;
-#  - chiede conferma prima di cancellare la cartella dati sul disco esterno.
+#  - chiede conferma prima di cancellare la cartella dati sul disco esterno;
+#  - cancella ~/WatariBoot-specs (specifiche Arm, task M0-A) con --yes.
 # Default: DRY-RUN (stampa soltanto). Esegue davvero solo con --yes.
 set -euo pipefail
 
 WATARI_DATA="${WATARI_DATA:-/Volumes/Arthur Fonzarelli/WatariBoot-data}"
 BEFORE="$WATARI_DATA/brew-prima.txt"
+# Specifiche Arm scaricate per il task M0-A (PDF + testo estratto), sul disco interno.
+SPECS="${WATARI_SPECS:-$HOME/WatariBoot-specs}"
 DO=0
 [ "${1:-}" = "--yes" ] && DO=1
+
+# Le specifiche stanno nella home: si gestiscono prima del controllo del disco esterno.
+if [ -d "$SPECS" ]; then
+    echo "Specifiche Arm (M0-A): $SPECS ($(du -sh "$SPECS" 2>/dev/null | cut -f1))"
+    if [ "$DO" = 1 ]; then
+        rm -rf "$SPECS"
+        echo "Cartella specifiche cancellata: $SPECS"
+    else
+        echo "  (dry-run) rm -rf \"$SPECS\""
+    fi
+else
+    echo "Specifiche Arm (M0-A): $SPECS non presente."
+fi
 
 if [ ! -f "$BEFORE" ]; then
     echo "ERRORE: $BEFORE non trovato (disco collegato?). Non posso calcolare la differenza." >&2

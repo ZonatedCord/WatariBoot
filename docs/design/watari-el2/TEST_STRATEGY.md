@@ -30,7 +30,7 @@ The core (`vgic`, `cpuif` logic, `vtimer`, `psci`, `fdt`, `s2` table constructio
 | `trap` | ESR decoding (EC, ISS, ISV, SAS, SRT, WnR), registration tables (overlaps → `E_BUSY`), default-deny | `ISV=0` → panic; sysreg not in table; unknown HVC |
 
 **First test (TDD, step by step)**
-1. Write `tests/host/test_gicd_typer.c`: creates a `vgic` with 4 vCPUs, reads `GICD_TYPER` and checks `0x0178001D` (value [hypothesis] to be confirmed with the oracle, see §4).
+1. Write `tests/host/test_gicd_typer.c`: creates a `vgic` with 4 vCPUs, reads `GICD_TYPER` and checks `0x0148001D` (value verified against the GIC spec in M0-A, IDbits=9; the oracle comparison in §4 still decides whether to follow QEMU instead).
 2. See it fail (the module does not exist: link error).
 3. Implement the minimum (`vgic_new`, `vgic_mmio_read` for that offset only), make it pass.
 4. Second test: `test_spi_enable_pend_ack_eoi`: enables SPI 40 (INTID), makes it pending, sets `PMR`, calls the `IAR1` emulation and expects 40, then `EOIR1` and expects the inactive state.
