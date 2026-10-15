@@ -33,3 +33,6 @@ out/
 # Ralph loop (stato locale)
 .claude/.ralph-loop.local.md
 .claude/*.local.*
+
+# Claude Code worktrees (agent isolation)
+.claude/worktrees/

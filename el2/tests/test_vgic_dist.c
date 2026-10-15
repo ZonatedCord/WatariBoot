@@ -22,9 +22,9 @@ static void t_ctlr_write_masks(void)
 static void t_typer(void)
 {
 	setup(2);
-	CHECK_EQ(rd32(D(4)), 0x0178001D);
+	CHECK_EQ(rd32(D(4)), 0x0148001D);
 	wr32(D(4), 0);                         /* read-only */
-	CHECK_EQ(rd32(D(4)), 0x0178001D);
+	CHECK_EQ(rd32(D(4)), 0x0148001D);
 }
 
 static void t_iidr_typer2_statusr(void)

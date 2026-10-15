@@ -9,9 +9,9 @@
 
 /*
  * HYPOTHESIS: GICD_TYPER = ITLinesNumber 29 | IDbits 15 (<<19) | A3V (<<24)
- * = 0x0178001D (INTERFACES section 5). To be confirmed against the QEMU oracle.
+ * = 0x0148001D: IDbits=9 (no LPIs => at most 10 INTID bits, GIC IHI 0069H.b §2.2.2 p.2-37; corrected in M0-A). To be confirmed against the QEMU oracle.
  */
-#define GICD_TYPER_VALUE   0x0178001Du
+#define GICD_TYPER_VALUE   0x0148001Du
 /*
  * HYPOTHESIS: IIDR is a placeholder (ARM implementer JEP106 0x43B); the real
  * value must be copied from the QEMU oracle (INTERFACES section 5).

@@ -2,6 +2,7 @@
 
 **Updated:** 2026-10-14 (session marco-01, night closed)
 **Strategy (2026-10-14):** **Plan B adopted**, Windows dual boot on top of a minimal EL2 layer (`docs/adr/draft-plan-b-el2-layer.md`, `re/planB-feasibility.md`). The pure native route is closed: GIC mandatory (V2), parking in deadlock (V3, F-15).
+**M0 (2026-10-15):** ✅ Watari EL2 boots in QEMU TCG at EL2, ERETs to EL1, handles HVC/PSCI (`el2/boot/run-qemu.sh`); vGIC distributor/redistributor model with 69 host tests (`make -C el2 test`); 57 register/bit values checked against the Arm specs (44 confirmed, 10 corrected, 3 open: `re/el2-m0-register-check.md`). Next: M1 (stage-2, vGIC wired into the layer, EDK2 at EL1).
 **Current phase:** 0, the spike on the Windows ARM64 HAL and non-GIC interrupt controllers
 
 ## Milestones
