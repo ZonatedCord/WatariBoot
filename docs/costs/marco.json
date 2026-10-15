@@ -18,11 +18,11 @@
           "output": 65
         },
         "claude-opus-5-5": {
-          "cache_read": 188903946,
-          "cache_write_1h": 4872059,
+          "cache_read": 192819262,
+          "cache_write_1h": 4875519,
           "cache_write_5m": 0,
-          "input": 910,
-          "output": 346745
+          "input": 920,
+          "output": 349411
         },
         "claude-sonnet-5-5": {
           "cache_read": 91608282,
