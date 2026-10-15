@@ -93,9 +93,25 @@ Watari Boot is developed by a small team with AI agents doing much of the resear
 <sub>Estimate at Anthropic API prices, computed from local Claude Code transcripts with `tools/token-usage.py`. With a subscription (Pro/Max) the real cost is the subscription fee: this is the equivalent pay-as-you-go cost. Subagent output may be under-reported in the logs.</sub>
 <!-- TOKEN-COUNTER:END -->
 
-## Contributing
+## Build it with us
 
-Issues and pull requests are welcome, especially from people who know the Windows ARM64 boot process, GICv3, or Apple Silicon. Read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) first. Please do not submit Microsoft binaries or disassembled Microsoft code.
+You can fork this repository, and the license allows it. But we hope you will do something better than copy it: **build on it with us.**
+
+No single person cracked Linux on Apple Silicon. Hundreds of people did it, one register, one driver, one bug report at a time, and the Asahi Linux project still welcomes newcomers. Windows on Apple Silicon is the same kind of problem. It will not be solved by a lone genius or a lone AI. It might be solved by a community that shares what it learns, including what went wrong.
+
+So if this project speaks to you:
+
+- **Bring what you know.** If you understand the Windows ARM64 boot process, GICv3 virtualization, EDK2, hypervisors, or Apple Silicon hardware, a single comment in an issue can save us weeks.
+- **Pick a piece.** The EL2 layer, the vGIC emulation and its host tests, the ACPI generator, and later the Windows drivers for the SSD, keyboard and USB are all separable pieces of work. [docs/STATUS.md](docs/STATUS.md) says where we are and what comes next.
+- **Prove us wrong.** Every claim in this repository is marked *verified* or *hypothesis*. If you can turn a hypothesis into a fact, or show that a "verified" fact is wrong, that is a contribution.
+- **Share your dead ends.** Add your failures to [docs/FAILURES.md](docs/FAILURES.md). A documented dead end is worth more than a silent success.
+- **If you fork, keep the bridge open.** Send your findings back upstream, credit the people whose work you build on, and keep the "no Microsoft code, no disassembly" rule: it keeps this work safe to share.
+
+And a word of caution. This is hard, slow, and it may not work in the end. Be skeptical of anyone who promises Windows on your Mac "next month", including us. Never run experimental boot code on a machine you cannot afford to restore, and always back up first.
+
+But if it does work, it will be because many people decided to cross the river together. That is what *watari* means.
+
+Read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) before your first pull request.
 
 ## Credits
 
