@@ -1,36 +1,32 @@
 {
   "autore": "marco",
   "sessions": {
-    "28f3339a-d470-4c91-a96e-c22517277cc7": {
+    "1b338f0e0a9a": {
       "models": {
+        "claude-haiku-5-5": {
+          "cache_read": 589435,
+          "cache_write_1h": 0,
+          "cache_write_5m": 158646,
+          "input": 24,
+          "output": 65
+        },
         "claude-opus-5-5": {
-          "cache_read": 148989591,
-          "cache_write_1h": 4118594,
+          "cache_read": 168333577,
+          "cache_write_1h": 4840234,
           "cache_write_5m": 0,
-          "input": 788,
-          "output": 301071
+          "input": 850,
+          "output": 324438
         },
         "claude-sonnet-5-5": {
-          "cache_read": 68931630,
+          "cache_read": 69748767,
           "cache_write_1h": 0,
-          "cache_write_5m": 4327321,
-          "input": 1372,
-          "output": 361142
+          "cache_write_5m": 4423467,
+          "input": 1394,
+          "output": 361293
         }
       }
     },
-    "40e5e27e-3836-4b22-83cb-ac41ab3175fb": {
-      "models": {
-        "claude-sonnet-5-5": {
-          "cache_read": 8191446,
-          "cache_write_1h": 161943,
-          "cache_write_5m": 327329,
-          "input": 182,
-          "output": 23408
-        }
-      }
-    },
-    "4df3d681-bd44-4979-973b-f533c681f3b1": {
+    "1f2d4ce7431a": {
       "models": {
         "claude-opus-5-5": {
           "cache_read": 15653470,
@@ -48,18 +44,7 @@
         }
       }
     },
-    "8502a569-34ca-49ba-b61e-8244d52edd54": {
-      "models": {
-        "claude-sonnet-5-5": {
-          "cache_read": 263628,
-          "cache_write_1h": 40827,
-          "cache_write_5m": 0,
-          "input": 8,
-          "output": 1153
-        }
-      }
-    },
-    "e48e252f-c25f-4879-a90f-5b5d98da523e": {
+    "2083d307d6a8": {
       "models": {
         "claude-sonnet-5-5": {
           "cache_read": 429521,
@@ -70,7 +55,7 @@
         }
       }
     },
-    "eb2a1aba-a704-4b4c-b8b0-cff6ae9598bc": {
+    "679ef2c0a4e0": {
       "models": {
         "claude-sonnet-5-5": {
           "cache_read": 186307,
@@ -78,6 +63,28 @@
           "cache_write_5m": 0,
           "input": 6,
           "output": 649
+        }
+      }
+    },
+    "76302c85c60e": {
+      "models": {
+        "claude-sonnet-5-5": {
+          "cache_read": 263628,
+          "cache_write_1h": 40827,
+          "cache_write_5m": 0,
+          "input": 8,
+          "output": 1153
+        }
+      }
+    },
+    "9c5b769cc72c": {
+      "models": {
+        "claude-sonnet-5-5": {
+          "cache_read": 8191446,
+          "cache_write_1h": 161943,
+          "cache_write_5m": 327329,
+          "input": 182,
+          "output": 23408
         }
       }
     }

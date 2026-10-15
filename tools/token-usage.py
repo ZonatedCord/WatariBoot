@@ -9,7 +9,7 @@ progetto e ai suoi subagenti, e aggiorna:
 
 Uso (a fine sessione):  python3 -I tools/token-usage.py --autore marco
 """
-import argparse, collections, glob, json, os, pathlib, sys, datetime
+import argparse, collections, glob, hashlib, json, os, pathlib, sys, datetime
 
 # Prezzi in $ per milione di token (API Anthropic, listino al 2026-10-06; fonte: skill claude-api).
 # Scrittura in cache: 1,25x l'input per TTL 5 minuti, 2x per TTL 1 ora (regola generale Anthropic: ipotesi da verificare se cambia il listino).
@@ -22,6 +22,25 @@ PRICES = {
 PROJECT_MARKERS = ("WatariBoot", "ProvaImpossibile")
 FIELDS = ("input", "output", "cache_write_5m", "cache_write_1h", "cache_read")
 REPO = pathlib.Path(__file__).resolve().parent.parent
+
+
+def anon(sid):
+    """Anonymous short key for a session id (no raw UUIDs in the public ledger)."""
+    return hashlib.sha256(sid.encode()).hexdigest()[:12]
+
+
+def is_uuid(k):
+    return len(k) == 36 and k.count("-") == 4
+
+
+def migrate(led):
+    """Convert old UUID keys to hashed keys (merging if a hashed key already exists)."""
+    new = {}
+    for k, v in led["sessions"].items():
+        nk = anon(k) if is_uuid(k) else k
+        new[nk] = v if nk not in new else new[nk]
+    led["sessions"] = new
+    return led
 
 
 def usage_of(u):
@@ -117,12 +136,17 @@ def main():
     costs_dir.mkdir(parents=True, exist_ok=True)
     led_path = costs_dir / f"{a.autore}.json"
     led = json.loads(led_path.read_text()) if led_path.exists() else {"autore": a.autore, "sessions": {}}
+    led = migrate(led)
     for sid, paths in find_sessions().items():
         models = scan_session(paths)
         if models:
-            led["sessions"][sid] = {"models": {m: dict(c) for m, c in models.items()}}
+            led["sessions"][anon(sid)] = {"models": {m: dict(c) for m, c in models.items()}}
     led_path.write_text(json.dumps(led, indent=2, sort_keys=True) + "\n")
-    ledgers = {p.stem: json.loads(p.read_text()) for p in costs_dir.glob("*.json")}
+    ledgers = {}
+    for p in costs_dir.glob("*.json"):
+        other = migrate(json.loads(p.read_text()))
+        p.write_text(json.dumps(other, indent=2, sort_keys=True) + "\n")
+        ledgers[p.stem] = other
     table = render(ledgers)
     print(table)
     if not a.no_readme:

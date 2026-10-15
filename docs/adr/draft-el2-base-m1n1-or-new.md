@@ -7,7 +7,7 @@
 Plan B requires an EL2 layer with vGICv3, PSCI, timer as an interrupt, and SGI→IPI. Three bases are possible: the m1n1 hypervisor, the NTASP fork `m1n1_windows`, or new code. Facts verified on 2026-10-14:
 - m1n1 `hv` has stage-2, MMIO traps, multiple vCPUs and a guest timer via virtual FIQ, but **has no vGIC**; every unhandled exception goes to the Python proxy and the guest stops until the host answers; the exception path is slow and single-threaded [verified: `re/planB-feasibility.md` §2].
 - m1n1 since 2.0.0 is **GPL-2.0-or-later** (MIT up to 1.9.9): README and files `src/hv/hv_vm.c`, `src/main.c` [verified].
-- NTASP `hv_vgic.c` is incomplete (pending/active missing, 1 core, SGI "TODO"), has a single active maintainer and states it is inspired by KVM [verified: `re/ntasp-analysis.md`, `planB-feasibility.md` §3]; `re/ntasp-quality-audit.md` judges the UEFI side "to be rewritten".
+- NTASP `hv_vgic.c` is early-stage (pending/active not yet implemented, 1 core, SGI "TODO"), is maintained by a small team and states it is inspired by KVM [verified: `re/ntasp-analysis.md`, `planB-feasibility.md` §3]; `re/ntasp-quality-audit.md` concludes that the UEFI side would need substantial rework for a native approach.
 - A core that runs only on Apple hardware cannot be tested in the QEMU TCG bench with `virtualization=on`, which is the only development environment without a debug host.
 
 ## Decision
@@ -26,7 +26,7 @@ Plan B requires an EL2 layer with vGICv3, PSCI, timer as an interrupt, and SGI�
 
 ## Alternatives (rejected)
 1. **Extend m1n1 hv by adding the vGIC.** Rejected: GPL-2.0-or-later (binds the image license), proxy and slow path to be restructured (2-3 weeks [hypothesis, PB §2]) plus a vGIC to write anyway, no automated tests, impossible to run in QEMU.
-2. **Fork NTASP `m1n1_windows`.** Rejected: incomplete, uncertain license status (MIT declared on code derived from GPL m1n1 and "inspired" by KVM), contradicts ADR-0007, dependency on a maintainer.
+2. **Fork NTASP `m1n1_windows`.** Rejected: early-stage and designed for a different (hypervisor-first) approach, license provenance to be clarified with the authors (MIT declared on code that builds on GPL m1n1 and is "inspired" by KVM), contradicts ADR-0007, would make us depend on an external project's schedule.
 3. **Linux/KVM (Asahi) as host with a Windows guest and passthrough peripherals.** Rejected: an operating system underneath Windows contradicts "dual boot, no OS underneath"; it remains as an **experimental control** because Windows 11 already runs as a KVM guest on Asahi [verified: `windows-11-vm.md`, via PB §0].
 4. **Rust `no_std`.** Rejected: requires a toolchain to be installed (backup rule) and there is no experience in the repository; C with host tests and `-Werror` is enough for the expected size. Can be reconsidered for the vGIC alone.
 5. **Layer as an EDK2 driver (UEFI at EL2).** Rejected: EDK2 must run at EL1 under the layer; mixing the two makes it impossible to test the layer on its own.

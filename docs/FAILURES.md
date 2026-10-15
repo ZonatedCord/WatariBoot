@@ -15,9 +15,9 @@ Format of each entry:
 - **Lesson:** Phase 0 was rethought as experimental ("black box": public documentation + experiments in QEMU), see the draft ADR "experimental Phase 0". A similar project must account for this methodological limit from the start.
 
 ## F-02 · Restarting from NTASP's work (2026-10-12)
-- **Tried:** evaluating the existing project "NT for Apple Silicon" as a base.
-- **What happened:** it is not native (it uses the m1n1 hypervisor with emulated vGIC and PSCI); the AIC HAL extension does not exist ("Nothing's implemented yet"); the AICv1 driver is a stub; there is a bug in `AIC_MASK_BIT` (reported: NT-for-ASi/apple_silicon_platforms_mu#23).
-- **Lesson:** before building on other people's code, check its quality and not only its existence (`re/ntasp-quality-audit.md`). Decision: independent route (ADR-0007).
+- **Tried:** evaluating the pioneering public project "NT for Apple Silicon" (NTASP) as a base.
+- **What happened:** it is not native (it uses the m1n1 hypervisor with emulated vGIC and PSCI), which did not fit our native-first goals; the AIC HAL extension is not implemented yet ("Nothing's implemented yet"); the AICv1 driver is still a stub (early-stage, actively developed); we found an issue in `AIC_MASK_BIT` (reported as a courtesy: NT-for-ASi/apple_silicon_platforms_mu#23).
+- **Lesson:** before building on other people's code, check that its design fits your goals and not only that it exists (`re/ntasp-quality-audit.md`). Decision: independent route (ADR-0007).
 
 ## F-03 · "Just don't use FIQs" (ADR-0004), 2026-10-12/13
 - **Tried:** designing an M1 in which Windows receives everything as IRQ.
