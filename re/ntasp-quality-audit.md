@@ -1,4 +1,6 @@
-# Code quality audit of NTASP (apple_silicon_platforms_mu), status as of 2026-10-12
+# Review of NTASP (apple_silicon_platforms_mu) against our native-first goals, status as of 2026-10-12
+
+NTASP is the pioneering public effort to run Windows on Apple Silicon; it is early-stage and actively developed, and this review is meant to record technical facts for our own design decisions, not to judge the project.
 
 Method: read-only via `gh api` (contents, commits, trees, search) and no file saved in the repository. Repo: `NT-for-ASi/apple_silicon_platforms_mu`, HEAD `861dcc49` (2026-09-06, branch `main`).
 Asahi references: `AsahiLinux/linux` `drivers/irqchip/irq-apple-aic.c`, `AsahiLinux/m1n1` `src/aic.c` + `src/aic_regs.h`, `arch/arm64/boot/dts/apple/t8103.dtsi`.
@@ -9,20 +11,20 @@ Abbreviated paths: `AIC/` = `Silicon/Apple/AppleSiliconPkg/Drivers/AppleAicDxe/`
 
 | Component | Grade | Reason in one line |
 |---|---|---|
-| AppleAicDxe, AICv1 part (the one t8103 needs) | **to be rewritten** | `AicV1/AppleAicV1Dxe.c` is a stub with `//TODO: this driver.`; the v1 path goes through the v2 code with wrong offsets |
-| AppleAicDxe, AICv2 part and common glue | **to be rewritten** (skeleton reusable only as a guide) | verified bugs in the register macros, in the event decode, in the FIQ/PMC handling |
-| MADT_Static (T810X) | **to be rewritten** | describes a virtual GICv3 (distributor, redistributor, ITS), hard-coded and invented values |
-| GTDT (T810X and generic) | **to be rewritten** | arbitrary GSIVs 17..20, watchdog address of another SoC, two GTDTs installed |
-| FADT (j293) | **to be rewritten** | PSCI via SMC "trapped" by the hypervisor; wrong minor revision field |
-| CSRT (T810X) | **to be rewritten (does not exist)** | the file is only comments and is not even in the INF |
-| BERT (T810X) | **to be discarded** | does not compile (`BOOT_ERROR_REGION_BASE` undefined) and is not in the INF |
-| PPTT (T810X) | **to be reused with corrections** | topology consistent with the DTS; only what was intentionally removed (cache) is missing |
-| DSDT j293 (CPU tree, UART, XHC) | **to be reused with corrections** | valid structure, but UART IRQ differs from the DTS and XHCI HID is suspect |
-| DBG2 j293 | **to be reused with corrections** | correct in substance, alignment not verified |
-| Package structure / DSC / FDF | **to be reused with corrections** | standard Mu setup, but copy-paste leftovers and inconsistent configuration |
-| Tests and CI | **absent** | no tests, no workflows, 0 Actions runs |
+| AppleAicDxe, AICv1 part (the one t8103 needs) | **substantial rework needed** | `AicV1/AppleAicV1Dxe.c` is a stub with `//TODO: this driver.`; the v1 path goes through the v2 code with wrong offsets |
+| AppleAicDxe, AICv2 part and common glue | **substantial rework needed** (skeleton useful as a guide) | verified bugs in the register macros, in the event decode, in the FIQ/PMC handling |
+| MADT_Static (T810X) | **substantial rework needed** | describes a virtual GICv3 (distributor, redistributor, ITS), hard-coded and invented values |
+| GTDT (T810X and generic) | **substantial rework needed** | arbitrary GSIVs 17..20, watchdog address of another SoC, two GTDTs installed |
+| FADT (j293) | **substantial rework needed** | PSCI via SMC "trapped" by the hypervisor; wrong minor revision field |
+| CSRT (T810X) | **substantial rework needed (not yet written)** | the file is only comments and is not even in the INF |
+| BERT (T810X) | **not usable as is** | does not compile (`BOOT_ERROR_REGION_BASE` undefined) and is not in the INF |
+| PPTT (T810X) | **reusable with corrections** | topology consistent with the DTS; only what was intentionally removed (cache) is missing |
+| DSDT j293 (CPU tree, UART, XHC) | **reusable with corrections** | valid structure, but UART IRQ differs from the DTS and XHCI HID is suspect |
+| DBG2 j293 | **reusable with corrections** | correct in substance, alignment not verified |
+| Package structure / DSC / FDF | **reusable with corrections** | standard Mu setup, but copy-paste leftovers and inconsistent configuration |
+| Tests and CI | **not yet set up** | no tests, no workflows, 0 Actions runs |
 
-Conclusion: the UEFI-side NTASP code is not of sufficient quality for direct reuse in the native path. Ideas and data are reused (register list, CPU/cluster tree, PPTT, MMIO maps after checking them against the DTS), not the code. Details below.
+Conclusion: the UEFI-side NTASP code was written for a hypervisor-first approach and would require substantial rework for our native path, so we do not reuse it directly. Ideas and data are reused (register list, CPU/cluster tree, PPTT, MMIO maps after checking them against the DTS), not the code. Details below.
 
 ## 1. AppleAicDxe
 
@@ -71,7 +73,7 @@ D15. Dead code and TODOs. `AppleAicDxe.h` line 50 "TODO: AICv1 API"; `AppleAicDx
 ### 1.4 History
 `git log` chronology on the path (12 commits): `a701dbed` 2023-01-22 (folder move; the earlier history was lost in the path), ... `474e0aac` 2023-11-13 "remove redundant code in AICv2 driver" (+2/-3), then only general maintenance commits (`8dbbcad5` 2026-05-29 "fix Mu build", 21 files). No functional change to the AIC driver after November 2023; `AicV1` is stuck at the headers of 2022-09-29. [verified] The author himself disabled AIC by default on M2 (`2c5ab300` 2025-11-15 "disable AIC_BUILD by default for MacBook Pro Early 2023"), but left it enabled by default on the MacBook Pro 2020 (`MacBookProLate2020.dsc` line 35: `AIC_BUILD = TRUE`). [verified]
 
-### 1.5 Grade: to be rewritten
+### 1.5 Grade: substantial rework needed
 For a driver we can trust, at least the following are needed: event decode, ack loop, TARGET_CPU programming, correct v1 init, v1 IPIs and fast IPIs, barriers. This is more than 50% of the driver. Better to write it new, looking at m1n1 `aic.c` (MIT/GPL, see license) and Linux as reference, and at most to take the glue skeleton (`AppleAicCommonDxe.c`) after fixing D6, D12.
 
 ## 2. T8103 / j293 ACPI tables
@@ -88,7 +90,7 @@ The platform "MacBook Pro 13 M1 (j293)" in the repo is `Platform/MacBookProLate2
 - Build conflict: the DSC enables `AIC_BUILD = TRUE` for j293, and in that case `PcdGicDistributorBase/PcdGicRedistributorsBase` are not set (guard `!if $(AIC_BUILD) == FALSE`), but `CPUAcpiTables.inf` consumes them anyway and `MADT_Static` is inserted unconditionally in the FDF (`MacBookProLate2020.fdf` line 231). So with AIC the MADT describes a GIC at the PCD default value [hypothesis: the default in ArmPkg's `.dec` is 0]. [verified for the build structure]
 - Checksum: `__ACPI_HEADER` (`AcpiHeader.h` lines 34-44) puts 0; the computation happens at installation (`AcpiPlatform.c` line ~440: `CalculateCheckSum8`) and by the `AcpiTableDxe` protocol [verified for `AcpiPlatform.c`; the effect on the static MADT is a standard EDK2 hypothesis].
 - Parking protocol: no field populated (Parking Protocol Version and Parked Address not handled in `EFI_ACPI_6_3_GICC_STRUCTURE_INIT`; search for "park" in the repo = 0 results). [verified for the absence]
-Grade: to be rewritten. The GIC/ITS block must be removed, and the rest derived from the ADT/our design.
+Grade: substantial rework needed. The GIC/ITS block must be removed, and the rest derived from the ADT/our design.
 
 ### 2.2 GTDT (`T810X/AcpiTables/GTDT.aslc`, `Silicon/Apple/AppleSiliconPkg/AcpiTables/GTDT.aslc`)
 - Timer GSIVs: Secure PL1 = 19 (`T810XFamilyPkg.dsc.inc` line 14, "placeholder"), phys = 17, virt = 18, hyp = 20 ("this disables the HV timer"). These are software numbers: on a real GIC they would be PPI 1..4; the standard GIC physical timer is 30 (PPI14), the virtual one 27. Flags: level, active-high, `LOSE_CONTEXT`. [verified]
@@ -96,12 +98,12 @@ Grade: to be rewritten. The GIC/ITS block must be removed, and the rest derived 
 - The comment at line 48 cites the Linux Apple WDT driver; reset sequence (0x4 to +0x1c, zeros to +0x10/+0x14) not verified. [hypothesis]
 - Duplicate: the `FDF` installs both `GenericAcpiTables.inf` (which has `GTDT.aslc`, `GenericAcpiTables.inf` lines 19-20) and `CPUAcpiTables.inf` (which has `GTDT.aslc`) (`MacBookProLate2020.fdf` lines 228 and 231): two GTDTs in the firmware. ACPI allows only one GTDT. [verified; effect on Windows is a hypothesis]
 - History: `038ceb36` "Temporary use standard timer interrupts" and `e27ee083` "fix GTDT for T602x" show that the value was changed several times without explanation. [verified]
-Grade: to be rewritten.
+Grade: substantial rework needed.
 
 ### 2.3 CSRT and BERT (T810X)
 - `T810X/AcpiTables/CSRT.aslc` (650 bytes): only the license header and the comment "Why do we need a CSRT?", no data structure, no `#include`. `CPUAcpiTables.inf` lines 19-22 lists only `GTDT.aslc`, `MADT_Static.aslc`, `PPTT.aslc`. So the CSRT is never generated for T810X. [verified] This contradicts the reading "the CSRT signals the AIC to the OS" in `ntasp-analysis.md` section 3, if intended as working for M1: it is only an intention. (T600X has a 1066-byte CSRT, not verified.)
 - `T810X/AcpiTables/BERT.aslc`: uses `BOOT_ERROR_REGION_BASE` (line 36) while the `#define` is commented out (line 25): does not compile, is not in the INF. Comment "Original source file from AmpereAltraPkg", "Tonga/Sicily". [verified]
-Grade: CSRT to be written from scratch; BERT to be discarded.
+Grade: CSRT to be written from scratch; BERT not usable as is.
 
 ### 2.4 PPTT (`T810X/AcpiTables/PPTT.aslc`, `19df1750`/`44cd132c` Adrian Dumitru)
 - Hierarchy package -> 2 clusters -> 4 cores, ACPI Processor ID = `Cluster*4 + Cpu` (line 32) consistent with the `AcpiCpuUid` 0..7 of the MADT and DSDT. Lengths 0x14 and `OFFSET_OF` for parents correct. Caches removed on purpose (`024391f5` "Simplify PPTT, remove cache info"). [verified]
@@ -122,7 +124,7 @@ Grade: to be reused with corrections.
 - The "Minor revision of FADT" field (line 77) is populated with `EFI_ACPI_6_4_FIXED_ACPI_DESCRIPTION_TABLE_REVISION` (which is the major revision, 6) instead of the minor constant (4): it announces ACPI 6.6. [hypothesis on the constant: in EDK2 the two constants are distinct; verified that the file uses the `_REVISION` constant in that field]
 - `EFI_ACPI_6_3_PWR_BUTTON` set (flag "power button as control method") without any button device in the DSDT. [verified]
 - DSDT/FIRMWARE_CTRL addresses at 0: filled in by AcpiTableDxe (EDK2 practice) [hypothesis]. Reset register `NULL_GAS` with a TODO about the Apple watchdog. [verified]
-Grade: to be rewritten for the native path.
+Grade: substantial rework needed for the native path.
 
 ### 2.7 DBG2 j293
 Follows the AmpereAltra scheme, subtype 0xA (in the DBG2 registry it is the Samsung-like type, consistent with the Apple S5L/Samsung UART) [hypothesis on the subtype name], namespace `\_SB.COM0`, base from `PcdAppleUartBase` (0x235200000, correct) and length 0x1000. `#pragma pack()` at line 101 without a matching `#pragma pack(1)` in the file: the `DBG2_DEBUG_DEVICE_INFORMATION` struct might have padding before `AddressSize` (the offsets use `OFFSET_OF`, so they stay self-consistent) [hypothesis]. Grade: to be reused with corrections.
@@ -159,11 +161,11 @@ They presuppose emulated vGIC/PSCI [all verified in the indicated files]:
 5. `PrePi/PrePi.c` line 41 and `AppleArmGenericTimerPhyCounterLib.c` line 96: comments/assumptions "running inside m1n1 or another hypervisor" / "issue reboot command through hypervisor shell" (full context not read) [verified for the presence of the comments].
 6. The AIC driver's README says to prefer the vGIC (`Readme.md` 33). The AIC path is the "experimental" one.
 
-To be rewritten for the native path: MADT (remove GICD/GICR/ITS, decide what Windows sees as the interrupt controller: HAL extension and CSRT topic, see `ntasp-analysis.md`), GTDT (no GIC, FIQ), FADT (no PSCI, a parking protocol or something else is needed), reset/shutdown, SMP. Can be kept: PPTT, the DSDT CPU tree, DBG2, the cores' MPIDR, the MMIO map (after checking against the DTS). The parking protocol exists neither as code nor as a populated MADT field (search "park": 0 results). [verified]
+To rework for the native path: MADT (remove GICD/GICR/ITS, decide what Windows sees as the interrupt controller: HAL extension and CSRT topic, see `ntasp-analysis.md`), GTDT (no GIC, FIQ), FADT (no PSCI, a parking protocol or something else is needed), reset/shutdown, SMP. Can be kept: PPTT, the DSDT CPU tree, DBG2, the cores' MPIDR, the MMIO map (after checking against the DTS). The parking protocol exists neither as code nor as a populated MADT field (search "park": 0 results). [verified]
 
 Rough estimate [hypothesis]: on the ACPI/firmware side, ~70% of the ACPI files would have to be rewritten for native; the AIC driver must be rewritten anyway for v1.
 
-## 5. The 5 most serious defects
+## 5. The 5 most significant issues for our use
 
 1. **AICv1 (our SoC) is a stub**: `AicV1/AppleAicV1Dxe.c` 19-23 "TODO: this driver"; `AppleAicDxe.c` 41-43 sends v1 to the v2 code. (D1)
 2. **Wrong `AIC_MASK_BIT`** (`AppleAicLib.h` 103): `BIT(num) & GENMASK(4,0)` nullifies masking/unmasking for all IRQs >= 5; m1n1 line 10 is correct. (D2)

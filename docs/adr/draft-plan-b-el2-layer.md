@@ -27,7 +27,7 @@ There is no macOS underneath: Windows is chosen at boot, like Asahi. Our EDK2, `
 ## Alternatives (rejected)
 - **Native with the HAL's internal functions** (NtHalExts style): requires analyzing Microsoft binaries (excluded, F-01) and is fragile with every Windows build.
 - **Keep looking for the pure native path:** V2 indicates the GIC is mandatory, so even if the parking were solved the controller would remain blocking.
-- **Reuse NTASP:** incomplete and of low quality (ADR-0007); used only as a reference.
+- **Reuse NTASP:** early-stage and designed for a different approach (ADR-0007); used only as a reference.
 
 ## Consequences
 - The `CLAUDE.md` constraint "native, no hypervisor" becomes "dual boot, no macOS underneath, minimal EL2 layer allowed".
