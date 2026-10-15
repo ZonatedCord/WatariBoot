@@ -3,6 +3,13 @@
   "sessions": {
     "1b338f0e0a9a": {
       "models": {
+        "<synthetic>": {
+          "cache_read": 0,
+          "cache_write_1h": 0,
+          "cache_write_5m": 0,
+          "input": 0,
+          "output": 0
+        },
         "claude-haiku-5-5": {
           "cache_read": 589435,
           "cache_write_1h": 0,
@@ -11,18 +18,18 @@
           "output": 65
         },
         "claude-opus-5-5": {
-          "cache_read": 168333577,
-          "cache_write_1h": 4840234,
+          "cache_read": 188903946,
+          "cache_write_1h": 4872059,
           "cache_write_5m": 0,
-          "input": 850,
-          "output": 324438
+          "input": 910,
+          "output": 346745
         },
         "claude-sonnet-5-5": {
-          "cache_read": 69748767,
+          "cache_read": 91608282,
           "cache_write_1h": 0,
-          "cache_write_5m": 4423467,
-          "input": 1394,
-          "output": 361293
+          "cache_write_5m": 4941403,
+          "input": 1662,
+          "output": 429224
         }
       }
     },

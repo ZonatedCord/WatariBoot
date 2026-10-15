@@ -114,3 +114,9 @@ Tools: `WATARI_PMODE` bits (build `--parking`; 1 FADT PSCI+HVC, 2 MADT without p
 - **Failed:** `ASSERT [WatariParkingDxe] ArmCacheMaintenanceLib.c(47)`: in `ArmCacheMaintenanceLib` the `InvalidateInstructionCache()` without a range is an `ASSERT(FALSE)`; G4's driver called it after preparing the mailboxes, so the firmware stopped at the driver load (no boot).
 - **Remedy:** `InvalidateInstructionCacheRange(P, SIZE_4KB)`. Build redone (FV always 48 bytes free, it fits).
 - **Lesson:** G4 had been verified only by building; drivers must be booted at least once. In DEBUG, the "whole cache" functions of ArmCacheMaintenanceLib are ASSERTs: always use the Range variants.
+
+## F-17 · M0-C: `__image_start` in a subtraction inside the assembler (2026-10-15)
+- **Tried:** arm64 Image header with `.quad __image_end - __image_start` (both linker-script symbols) in `start.S`.
+- **Failed:** clang's integrated assembler: "symbol '__image_start' can not be undefined in a subtraction expression" (verified).
+- **Remedy:** compute `__image_size = __image_end - __image_start` in `linker.ld` and reference that single absolute symbol from the assembly.
+- **Lesson:** the assembler cannot subtract two external symbols; let the linker script do arithmetic on layout symbols. Also: macOS has no `timeout(1)`, so `run-qemu.sh` implements its own 20 s watchdog.

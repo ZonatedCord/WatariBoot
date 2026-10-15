@@ -2,7 +2,7 @@
 
 - Project: Watari Boot, subsystem Watari EL2 · Date: 2026-10-14 · Version: 0.1 · Status: draft
 - Linked documents: [PRD](PRD.md) · [ARCHITECTURE](ARCHITECTURE.md) · [TEST_STRATEGY](TEST_STRATEGY.md) · [RISKS](RISKS.md)
-- Marking: **[verified: source]** verified; **[hypothesis]** hypothesis. No register encoding or numeric value in this file has been rechecked against the ARM manual (not available locally): all values labeled **[hypothesis]** must be confirmed in M0 with the ARM manual (ARM ARM, GICv3/v4 architecture spec IHI0069, PSCI DEN0022, SMCCC DEN0028) **before** writing the code. The confirmation method for the static GIC registers is the **oracle** (TEST_STRATEGY §4): comparison with the real reads of QEMU's GICv3.
+- Marking: **[verified: source]** verified; **[hypothesis]** hypothesis. Task M0-A (2026-10-15) rechecked every architectural register/bit/ID value of this file against the official Arm documents: Arm ARM DDI 0487 M.d (`ARM ARM`), GIC architecture spec IHI 0069 H.b (`GIC`), PSCI DEN0022 F.b (`PSCI`), SMCCC DEN0028 1.7 H (`SMCCC`). Item-by-item results, with page numbers, are in [`re/el2-m0-register-check.md`](../../../re/el2-m0-register-check.md). What remains **[hypothesis]** is not an Arm architectural fact (m1n1/QEMU behavior, AIC limits, Windows behavior, design choices) and is confirmed by the **oracle** (TEST_STRATEGY §4: comparison with the real reads of QEMU's GICv3) or on hardware. Values changed by M0-A carry a short **[corrected in M0-A]** note.
 - Reference lesson: **F-14**. A wrong GIC register does not produce a bugcheck but a silent hang (Windows stays on the logo with an identical screen). Therefore this document has a "fidelity" column for each register.
 
 ## 1. Conventions
@@ -74,19 +74,19 @@ Why in QEMU the virtual addresses coincide with the real ones [hypothesis, reaso
 ### 4.1 INTID and GSIV
 | Range | Use |
 |---|---|
-| 0-15 | SGI (Windows IPIs) |
-| 16-31 | PPI: 26 EL2 timer (GTDT, unused), 27 EL1 virtual timer, 30 EL1 non-secure physical timer, 25 maintenance (QEMU only, not exposed), 23 PMU (required in the V1 MADT) |
+| 0-15 | SGI (Windows IPIs) [verified: GIC Table 2-1, p.2-35] |
+| 16-31 | PPI [verified: GIC Table 2-1; the specific PPI numbers below come from SBSA/BSA, not downloaded: unverified by M0-A]: 26 EL2 timer (GTDT, unused), 27 EL1 virtual timer, 30 EL1 non-secure physical timer, 25 maintenance (QEMU only, not exposed), 23 PMU (required in the V1 MADT) |
 | 32-927 | SPI = 32 + AIC index (M3). In QEMU: real SPIs 1:1 |
 | 928-959 | reserved for the MSI Frame (t8103) |
-`GICD_TYPER.ITLinesNumber = 29` (960 INTIDs) on M3; in QEMU whatever the real GIC declares (oracle). An AIC IRQ ≥ 896 is not supported in v1 (log + cannot be enabled) [hypothesis: AIC t8103 ≤ 896 IRQs, F0/PB].
+`GICD_TYPER.ITLinesNumber = 29` (max SPI INTID = 32·(29+1)−1 = 959, 960 INTIDs) on M3 [verified: GIC §12.9.38 p.12-621]; in QEMU whatever the real GIC declares (oracle). An AIC IRQ ≥ 896 is not supported in v1 (log + cannot be enabled) [hypothesis: AIC t8103 ≤ 896 IRQs, F0/PB].
 
 ## 5. Virtual distributor (GICD): registers and fidelity
-Model: GICv3, **single security state** (`SecurityExtn=0`, `DS=1`), affinity routing always on, without LPI/ITS/MBIS, `A3V=1`, `RSS=0`, `No1N=0`. This is the model that KVM presents to guests [hypothesis: from memory of the KVM code, not copied]; the **QEMU oracle** decides in case of difference.
+Model: GICv3, **single security state** (`SecurityExtn=0`, `DS=1`), affinity routing always on, without LPI/ITS/MBIS, `A3V=1`, `RSS=0`, `No1N=0`. The configuration is architecturally valid: `DS` is RAO/WI when only one Security state exists, `ARE` is RAO/WI when GICv2 compatibility is not implemented [verified: GIC §12.9.4 pp.12-545/12-548]. That this is also what KVM presents to guests remains [hypothesis: from memory of the KVM code, not copied]; the **QEMU oracle** decides in case of difference.
 
 | Offset | Register | Behavior | Fidelity / note |
 |---|---|---|---|
-| 0x0000 | `GICD_CTLR` | bit0 EnableGrp0, bit1 EnableGrp1, bit4 ARE (RAO/WI), bit6 DS (RAO/WI), bit7 E1NWF (RAZ/WI), bit31 RWP **always 0** | **Critical.** Windows writes ARE+EnableGrp1 and probes RWP: RWP never 1 [hypothesis]. Layout with `DS=1` to be confirmed with the oracle |
-| 0x0004 | `GICD_TYPER` | `ITLinesNumber=29`, `CPUNumber=0`, `SecurityExtn=0`, `MBIS=0`, `LPIS=0`, `IDbits=15`, `A3V=1`, `No1N=0`, `RSS=0` → expected value `0x0178_001D` [hypothesis] | Static. Typical error: declaring LPIS or MBIS |
+| 0x0000 | `GICD_CTLR` | bit0 EnableGrp0, bit1 EnableGrp1, bit4 ARE (RAO/WI), bit6 DS (RAO/WI), bit7 E1NWF (RAZ/WI), bit31 RWP **always 0** | **Critical.** Windows writes ARE+EnableGrp1 and probes RWP: RWP never 1 [hypothesis: Windows behavior]. Single-security-state layout (bit0 EnableGrp0, bit1 EnableGrp1, bit4 ARE, bit6 DS, bit7 E1NWF, bit31 RWP) [verified: GIC §12.9.4 pp.12-547/548]; RWP is read-only and "0 = no write pending", so an always-0 RWP is architecturally valid; E1NWF may be RAZ/WI (IMPLEMENTATION DEFINED); bit8 `nASSGIreq` is RES0 (no GICv4.1) |
+| 0x0004 | `GICD_TYPER` | `ITLinesNumber=29`, `CPUNumber=0`, `SecurityExtn=0`, `MBIS=0`, `LPIS=0`, `IDbits=9`, `A3V=1`, `No1N=0`, `RSS=0` → expected value `0x0148_001D` [verified: GIC §12.9.38 pp.12-618..621; bit positions ESPI_range 31:27, RSS 26, No1N 25, A3V 24, IDbits 23:19, DVIS 18, LPIS 17, MBIS 16, num_LPIs 15:11, SecurityExtn 10, NMI 9, ESPI 8, CPUNumber 7:5, ITLinesNumber 4:0] | Static. Typical error: declaring LPIS or MBIS. **[corrected in M0-A]** the draft had `IDbits=15` (`0x0178_001D`): the field holds "INTID bits minus one", and a GIC without LPIs must implement at most 10 INTID bits (13 for GICv3.1), so the conformant value is 9 [verified: GIC §2.2.2 p.2-37]. Open point for the oracle: QEMU may report 15 (LPI-capable); the Windows driver reaction to either value is untested |
 | 0x0008 | `GICD_IIDR` | fixed value from the oracle (implementer/product/variant) | Static. Windows may use the IIDR for workarounds: use the same as the oracle |
 | 0x000C | `GICD_TYPER2` | `RAZ` | Static |
 | 0x0010 | `GICD_STATUSR` | `RAZ/WI` | — |
@@ -97,15 +97,15 @@ Model: GICv3, **single security state** (`SecurityExtn=0`, `DS=1`), affinity rou
 | 0x0200-0x027C | `GICD_ISPENDR<n>` | set-pending (software); read = pending | Faithful (NTASP leaves it "not implemented": a mistake not to repeat) |
 | 0x0280-0x02FC | `GICD_ICPENDR<n>` | clear-pending | Faithful |
 | 0x0300-0x037C | `GICD_ISACTIVER<n>`/0x0380 `ICACTIVER<n>` | active state | Faithful |
-| 0x0400-0x07F8 | `GICD_IPRIORITYR<n>` | 8 bits per INTID, accessible as byte and 32-bit; implemented priorities: top 5 significant bits (32 levels [verified: PB §1]); low bits RAZ/WI | Faithful: Windows writes and rereads priorities; the number of implemented bits must match `ICH_VTR_EL2.PRIbits` |
+| 0x0400-0x07F8 | `GICD_IPRIORITYR<n>` | 8 bits per INTID, accessible as byte and 32-bit; implemented priorities: top 5 significant bits (32 levels [verified: PB §1; GIC Table 4-9 p.4-71: unimplemented low bits RES0, 5 bits = 32 levels, steps of 8; at least 5 bits are mandatory for the virtual interface, GIC §4.6/ICH_VTR_EL2.PRIbits p.12-365]); low bits RAZ/WI | Faithful: Windows writes and rereads priorities; the number of implemented bits must match `ICH_VTR_EL2.PRIbits` |
 | 0x0800-0x0BF8 | `GICD_ITARGETSR<n>` | `RAZ/WI` (ARE=1) | — |
 | 0x0C00-0x0CFC | `GICD_ICFGR<n>` | 2 bits per INTID: bit1 = edge; bit0 RAZ; AIC SPIs: level by default | Faithful (affects AIC unmask at injection vs. EOI) |
 | 0x0D00-0x0D7C | `GICD_IGRPMODR<n>` | `RAZ/WI` (DS=1) | — |
 | 0x0E00 | `GICD_NSACR<n>` | `RAZ/WI` | — |
 | 0x0F00 | `GICD_SGIR` | `WI` (legacy GICv2 only) | log-once |
 | 0x0F10/0x0F20 | `GICD_CPENDSGIR`/`SPENDSGIR` | `RAZ/WI` (ARE=1) | — |
-| 0x6000-0x7FD8 | `GICD_IROUTER<n>` (INTID 32+) | 64 bit; `Aff3.Aff2.Aff1.Aff0` and bit31 `IRM`; choose the target vCPU; `IRM=1` → any: use vCPU 0 if enabled, otherwise the first enabled one | Faithful: the write reprograms `pirq_ops.set_target`; read = written value |
-| 0xFFD0-0xFFFC | `GICD_PIDR4..PIDR3`, `CIDR0..3` | static values, **`PIDR2.ArchRev = 3`** (bits 7:4) | Static: used by the OS to recognize the version [hypothesis] |
+| 0x6100-0x7FD8 | `GICD_IROUTER<n>` (INTID 32+; offset = 0x6000 + 8·n, n = 32..1019; n < 32 reserved) [verified: GIC Table 12-25 p.12-534, §12.9.22 p.12-584; **[corrected in M0-A]**: the draft said 0x6000] | 64 bit; Aff0 [7:0], Aff1 [15:8], Aff2 [23:16], **Aff3 [39:32]**, bit31 `IRM`; choose the target vCPU; `IRM=1` → any: use vCPU 0 if enabled, otherwise the first enabled one | Faithful: the write reprograms `pirq_ops.set_target`; read = written value |
+| 0xFFD0-0xFFFC | ID space; only `GICD_PIDR2` (0xFFE8) is architecturally defined | **`PIDR2.ArchRev = 3`** (bits 7:4; 3 = GICv3, 4 = GICv4) [verified: GIC §12.1.13 Tables 12-15/12-18 pp.12-209/210]. **[corrected in M0-A]**: the other registers in the window (`PIDR4..0`, `CIDR0..3`) are IMPLEMENTATION DEFINED (Arm recommends the CoreLink/CoreSight scheme): copy the oracle's values | Static: used by the OS to recognize the version |
 
 Writes to reserved registers: `RAZ/WI` with log-once. Misaligned accesses or of a disallowed size: panic with dump (guest errors are not hidden in v1).
 
@@ -113,12 +113,12 @@ Writes to reserved registers: `RAZ/WI` with log-once. Misaligned accesses or of 
 ### 6.1 RD_base frame (offset from the vCPU frame)
 | Offset | Register | Behavior | Fidelity / note |
 |---|---|---|---|
-| 0x0000 | `GICR_CTLR` | `EnableLPIs` RAZ/WI, `RWP` always 0, `UWP` 0 | **Critical** (RWP) |
+| 0x0000 | `GICR_CTLR` | `EnableLPIs` (bit0) RAZ/WI, `RWP` (**bit3**) always 0, `UWP` (**bit31**) 0 [verified: GIC §12.11.2 pp.12-641..644: `EnableLPIs` is RES0 when `GICR_TYPER.PLPIS=0`] | **Critical** (RWP) |
 | 0x0004 | `GICR_IIDR` | = oracle `GICD_IIDR` | Static |
-| 0x0008 | `GICR_TYPER` (64 bit) | `PLPIS=0, VLPIS=0, DirectLPI=0`, `Last=1` only on the last vCPU, `Processor_Number`=vCPU index, `Affinity_Value`=virtual MPIDR (Aff3.Aff2.Aff1.Aff0 in bits 63:32) | **Critical.** Windows uses it to associate the redistributor with the CPU. Wrong `Last` = a search that does not terminate [hypothesis] |
+| 0x0008 | `GICR_TYPER` (64 bit) | `PLPIS=0, VLPIS=0, DirectLPI=0`, `Last=1` only on the last vCPU, `Processor_Number`=vCPU index, `Affinity_Value`=virtual MPIDR (Aff3.Aff2.Aff1.Aff0 in bits 63:32) | **Critical.** Windows uses it to associate the redistributor with the CPU. Wrong `Last` = a search that does not terminate [hypothesis: Windows behavior]. Layout [verified: GIC §12.11.37 pp.12-711..714]: Affinity_Value [63:32] (Aff3 63:56, Aff2 55:48, Aff1 47:40, Aff0 39:32), Processor_Number [23:8], Last bit4, DirectLPI bit3, VLPIS bit1 (RES0 in GICv3), PLPIS bit0; `Last` = highest-numbered Redistributor in a series of contiguous pages |
 | 0x0010 | `GICR_STATUSR` | `RAZ/WI` | — |
-| 0x0014 | `GICR_WAKER` | `ProcessorSleep` (bit1) RW; `ChildrenAsleep` (bit2) = `ProcessorSleep` **immediately**; reset: both 1 | **Critical.** Windows clears Sleep and waits for `ChildrenAsleep=0`: if it stays 1 there is a hang |
-| 0xFFD0-0xFFFC | ID | as GICD (PIDR2.ArchRev=3) | Static |
+| 0x0014 | `GICR_WAKER` | `ProcessorSleep` (bit1) RW; `ChildrenAsleep` (bit2, RO) = `ProcessorSleep` **immediately**; reset: both 1 [verified: GIC §12.11.42 pp.12-728/729; software protocol: set Sleep=0 then poll until ChildrenAsleep=0; changing Sleep 1→0 while ChildrenAsleep≠1 is UNPREDICTABLE] | **Critical.** Windows clears Sleep and waits for `ChildrenAsleep=0`: if it stays 1 there is a hang |
+| 0xFFD0-0xFFFC | ID | as GICD (`GICR_PIDR2` at 0xFFE8, ArchRev=3) [verified: GIC Table 12-16 p.12-209] | Static |
 
 ### 6.2 SGI_base frame (RD_base + 0x10000)
 | Offset | Register | Behavior | Notes |
@@ -128,48 +128,53 @@ Writes to reserved registers: `RAZ/WI` with log-once. Misaligned accesses or of 
 | 0x0200/0x0280 | `ISPENDR0`/`ICPENDR0` | State (pending SGIs live here) | Faithful |
 | 0x0300/0x0380 | `ISACTIVER0`/`ICACTIVER0` | State | Faithful |
 | 0x0400-0x041C | `IPRIORITYR0..7` | priorities of INTID 0-31 | as GICD |
-| 0x0C00/0x0C04 | `ICFGR0`/`ICFGR1` | SGI: always edge (RAO); PPI: configurable (timer = level) | Faithful |
+| 0x0C00/0x0C04 | `ICFGR0`/`ICFGR1` | SGI: always edge (each 2-bit field reads 0b10, so `ICFGR0` reads 0xAAAAAAAA); PPI: configurable (timer = level; bit 2x of each field is RES0) [verified: GIC §12.11.7/12.11.8 pp.12-653/654] | Faithful |
 | 0x0D00 | `IGRPMODR0` | `RAZ/WI` | — |
 | 0x0E00 | `NSACR` | `RAZ/WI` | — |
 
 ### 6.3 Virtual MPIDR and identification registers
-- `VMPIDR_EL2` of vCPU *i*: **flat**, `Aff0 = i`, `Aff1=Aff2=Aff3=0`, `U/MT=0`, bit31 RES1 [hypothesis]. Reason: the SGI target list uses Aff0 (16 bits) and the rest is decoded with a simple rule; the MADT of the `t8103-el2` model must use the same values (`acpigen` task).
+- `VMPIDR_EL2` of vCPU *i*: **flat**, `Aff0 = i`, `Aff1=Aff2=Aff3=0`, `U/MT=0`, bit31 RES1 [verified: ARM ARM D24.2.218 pp.D24-10099/10100: Aff3 [39:32], bit31 RES1, U bit30, MT bit24; the reset value is UNKNOWN, so the layer must write `VMPIDR_EL2` on every core]. Reason: the SGI target list uses Aff0 (16 bits) and the rest is decoded with a simple rule; the MADT of the `t8103-el2` model must use the same values (`acpigen` task).
 - `VPIDR_EL2` = the core's real `MIDR_EL1` (E/P remain distinguishable: the MADT/PPTT declares the efficiency class).
-- `ID_AA64PFR0_EL1` (trap `TID3`): the `GIC` field (bits 27:24) read as **1**, the rest unchanged. Reason: lesson F-08 (on HVF the field was 0 even with a usable GIC); a firmware that decides from the field would choose GICv2. The other `ID_AA64*`: passthrough of the real value, with masking of unsupported features (e.g. SPE, nesting `ID_AA64MMFR2.NV`) listed in the `sysreg_overrides` table [hypothesis].
+- `ID_AA64PFR0_EL1` (trap `TID3`): the `GIC` field (bits 27:24) read as **1**, the rest unchanged [verified: ARM ARM D24.2.92 p.D24-9280: `GIC` bits [27:24], 0b0001 = GICv3.0/4.0 system-register interface, 0b0011 = GICv4.1; `HCR_EL2.TID3` bit18 traps EL1 reads of `ID_AA64PFR0_EL1` with EC 0x18, D24.2.61]. Reason: lesson F-08 (on HVF the field was 0 even with a usable GIC); a firmware that decides from the field would choose GICv2. The other `ID_AA64*`: passthrough of the real value, with masking of unsupported features (e.g. SPE via `ID_AA64DFR0_EL1.PMSVer` [35:32], nesting via `ID_AA64MMFR2_EL1.NV` [27:24]: both fields exist [verified: ARM ARM D24.2.79, D24.2.89]) listed in the `sysreg_overrides` table [hypothesis: which fields M1 must mask is a design decision].
 
 ## 7. Virtual CPU interface and system registers
 ### 7.1 Initial values
 | Register | Value | Note |
 |---|---|---|
-| `HCR_EL2` | `RW=1, VM=1, E2H=1, TGE=0, IMO=1, FMO=1, AMO=1, TSC=1, TID3=1`, `TWI=TWE=0`, `FB=0` | `AMO=1` is needed to intercept the SErrors of the SEIS errata [hypothesis]; `TSC=1` to answer `SMC` with `NOT_SUPPORTED` |
-| `ICC_SRE_EL2` | `SRE=1, Enable=1` (lower EL can use the system registers) | [hypothesis] |
-| `ICH_HCR_EL2` | `En=1`; `TRAP_EMULATE` mode: `TALL0=1, TALL1=1, TDIR=1` and `TC=1` in variant A; only `TALL1, TDIR` in variant B | see §7.2 |
-| `ICH_VMCR_EL2` | managed by the layer (VENG1, VPMR, VBPR1, VEOIM, VCBPR) | [hypothesis] |
+| `HCR_EL2` | `RW=1, VM=1, E2H=1, TGE=0, IMO=1, FMO=1, AMO=1, TSC=1, TID3=1`, `TWI=TWE=0`, `FB=0` [verified bit positions: ARM ARM D24.2.61 pp.D24-8919..8948: VM 0, FMO 3, IMO 4, AMO 5, FB 9, TWI 13, TWE 14, TID3 18, TSC 19, TGE 27, RW 31, E2H 34] | `AMO=1` routes physical SErrors to EL2 when `TGE=0` [verified]; that this is needed for the SEIS errata is [hypothesis: design reasoning, KVM commit cited in RISKS R-05]. `TSC=1` traps EL1 `SMC` with EC 0x17 [verified]; **the trap's preferred return address is the SMC itself, so the layer must advance `ELR` (as the §9 table says)** |
+| `ICC_SRE_EL2` | `SRE=1, Enable=1` (lower EL can use the system registers) | [verified: GIC §12.2.24 pp.12-283/284: SRE bit0, DFB bit1, DIB bit2, Enable bit3; `Enable=0` makes EL1 accesses to `ICC_SRE_EL1` trap to EL2; `S3_4_C12_C9_5`] |
+| `ICH_HCR_EL2` | `En=1`; `TRAP_EMULATE` mode: `TALL0=1, TALL1=1, TDIR=1` and `TC=1` in variant A; only `TALL1, TDIR` in variant B | see §7.2. Bits [verified: GIC §12.4.5 pp.12-348..351; `S3_4_C12_C11_0`]: En 0, UIE 1, LRENPIE 2, NPIE 3, VGrp0EIE 4, VGrp0DIE 5, VGrp1EIE 6, VGrp1DIE 7, TC 10, TALL0 11, TALL1 12, TSEI 13, TDIR 14, DVIM 15, EOIcount [31:27]. `TDIR` exists only if `ICH_VTR_EL2.TDS=1` (FEAT_GICv3_TDIR), otherwise RES0: check it at boot |
+| `ICH_VMCR_EL2` | managed by the layer (VENG1, VPMR, VBPR1, VEOIM, VCBPR) | [verified: GIC §12.4.8 pp.12-361..363; `S3_4_C12_C11_7`]: VENG0 0, VENG1 1, VAckCtl 2, VFIQEn 3, VCBPR 4, VEOIM 9, VBPR1 [20:18], VBPR0 [23:21], VPMR [31:24] |
 | `VTCR_EL2` | 16 KB granule, PS = core PA range, SH0/ORGN0/IRGN0 inner-shareable write-back, T0SZ/SL0 as m1n1 [verified: `hv_vm.c` `hv_pt_init`] | — |
 | `VTTBR_EL2` | table base + `VMID` (8 or 16 bit, 1) | — |
-| `CNTHCTL_EL2` | `EL1PCTEN=EL1PCEN=1` (with `E2H=1` the format changes: confirm the bits [hypothesis]) | guest timers not intercepted |
+| `CNTHCTL_EL2` | with `E2H=1` (our case) set `EL1PTEN` (bit11) `=1` and `EL1PCTEN` (bit10) `=1`. **[corrected in M0-A]**: the draft named `EL1PCTEN=EL1PCEN=1`; `EL1PCEN` (bit1) belongs to the `E2H=0` layout only, where bits 1:0 are `EL1PCEN`/`EL1PCTEN` | guest timers not intercepted [verified: ARM ARM D24.10.2 pp.D24-11211/11212: E2H1 variant. With `TGE=0` the EL0* bits 9:8/1:0 have no effect]. `CNTVOFF_EL2` has an UNKNOWN reset value (D24.10.27 p.D24-11324): write 0 explicitly, 64-bit, `S3_4_C14_C0_3`, virtual count = physical count − `CNTVOFF_EL2` |
 | `VM_TMR_FIQ_ENA_EL2` (`S3_5_C15_C1_3`) | bit0 (V) and bit1 (P) = 1 | [verified: F0 §1 lines 4-5] |
 
 ### 7.2 Guest `ICC_*` registers to intercept (`TRAP_EMULATE` mode)
-All encodings are **[hypothesis]**, to be confirmed against the ARM manual in M0.
+All encodings are **[verified: GIC §12.2, per-register "Accessing" sections]** (M0-A); the `TC`/`TALL`/`TDIR` column was also checked against each register's trap pseudocode, and three entries were corrected (marked). Routing rule from the pseudocode: with `IMO=1`/`FMO=1` an EL1 access to a Group 1 / Group 0 / common register is **redirected to the virtual CPU interface (`ICV_*`) in hardware** unless the matching trap bit is set, in which case it traps to EL2 with EC 0x18. Group 1 registers are governed by `TALL1` + `IMO`; Group 0 by `TALL0` + `FMO`; common registers by `TC` + (`FMO` or `IMO`) [GIC §4.6.4 p.4-67, §12.4.5 p.12-350].
 
 | Register | Trap | Emulation | Expected cost |
 |---|---|---|---|
-| `ICC_IAR1_EL1` (`S3_0_C12_C12_0`) | `TALL1` | picks the highest-priority pending INTID from the vGIC state, makes it active, updates the LR and returns the INTID (1023 if spurious) | 1 trap per interrupt |
-| `ICC_EOIR1_EL1` (`..._C12_1`) | `TALL1` | priority drop (+ deactivate if `EOImode=0`), then end of cycle: AIC unmask / timer re-evaluation | 1 trap per interrupt |
-| `ICC_DIR_EL1` (`..._C11_1`) | `TDIR` | deactivate if `EOImode=1` | rare |
-| `ICC_HPPIR1_EL1`, `ICC_BPR1_EL1`, `ICC_IGRPEN1_EL1` (`..._C12_7`), `ICC_AP1Rn_EL1` | `TALL1` | emulated on the state; `IGRPEN1` also writes `ICH_VMCR` | rare (CPU start) |
-| `ICC_IAR0/EOIR0/HPPIR0/BPR0/IGRPEN0/AP0Rn` | `TALL0` | same for Group 0 | rare |
-| `ICC_CTLR_EL1` (`..._C12_4`) | `TC` (variant A) | read: `SEIS=0`, `IDbits=…`, `PRIbits=4`, `A3V=1`, `EOImode`; write: `EOImode`, `CBPR` | rare |
-| `ICC_SRE_EL1` | `TC` | `SRE=1` RAO/WI | rare |
-| `ICC_PMR_EL1` (`S3_0_C4_C6_0`) | **`TC` intercepts it in variant A** [hypothesis] | emulated on `ICH_VMCR.VPMR` | **Potentially very frequent.** Windows uses `PMR=0xF0` at the start of every CPU [verified: F-15 trace T6]; if it used it for the IRQL, a trap on every IRQL change would be prohibitive. Mandatory measurement from a trace before M2 (RISKS R-05). Variant B leaves `PMR` in hardware |
-| `ICC_SGI1R_EL1` (`S3_0_C12_C11_5`), `ICC_ASGI1R_EL1` (`..._C11_6`), `ICC_SGI0R_EL1` (`..._C11_7`) | already intercepted with `IMO=1` [hypothesis, to be confirmed in the ARM ARM; the note in PB §5 cited `TALL1/TC`] | §7.3 | for every Windows IPI |
-| `ICC_RPR_EL1` | `TALL1`/`TC` | emulated | rare |
+| `ICC_IAR1_EL1` (`S3_0_C12_C12_0`) | `TALL1` [verified] | picks the highest-priority pending INTID from the vGIC state, makes it active, updates the LR and returns the INTID (1023 if spurious) | 1 trap per interrupt |
+| `ICC_EOIR1_EL1` (`S3_0_C12_C12_1`) | `TALL1` [verified] | priority drop (+ deactivate if `EOImode=0`), then end of cycle: AIC unmask / timer re-evaluation | 1 trap per interrupt |
+| `ICC_DIR_EL1` (`S3_0_C12_C11_1`) | `TDIR` (only if `ICH_VTR_EL2.TDS=1`) **or** `TC` **[corrected in M0-A: the draft listed only `TDIR`; `TC` also traps it, and without FEAT_GICv3_TDIR `TC` is the only way]** | deactivate if `EOImode=1` | rare |
+| `ICC_HPPIR1_EL1` (`S3_0_C12_C12_2`), `ICC_BPR1_EL1` (`..._C12_3`), `ICC_IGRPEN1_EL1` (`..._C12_7`), `ICC_AP1Rn_EL1` | `TALL1` [verified] | emulated on the state; `IGRPEN1` also writes `ICH_VMCR` | rare (CPU start) |
+| `ICC_IAR0/EOIR0/HPPIR0/BPR0/IGRPEN0/AP0Rn` (`S3_0_C12_C8_0/1/2/3`, `S3_0_C12_C12_6`) | `TALL0` [verified] | same for Group 0 | rare |
+| `ICC_CTLR_EL1` (`S3_0_C12_C12_4`) | `TC` (variant A) [verified] | read: `SEIS=0` (bit14), `IDbits` (bits13:11, 0b000 = 16), `PRIbits=4` (bits10:8, min value for 5 bits), `A3V=1` (bit15), `RSS=0` (bit18), `EOImode` (bit1), `CBPR` (bit0) [verified: GIC §12.2.6]; write: `EOImode`, `CBPR` | rare |
+| `ICC_SRE_EL1` (`S3_0_C12_C12_5`) | **`ICC_SRE_EL2.Enable=0`** **[corrected in M0-A: not `TC`; `TC` does not cover `ICC_SRE_EL1`]** | `SRE=1` RAO/WI. Alternative: leave `Enable=1` (§7.1) and let it hit hardware | rare |
+| `ICC_PMR_EL1` (`S3_0_C4_C6_0`) | **`TC` intercepts it in variant A** [verified: GIC §12.4.5 p.12-350 lists `ICC_PMR_EL1`; pseudocode §12.2.19; with `TC=0` the access is redirected to `ICV_PMR_EL1` in hardware] | emulated on `ICH_VMCR.VPMR` | **Potentially very frequent.** Windows uses `PMR=0xF0` at the start of every CPU [verified: F-15 trace T6]; if it used it for the IRQL, a trap on every IRQL change would be prohibitive. Mandatory measurement from a trace before M2 (RISKS R-05). Variant B leaves `PMR` in hardware |
+| `ICC_SGI1R_EL1` (`S3_0_C12_C11_5`), `ICC_ASGI1R_EL1` (`S3_0_C12_C11_6`), `ICC_SGI0R_EL1` (`S3_0_C12_C11_7`) | already intercepted with `IMO=1` (or `FMO=1`, or `TC=1`): "virtual accesses to `ICC_SGI0R_EL1`, `ICC_SGI1R_EL1` and `ICC_ASGI1R_EL1` always generate a Trap exception taken to EL2" [verified: GIC §4.6.4 p.4-67; pseudocode §12.2.22 p.12-277]. The PB §5 note citing `TALL1/TC` was imprecise: neither is needed | §7.3 | for every Windows IPI |
+| `ICC_RPR_EL1` (`S3_0_C12_C11_3`) | `TC` only **[corrected in M0-A: not `TALL1`; RPR is a common register]** | emulated | rare |
 
 Principle for choosing the variant: start from **A** (maximum trap, like KVM on CPUs with broken SEIS [verified: commit `d11a327ed9`]) to have correctness; move to **B** only with a safety proof on hardware (M3a self-test: targeted writes/reads of the non-intercepted registers without SError) and with performance measurements. The change is a parameter (`cpuif_mode`, `cpuif_trap_set`), not a code change.
 
 ### 7.3 SGI dispatch
-Preconditions: `ICC_SGI1R_EL1` written by vCPU *s*: `INTID[27:24]` ∈ 0-15, `TargetList[15:0]` (Aff0), `Aff1[23:16]`, `Aff2[39:32]`, `Aff3[55:48]`, `IRM[40]` (1 = all but self), `RS[47:44]` (0, RSS=0). Postconditions: for each destination vCPU with the SGI enabled (`GICR_ISENABLER0`) the pending bit is set; if destination ≠ current pCPU, `ipi_ops.send` is called. Errors: INTID out of range or non-existent destination → ignored + log (as per the architecture: non-existent destinations are ignored). Example: Windows sends SGI 0 to CPU 1 → `sgi_pending[1] |= 1` → `ipi_send(core 1)`.
+Field layout of `ICC_SGI1R_EL1` [verified: GIC §12.2.22 pp.12-276/277]: Aff3 [55:48], RS [47:44] (RES0 while `ICC_CTLR_EL1.RSS=0`), IRM bit40, Aff2 [39:32], INTID [27:24], Aff1 [23:16], TargetList [15:0]; with IRM=1 the Aff fields and TargetList are RES0; target bits that match no PE "must be ignored by the Distributor". Preconditions: `ICC_SGI1R_EL1` written by vCPU *s*: `INTID[27:24]` ∈ 0-15, `TargetList[15:0]` (Aff0), `Aff1[23:16]`, `Aff2[39:32]`, `Aff3[55:48]`, `IRM[40]` (1 = all but self), `RS[47:44]` (0, RSS=0). Postconditions: for each destination vCPU with the SGI enabled (`GICR_ISENABLER0`) the pending bit is set; if destination ≠ current pCPU, `ipi_ops.send` is called. Errors: INTID out of range or non-existent destination → ignored + log (as per the architecture: non-existent destinations are ignored). Example: Windows sends SGI 0 to CPU 1 → `sgi_pending[1] |= 1` → `ipi_send(core 1)`.
+
+### 7.4 Reference: list registers and VGIC type (verified in M0-A)
+- `ICH_LR<n>_EL2` (64 bit, `S3_4_C12_C(12+n[3])_(n[2:0])`, n = 0..15) [verified: GIC §12.4.6 pp.12-353..356]: `State` [63:62] (00 invalid, 01 pending, 10 active, 11 pending+active), `HW` bit61, `Group` bit60, `NMI` bit59 (FEAT_GICv3_NMI only, else RES0), `Priority` [55:48] (≥5 bits implemented; unimplemented low bits RES0), `pINTID` [44:32] (with `HW=0`: bit41 = `EOI` maintenance request), `vINTID` [31:0] (≥16 bits). Two LRs with the same vINTID in state pending/active is UNPREDICTABLE; vINTID 1020-1023 with `State≠0` is UNPREDICTABLE. For hardware-linked interrupts the pending/active state lives in the physical distributor, so on the t8103 (no physical GIC) the layer uses only `HW=0` entries [design consequence].
+- `ICH_VTR_EL2` (`S3_4_C12_C11_1`) [verified: GIC §12.4.9 pp.12-365/366]: `ListRegs` [4:0] = number of LRs minus 1; `TDS` bit19 (TDIR supported); `nV4` bit20 (1 in GICv3); `A3V` bit21; `SEIS` bit22; `IDbits` [25:23] (0 = 16 bits, 1 = 24 bits); `PREbits` [28:26] and `PRIbits` [31:29] (value = bits − 1, minimum 0b100 = 5 bits, so PRIbits ∈ {4,5,6}). The layer must read this register at boot and size the software state from it (the design assumes 8 LRs and 5 priority bits: [hypothesis] until read on the M1).
+- `ICH_MISR_EL2` `S3_4_C12_C11_2`, `ICH_EISR_EL2` `S3_4_C12_C11_3`, `ICH_ELRSR_EL2` `S3_4_C12_C11_5` [verified: encodings, GIC §12.4].
 
 ## 8. Backend interfaces (C)
 All tables are `const` and are selected in the composition root.
@@ -253,26 +258,26 @@ wel2_err_t trap_register_hvc   (uint32_t fid_lo, uint32_t fid_hi, hvc_handler_t 
 Preconditions: called only before `boot_start_guest()`; non-overlapping ranges (`WEL2_E_BUSY` otherwise). Policy for unregistered accesses: **default-deny with log**, with a defined response (sysreg: UNDEF to the guest only if not in the RAZ/WI list; HVC: `NOT_SUPPORTED`; MMIO out of map: panic).
 
 ## 9. PSCI and SMCCC via HVC
-Convention: `HVC #0`; ID in `w0`, arguments `x1-x3`, result in `x0` (`x1-x3` zeroed when unused). 64-bit functions have prefix `0xC4`; 32-bit `0x84`. **[hypothesis]** the IDs are from memory of the DEN0022/DEN0028 specifications.
+Convention: `HVC #0`; ID in `w0`, arguments `x1-x3`, result in `x0` (`x1-x3` zeroed when unused). 64-bit functions have prefix `0xC4`; 32-bit `0x84`. Function IDs, return codes and conventions below were checked in M0-A against PSCI DEN0022 F.b (PSCI 1.3) and SMCCC DEN0028 1.7 H: Fast call = bit31, SMC64 = bit30, owner in bits 29:24 (4 = Standard Service, 6 = Vendor Specific Hypervisor), `HVC #0` mandatory, non-zero HVC immediates designated for hypervisor vendors [SMCCC §2.5 Table 2-1 p.15, §2.10 p.18]; arguments `W0` = FID, `X1-X17` (SMC64) or `W1-W7` (SMC32), results `X0-X17`, `X4-X17` preserved unless results; unused result registers may be preserved or set to a constant such as zero [SMCCC §2.6/2.7 pp.16-17]; PSCI over HVC is allowed when EL3 is absent [PSCI §5 introduction].
 
 | Function | ID | Response |
 |---|---|---|
-| `SMCCC_VERSION` | `0x8000_0000` | `0x0001_0001` (1.1) |
-| `SMCCC_ARCH_FEATURES` | `0x8000_0001` | `NOT_SUPPORTED` for everything (no workaround declared) |
-| `PSCI_VERSION` | `0x8400_0000` | `0x0001_0001` (PSCI 1.1, like QEMU [hypothesis]) |
+| `SMCCC_VERSION` | `0x8000_0000` | `0x0001_0001` (1.1; bit31 = 0, major [30:16], minor [15:0]) [verified: SMCCC §7.2 p.29] |
+| `SMCCC_ARCH_FEATURES` | `0x8000_0001` | `arch_func_id` = `0x8000_0000` or `0x8000_0001` → `SUCCESS` (0); `NOT_SUPPORTED` (-1) for everything else (no workaround declared) **[corrected in M0-A: the draft said NOT_SUPPORTED for everything, which violates SMCCC §7.3.6 p.31]** |
+| `PSCI_VERSION` | `0x8400_0000` | `0x0001_0001` (PSCI 1.1: major [31:16], minor [15:0]) [verified: PSCI §5.1.1/5.3]; "like QEMU" stays [hypothesis] (test-bench behavior, oracle). A PSCI 1.1 implementation need not offer the optional functions (`SYSTEM_SUSPEND`, `CPU_FREEZE`, ...) [verified: PSCI Table 17 p.95] |
 | `CPU_SUSPEND` | `0x8400_0001`/`0xC400_0001` | `WFI` and `SUCCESS` (standby state); power-down states → `INVALID_PARAMETERS` |
 | `CPU_OFF` | `0x8400_0002` | does not return; the vCPU becomes `OFF`; `cpu_park()` |
-| `CPU_ON` | `0x8400_0003`/`0xC400_0003` | `x1`=virtual MPIDR, `x2`=entry (PA, 4-byte aligned), `x3`=context_id (→ `x0` on entry). Errors: `INVALID_PARAMETERS` (non-existent MPIDR), `INVALID_ADDRESS` (entry not in RAM), `ALREADY_ON`, `ON_PENDING`, `INTERNAL_FAILURE` |
-| `AFFINITY_INFO` | `0x8400_0004`/`0xC400_0004` | 0 ON, 1 OFF, 2 ON_PENDING |
-| `MIGRATE_INFO_TYPE` | `0x8400_0006` | 2 (Trusted OS not migratable / not present) |
+| `CPU_ON` | `0x8400_0003`/`0xC400_0003` | `x1`=virtual MPIDR (Aff3 [39:32], Aff2 [23:16], Aff1 [15:8], Aff0 [7:0], other bits zero), `x2`=entry (PA from the caller's point of view; 4-byte alignment is our own check, the spec is silent), `x3`=context_id (→ `x0` on entry) [verified: PSCI §5.1.4 pp.31/32, §6.4.2 p.84]. Errors [verified: PSCI §5.6.2 p.57]: `INVALID_PARAMETERS` (non-existent MPIDR), `INVALID_ADDRESS` (entry not in RAM), `ALREADY_ON`, `ON_PENDING`, `INTERNAL_FAILURE` |
+| `AFFINITY_INFO` | `0x8400_0004`/`0xC400_0004` | `x1`=target_affinity (same format as CPU_ON), `x2`=lowest_affinity_level (0 only; higher levels optional since PSCI 1.0). 0 ON, 1 OFF, 2 ON_PENDING; `INVALID_PARAMETERS` for a non-existent target [verified: PSCI §5.1.5 pp.33/34] |
+| `MIGRATE_INFO_TYPE` | `0x8400_0006` | 2 (Trusted OS not present or does not require migration) [verified: PSCI §5.1.7 p.35; the function is optional, `NOT_SUPPORTED` is also valid] |
 | `SYSTEM_OFF` | `0x8400_0008` | does not return: `plat_ops.poweroff` |
 | `SYSTEM_RESET` | `0x8400_0009` | does not return: `plat_ops.reset` |
-| `PSCI_FEATURES` | `0x8400_000A` | `SUCCESS` (0) for the functions above, `NOT_SUPPORTED` (-1) for the others |
-| any other `HVC` | — | `x0 = -1` (`NOT_SUPPORTED`), log-once. **Never** UNDEF nor hang (F-14) |
+| `PSCI_FEATURES` | `0x8400_000A` | arg = a function ID (a PSCI function **or `SMCCC_VERSION`**); returns the feature flags (bit31 = 0; 0 when none, which is the case for all functions above in the original `power_state` format) for the functions above and for `SMCCC_VERSION`, `NOT_SUPPORTED` (-1) for the others [verified: PSCI §5.1.14 p.42, §5.16] |
+| any other `HVC` | — | `x0 = -1` (`NOT_SUPPORTED`; the architected "Unknown Function Identifier" is a sign-extended -1 in `W0`/`X0`) [verified: SMCCC §5.2 p.23], log-once. **Never** UNDEF nor hang (F-14) |
 | `SMC` from the guest (EC 0x17, `TSC=1`) | — | `x0 = -1`, `ELR` advanced |
-Codes: `SUCCESS 0, NOT_SUPPORTED -1, INVALID_PARAMETERS -2, DENIED -3, ALREADY_ON -4, ON_PENDING -5, INTERNAL_FAILURE -6, NOT_PRESENT -7, DISABLED -8, INVALID_ADDRESS -9`.
+Codes [verified: PSCI Table 5 p.49]: `SUCCESS 0, NOT_SUPPORTED -1, INVALID_PARAMETERS -2, DENIED -3, ALREADY_ON -4, ON_PENDING -5, INTERNAL_FAILURE -6, NOT_PRESENT -7, DISABLED -8, INVALID_ADDRESS -9`.
 
-State on entry of a vCPU powered on with `CPU_ON`: EL1h, `DAIF` masked, MMU off, `x0=context_id`, other registers zeroed; the vCPU's virtual GIC at reset (`ProcessorSleep=1` until Windows clears it). A `CPU_ON` toward the calling core → `ALREADY_ON`.
+State on entry of a vCPU powered on with `CPU_ON`: EL1h, `DAIF` masked, MMU off, `x0=context_id` [verified: PSCI §6.4.1/6.4.3.3/6.4.3.4/6.4.3.7 pp.83-85: SP_ELNS = EL1h, `SPSR.{D,A,I,F}={1,1,1,1}`, stage 1 MMU and caches disabled, caches clean and coherent; `CNTFRQ` initialized by firmware]; other registers zeroed (our choice); the vCPU's virtual GIC at reset (`ProcessorSleep=1` until Windows clears it). A `CPU_ON` toward the calling core → `ALREADY_ON`.
 
 Vendor functions (hypervisor service, `0xC600_0000` +):
 | ID | Function | Use |
@@ -280,9 +285,9 @@ Vendor functions (hypervisor service, `0xC600_0000` +):
 | `0xC600_0000` | `WEL2_VERSION` | returns `'WEL2'<<32 \| version` |
 | `0xC600_0001` | `WEL2_STATS` | copies the counters into the indicated buffer (PA, length) |
 | `0xC600_0002` | `WEL2_LOG` | appends a line to the ring (usable by EDK2/test drivers) |
-A guest that does not know them never uses them.
+A guest that does not know them never uses them. The IDs lie in the Vendor Specific Hypervisor range `0xC600_0000-0xC600_FFFF` and avoid the reserved general-query IDs `0x86/0xC6xx_FF00-FFFF` [verified: SMCCC §6.1/6.2 Tables 6-2/6-3 pp.26/27].
 
-`HVC` with an immediate other than 0 (e.g. `HVC #1`, the Hyper-V hypercall convention) → `NOT_SUPPORTED`, so that Windows concludes there is no Hyper-V hypervisor [hypothesis].
+`HVC` with an immediate other than 0 (e.g. `HVC #1`, the Hyper-V hypercall convention) → `NOT_SUPPORTED`, so that Windows concludes there is no Hyper-V hypervisor. Spec side [verified: SMCCC §2.10 p.18]: non-zero HVC immediates are reserved for hypervisor vendors, so answering them with an Unknown Function result is allowed. That Windows then concludes "no Hyper-V" stays [hypothesis: Windows behavior, test in M2].
 
 ## 10. Naming and error conventions
 - Functions: `wel2_<module>_<verb>` or internal `<module>_<verb>`; constants `WEL2_*`; types `*_t`; backends `<family>-<platform>`.
