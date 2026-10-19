@@ -5,14 +5,15 @@
 > This file is shared on purpose: every contributor who uses Claude Code gets the same workflow, rules and safety checks. "Marco" below means the project owner; where a rule says to ask Marco (backup, irreversible actions), ask **the user you are working with**. Personal paths (e.g. the external data disk) are configurable through `WATARI_DATA` in `tools/env.sh`.
 
 ## Project
-- **Name:** Watari Boot (渡, "to cross over"). Private repo `ZonatedCord/WatariBoot`.
+- **Name:** Watari Boot (渡, "to cross over"). Public repo `ZonatedCord/WatariBoot`.
 - **Goal:** **dual boot** of Windows ARM64 on Apple Silicon, **without macOS underneath**, on top of a minimal EL2 layer ("Watari EL2", Plan B adopted on 2026-10-14: `docs/adr/draft-plan-b-el2-layer.md`). First target: 13" M1 MacBook Pro (t8103, j293); then all Apple Silicon. Full plan: `docs/PLAN.md`; current state: `docs/STATUS.md`.
 - **Stack:** C11 (freestanding) + AArch64 assembly, clang/lld (Homebrew llvm); EDK2 `edk2-stable202608` (toolchain CLANGDWARF); QEMU 11.1 (HVF / TCG) as test bench; bash + Python 3 for tooling.
-- **Status:** research done (Phase 0), QEMU bench working, Watari EL2 designed (`docs/design/watari-el2/`); next milestone: **M0**.
+- **Status:** research done (Phase 0), QEMU bench working, Watari EL2 designed (`docs/design/watari-el2/`); M0 done; M1 in progress (see `docs/STATUS.md`).
 
 ## Commands
 - Environment (mounts check, `/tmp/watari-data` link): `source tools/env.sh` (the external disk "Arthur Fonzarelli" must be plugged in)
-- Host tests (ACPI generator): `make -C tools/acpigen test`
+- Host tests: `make -C tools/acpigen test` (ACPI generator) · `make -C el2 test` (vGIC model)
+- Watari EL2 in QEMU TCG: `el2/boot/run-qemu.sh` (M0) · `run-m1.sh` · `run-m1-2.sh` · `run-m1-3.sh`
 - EDK2 build: `tools/build-edk2.sh` (stock ArmVirtQemu + HVF patch) · `tools/build-edk2-watari.sh [--fiq|--parking|--nogicd]` (our platform)
 - Run: `tools/run-qemu-uefi.sh` (UEFI only) · `tools/run-qemu-windows.sh [--headless] [--tcg] [--unattend]` (Windows VM; window by default)
 - Headless smoke test: `tools/test-qemu-windows.sh`

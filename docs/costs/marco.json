@@ -1,6 +1,38 @@
 {
   "autore": "marco",
   "sessions": {
+    "055f0d5b7601": {
+      "models": {
+        "<synthetic>": {
+          "cache_read": 0,
+          "cache_write_1h": 0,
+          "cache_write_5m": 0,
+          "input": 0,
+          "output": 0
+        },
+        "claude-haiku-5-5": {
+          "cache_read": 589435,
+          "cache_write_1h": 0,
+          "cache_write_5m": 158646,
+          "input": 24,
+          "output": 65
+        },
+        "claude-opus-5-5": {
+          "cache_read": 205788901,
+          "cache_write_1h": 5675897,
+          "cache_write_5m": 0,
+          "input": 958,
+          "output": 363913
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 103092939,
+          "cache_write_1h": 0,
+          "cache_write_5m": 5372827,
+          "input": 1828,
+          "output": 497626
+        }
+      }
+    },
     "1b338f0e0a9a": {
       "models": {
         "<synthetic>": {
@@ -18,11 +50,11 @@
           "output": 65
         },
         "claude-opus-5-5": {
-          "cache_read": 192819262,
-          "cache_write_1h": 4875519,
+          "cache_read": 193604081,
+          "cache_write_1h": 4876594,
           "cache_write_5m": 0,
-          "input": 920,
-          "output": 349411
+          "input": 922,
+          "output": 349883
         },
         "claude-sonnet-5-5": {
           "cache_read": 91608282,
