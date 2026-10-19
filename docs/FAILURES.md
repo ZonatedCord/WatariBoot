@@ -120,3 +120,9 @@ Tools: `WATARI_PMODE` bits (build `--parking`; 1 FADT PSCI+HVC, 2 MADT without p
 - **Failed:** clang's integrated assembler: "symbol '__image_start' can not be undefined in a subtraction expression" (verified).
 - **Remedy:** compute `__image_size = __image_end - __image_start` in `linker.ld` and reference that single absolute symbol from the assembly.
 - **Lesson:** the assembler cannot subtract two external symbols; let the linker script do arithmetic on layout symbols. Also: macOS has no `timeout(1)`, so `run-qemu.sh` implements its own 20 s watchdog.
+
+## F-18 · M1-1: alignment fault at EL2 when linking the vGIC model (2026-10-19)
+- **Tried:** linking `el2/vgic/vgic.c` into the freestanding EL2 image (EL2 MMU off).
+- **Failed:** `ESR_EL2=0x96000061` (DFSC 0x21, alignment fault) inside `vgic_reset`: clang merged adjacent byte/halfword stores of the packed `vgic_irq` arrays into a 64-bit store at an odd address (`stur xzr, [x9, #-0x1f]`). With the MMU off all EL2 data accesses are Device memory, which does not allow unaligned access (verified in QEMU TCG).
+- **Remedy:** compile the image with `-mstrict-align`. The proper long-term fix is an EL2 stage-1 identity map with Normal memory for RAM.
+- **Lesson:** without an EL2 MMU every data access is Device; build EL2 code with `-mstrict-align`.
