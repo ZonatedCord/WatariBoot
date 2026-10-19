@@ -25,8 +25,8 @@ $(OUT)/%.o: %.S | $(OUT)
 $(OUT)/payload_s.o: payload.S | $(OUT)
 	$(CC) $(ASFLAGS) -c $< -o $@
 
-$(OUT)/wel2.elf: $(OUT)/start.o $(OUT)/payload_s.o $(OUT)/main.o $(OUT)/payload.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/vgic.o linker.ld
-	$(LD) -T linker.ld -nostdlib -z norelro --no-dynamic-linker -o $@ $(OUT)/start.o $(OUT)/payload_s.o $(OUT)/main.o $(OUT)/payload.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/vgic.o
+$(OUT)/wel2.elf: $(OUT)/start.o $(OUT)/payload_s.o $(OUT)/main.o $(OUT)/payload.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o $(OUT)/vgic.o linker.ld
+	$(LD) -T linker.ld -nostdlib -z norelro --no-dynamic-linker -o $@ $(OUT)/start.o $(OUT)/payload_s.o $(OUT)/main.o $(OUT)/payload.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o $(OUT)/vgic.o
 
 $(OUT)/wel2.bin: $(OUT)/wel2.elf
 	$(OBJCOPY) -O binary $< $@

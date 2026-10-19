@@ -17,8 +17,8 @@ SECTIONS
     . = ALIGN(4096);
     __image_end = .;
     __image_size = __image_end - __image_start;
-    . += 0x4000;
-    __el2_stack_top = .;
+    __el2_stacks = .;              /* 8 x 16 KB EL2 stacks, core i uses slot i */
+    . += 0x4000 * 8;
     . += 0x4000;
     __el1_stack_top = .;
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) }

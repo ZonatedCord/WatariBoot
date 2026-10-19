@@ -124,19 +124,27 @@ static void emit_target(struct vgic *v, uint32_t intid)
 
 /* ---- init / reset ----------------------------------------------------- */
 
+void vgic_vcpu_reset(struct vgic *v, unsigned idx)
+{
+	unsigned j;
+
+	if (idx >= v->nr_vcpus)
+		return;
+	zero(v->vcpu[idx].priv, sizeof(v->vcpu[idx].priv));
+	for (j = 0; j < 16; j++)
+		v->vcpu[idx].priv[j].flags = VGIC_F_EDGE; /* SGIs: always edge */
+	v->vcpu[idx].sleep = true;                        /* WAKER reset value 0x6 */
+}
+
 void vgic_reset(struct vgic *v)
 {
-	unsigned i, j;
+	unsigned i;
 
 	v->ctlr = 0;
 	zero(v->irouter, sizeof(v->irouter));
 	zero(v->spi, sizeof(v->spi));
-	for (i = 0; i < v->nr_vcpus; i++) {
-		zero(v->vcpu[i].priv, sizeof(v->vcpu[i].priv));
-		for (j = 0; j < 16; j++)
-			v->vcpu[i].priv[j].flags = VGIC_F_EDGE; /* SGIs: always edge */
-		v->vcpu[i].sleep = true;
-	}
+	for (i = 0; i < v->nr_vcpus; i++)
+		vgic_vcpu_reset(v, i);
 }
 
 int vgic_init(struct vgic *v, const struct vgic_config *cfg)
@@ -581,10 +589,11 @@ int vgic_set_pending(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
 	return 0;
 }
 
-int vgic_sgi_send(struct vgic *v, unsigned sender_idx, uint64_t sgi1r)
+uint32_t vgic_sgi_send_mask(struct vgic *v, unsigned sender_idx, uint64_t sgi1r)
 {
 	uint32_t intid = (uint32_t)((sgi1r >> 24) & 0xF);
-	unsigned i, n = 0;
+	uint32_t mask = 0;
+	unsigned i;
 
 	if (sender_idx >= v->nr_vcpus)
 		return 0;
@@ -593,9 +602,8 @@ int vgic_sgi_send(struct vgic *v, unsigned sender_idx, uint64_t sgi1r)
 			if (i == sender_idx)
 				continue;
 			v->vcpu[i].priv[intid].flags |= VGIC_F_PENDING;
-			n++;
+			mask |= 1u << i;
 		}
-		return (int)n;
 	} else {
 		uint32_t list = (uint32_t)(sgi1r & 0xFFFF);
 		uint32_t rs = (uint32_t)((sgi1r >> 44) & 0xF); /* RES0 unless RSS; harmless */
@@ -612,10 +620,20 @@ int vgic_sgi_send(struct vgic *v, unsigned sender_idx, uint64_t sgi1r)
 			if (!(list & (1u << (a0 % 16))))
 				continue;
 			v->vcpu[i].priv[intid].flags |= VGIC_F_PENDING;
-			n++;
+			mask |= 1u << i;
 		}
 	}
-	return (int)n;
+	return mask;
+}
+
+int vgic_sgi_send(struct vgic *v, unsigned sender_idx, uint64_t sgi1r)
+{
+	uint32_t m = vgic_sgi_send_mask(v, sender_idx, sgi1r);
+	int n = 0;
+
+	for (; m; m &= m - 1)
+		n++;
+	return n;
 }
 
 bool vgic_next_pending(const struct vgic *v, unsigned vcpu_idx,

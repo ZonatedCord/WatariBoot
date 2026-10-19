@@ -88,6 +88,8 @@ struct vgic {
 /* Returns 0 on success, -1 on invalid configuration. Leaves the vGIC at reset. */
 int  vgic_init(struct vgic *v, const struct vgic_config *cfg);
 void vgic_reset(struct vgic *v);
+/* Reset the private (SGI/PPI) state and WAKER of one vCPU: PSCI CPU_OFF. */
+void vgic_vcpu_reset(struct vgic *v, unsigned idx);
 
 /* addr is a guest-visible address inside the GICD or GICR window. */
 int vgic_mmio_read(struct vgic *v, uint64_t addr, unsigned size, uint64_t *val);
@@ -108,6 +110,9 @@ int  vgic_set_pending(struct vgic *v, unsigned vcpu_idx, uint32_t intid);
  * (DS=1 model). Delivery still depends on enable/priority/group enable.
  */
 int  vgic_sgi_send(struct vgic *v, unsigned sender_idx, uint64_t sgi1r);
+/* Same, but returns the bitmap of targeted vCPUs (bit i = vCPU index i), so the
+ * caller can kick the physical cores that run them. */
+uint32_t vgic_sgi_send_mask(struct vgic *v, unsigned sender_idx, uint64_t sgi1r);
 
 /* vCPU an SPI is routed to (IROUTER), or -1. */
 int  vgic_route_target(const struct vgic *v, uint32_t intid);

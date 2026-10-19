@@ -1,45 +1,86 @@
 // SPDX-License-Identifier: MIT
-// Watari EL2 M1-2: physical GICv3 owned by EL2.
+// Watari EL2 M1-2/M1-3: physical GICv3 owned by EL2.
 // Written from the GICv3/v4 architecture specification (IHI 0069H.b): GICD_CTLR
-// (12.9.4), GICR_WAKER (12.11.2), GICR_IGROUPR0/ISENABLER0/IPRIORITYR (12.12),
-// ICC_SRE_EL2 (12.5.x), ICC_PMR/IGRPEN1/IAR1/EOIR1. The guest never sees these
+// (12.9.4), GICD_ISENABLER/ICENABLER/IGROUPR/IPRIORITYR/IROUTER (12.9), GICR_TYPER
+// (12.11.x), GICR_WAKER (12.11.2), GICR_IGROUPR0/ISENABLER0/IPRIORITYR (12.12),
+// ICC_SRE_EL2, ICC_PMR/IGRPEN1/IAR1/EOIR1/SGI1R. The guest never sees these
 // frames: its GICD/GICR accesses are trapped by stage 2 and go to the vGIC model.
+//
+// M1-3: one redistributor per core, found by walking GICR_TYPER until the Last
+// bit (GIC spec: redistributor discovery); every function that touches the
+// SGI/PPI frame uses the frame of the calling core (TPIDR_EL2 = core index).
 
 #include "boot.h"
 
 #define GICD_CTLR        0x0000
+#define GICD_IGROUPR     0x0080
+#define GICD_ISENABLER   0x0100
+#define GICD_ICENABLER   0x0180
+#define GICD_IPRIORITYR  0x0400
+#define GICD_IROUTER     0x6000
 #define GICD_CTLR_ENGRP0 (1u << 0)
 #define GICD_CTLR_ENGRP1 (1u << 1)
 #define GICD_CTLR_ARE    (1u << 4)
 #define GICD_CTLR_RWP    (1u << 31)
 
+#define GICR_TYPER       0x0008
+#define GICR_TYPER_LAST  (1u << 4)
 #define GICR_WAKER       0x0014
 #define GICR_WAKER_PSLEEP (1u << 1)
 #define GICR_WAKER_CASLEEP (1u << 2)
 
-#define SGI_BASE         (GICR_PHYS + 0x10000)
-#define GICR_IGROUPR0    (SGI_BASE + 0x080)
-#define GICR_ISENABLER0  (SGI_BASE + 0x100)
-#define GICR_ICENABLER0  (SGI_BASE + 0x180)
-#define GICR_IPRIORITYR  (SGI_BASE + 0x400)
-#define GICR_ICFGR1      (SGI_BASE + 0xC04)
+#define SGI_OFF          0x10000
+#define GICR_IGROUPR0    (SGI_OFF + 0x080)
+#define GICR_ISENABLER0  (SGI_OFF + 0x100)
+#define GICR_ICENABLER0  (SGI_OFF + 0x180)
+#define GICR_IPRIORITYR  (SGI_OFF + 0x400)
+#define GICR_ICFGR1      (SGI_OFF + 0xC04)
+
+#define PRIO_EL2         0x40
 
 static inline uint32_t rd32(uint64_t a) { return *(volatile uint32_t *)a; }
+static inline uint64_t rd64(uint64_t a) { return *(volatile uint64_t *)a; }
 static inline void wr32(uint64_t a, uint32_t v) { *(volatile uint32_t *)a = v; }
+static inline void wr64(uint64_t a, uint64_t v) { *(volatile uint64_t *)a = v; }
 static inline void wr8(uint64_t a, uint8_t v) { *(volatile uint8_t *)a = v; }
+
+static inline uint64_t my_rd(void) { return g_pcpu[this_cpu()].gicr; }
+
+unsigned cpu_from_mpidr(uint64_t mpidr)
+{
+    uint32_t aff = (uint32_t)(((mpidr >> 32) & 0xff) << 24) | (uint32_t)(mpidr & 0xffffff);
+
+    for (unsigned i = 0; i < g_ncpu; i++)
+        if (g_pcpu[i].aff == aff)
+            return i;
+    return ~0u;
+}
+
+/* Walk the redistributor frames (consecutive, GICR_STRIDE apart) until the Last
+ * bit: one frame per core. GICR_TYPER[63:32] is Aff3.Aff2.Aff1.Aff0. */
+unsigned gic_phys_discover(void)
+{
+    unsigned n = 0;
+
+    for (uint64_t base = GICR_PHYS; n < MAX_CPUS; base += GICR_STRIDE) {
+        uint64_t typer = rd64(base + GICR_TYPER);
+
+        g_pcpu[n].aff = (uint32_t)(typer >> 32);
+        g_pcpu[n].gicr = base;
+        n++;
+        if (typer & GICR_TYPER_LAST)
+            break;
+    }
+    return n;
+}
 
 void gic_phys_ppi_enable(unsigned ppi, bool on)
 {
-    wr32(on ? GICR_ISENABLER0 : GICR_ICENABLER0, 1u << ppi);
+    wr32(my_rd() + (on ? GICR_ISENABLER0 : GICR_ICENABLER0), 1u << ppi);
 }
 
-void gic_phys_init(void)
+void gic_phys_init_dist(void)
 {
-    /* ICC_SRE_EL2: SRE=1 (system register interface for EL2), DFB/DIB=1, and
-     * Enable=1 so that EL1 may access ICC_SRE_EL1 and the other ICC registers
-     * without trapping (GIC spec 12.2.24; erratum-free on QEMU). */
-    __asm__ volatile("msr icc_sre_el2, %0; isb" : : "r"(0xfULL));
-
     /* Distributor: affinity routing, both groups. Writing 0x13 is valid for
      * DS=1 (bit0 Grp0, bit1 Grp1, bit4 ARE) and harmless for DS=0. */
     wr32(GICD_PHYS + GICD_CTLR, GICD_CTLR_ARE | GICD_CTLR_ENGRP1 | GICD_CTLR_ENGRP0);
@@ -47,31 +88,56 @@ void gic_phys_init(void)
     while ((rd32(GICD_PHYS + GICD_CTLR) & GICD_CTLR_RWP) && ++spins < 100000)
         ;
     put_kv("Watari EL2: phys GICD_CTLR = ", rd32(GICD_PHYS + GICD_CTLR));
+}
 
-    /* Redistributor of CPU 0: wake it up (clear ProcessorSleep, wait for
+void gic_phys_init_cpu(void)
+{
+    uint64_t r = my_rd();
+
+    /* ICC_SRE_EL2: SRE=1 (system register interface for EL2), DFB/DIB=1, and
+     * Enable=1 so that EL1 may access ICC_SRE_EL1 and the other ICC registers
+     * without trapping (GIC spec 12.2.24; erratum-free on QEMU). */
+    __asm__ volatile("msr icc_sre_el2, %0; isb" : : "r"(0xfULL));
+
+    /* Redistributor of this core: wake it up (clear ProcessorSleep, wait for
      * ChildrenAsleep=0). */
-    wr32(GICR_PHYS + GICR_WAKER, rd32(GICR_PHYS + GICR_WAKER) & ~GICR_WAKER_PSLEEP);
-    spins = 0;
-    while ((rd32(GICR_PHYS + GICR_WAKER) & GICR_WAKER_CASLEEP) && ++spins < 100000)
+    wr32(r + GICR_WAKER, rd32(r + GICR_WAKER) & ~GICR_WAKER_PSLEEP);
+    unsigned spins = 0;
+    while ((rd32(r + GICR_WAKER) & GICR_WAKER_CASLEEP) && ++spins < 100000)
         ;
-    put_kv("Watari EL2: phys GICR_WAKER = ", rd32(GICR_PHYS + GICR_WAKER));
+    if (spins >= 100000)
+        put_kn("Watari EL2: cpu ", this_cpu(), " redistributor did not wake up\n");
 
-    /* SGI/PPI frame: everything Group 1 NS, all disabled, the PPIs EL2 uses
-     * (maintenance 25, virtual timer 27) level-triggered with priority 0x40,
-     * then enabled. */
-    wr32(GICR_IGROUPR0, 0xffffffffu);
-    wr32(GICR_ICENABLER0, 0xffffffffu);
-    wr32(GICR_ICFGR1, 0);                    /* PPIs 16-31 level-sensitive */
-    wr8(GICR_IPRIORITYR + PPI_MAINT, 0x40);
-    wr8(GICR_IPRIORITYR + PPI_VTIMER, 0x40);
-    gic_phys_ppi_enable(PPI_MAINT, true);
-    gic_phys_ppi_enable(PPI_VTIMER, true);
+    /* SGI/PPI frame: everything Group 1 NS, all disabled, the interrupts EL2
+     * uses (kick SGI 15, maintenance PPI 25, virtual timer PPI 27)
+     * level-triggered/priority 0x40, then enabled. */
+    wr32(r + GICR_IGROUPR0, 0xffffffffu);
+    wr32(r + GICR_ICENABLER0, 0xffffffffu);
+    wr32(r + GICR_ICFGR1, 0);                /* PPIs 16-31 level-sensitive */
+    wr8(r + GICR_IPRIORITYR + SGI_KICK, PRIO_EL2);
+    wr8(r + GICR_IPRIORITYR + PPI_MAINT, PRIO_EL2);
+    wr8(r + GICR_IPRIORITYR + PPI_VTIMER, PRIO_EL2);
+    wr32(r + GICR_ISENABLER0, (1u << SGI_KICK) | (1u << PPI_MAINT) | (1u << PPI_VTIMER));
 
     /* Physical CPU interface at EL2: PMR open, Group 1 enabled. EOImode stays 0
      * (EOIR1 = priority drop + deactivate). With HCR_EL2.IMO=1 the same names
      * at EL1 are the virtual ICV_* registers, not these. */
     __asm__ volatile("msr icc_pmr_el1, %0" : : "r"(0xffULL));
     __asm__ volatile("msr icc_igrpen1_el1, %0; isb" : : "r"(1ULL));
+}
+
+/* Before PSCI CPU_OFF: CPU interface off, everything disabled, redistributor
+ * asleep (GIC spec 11.1: ProcessorSleep handshake before power-down). */
+void gic_phys_cpu_down(void)
+{
+    uint64_t r = my_rd();
+
+    __asm__ volatile("msr icc_igrpen1_el1, xzr; isb");
+    wr32(r + GICR_ICENABLER0, 0xffffffffu);
+    wr32(r + GICR_WAKER, rd32(r + GICR_WAKER) | GICR_WAKER_PSLEEP);
+    unsigned spins = 0;
+    while (!(rd32(r + GICR_WAKER) & GICR_WAKER_CASLEEP) && ++spins < 100000)
+        ;
 }
 
 uint32_t gic_phys_ack(void)
@@ -84,4 +150,45 @@ uint32_t gic_phys_ack(void)
 void gic_phys_eoi(uint32_t intid)
 {
     __asm__ volatile("msr icc_eoir1_el1, %0; isb" : : "r"((uint64_t)intid));
+}
+
+/* Physical SGI_KICK (SGI 15, reserved for EL2: guest SGIs are virtual and never
+ * reach the physical distributor) to another core: ICC_SGI1R_EL1 at EL2 is the
+ * physical register (GIC spec 12.2.22): INTID[27:24], Aff1[23:16], Aff2[39:32],
+ * Aff3[55:48], TargetList[15:0] for Aff0[3:0], RS[47:44] = Aff0 >> 4. */
+void gic_phys_kick(unsigned cpu)
+{
+    uint32_t a = g_pcpu[cpu].aff;
+    uint64_t v = ((uint64_t)(a >> 24) << 48) | ((uint64_t)((a >> 16) & 0xff) << 32) |
+                 ((uint64_t)(SGI_KICK) << 24) | ((uint64_t)((a >> 8) & 0xff) << 16) |
+                 ((uint64_t)((a & 0xff) >> 4) << 44) | (1ULL << (a & 0xf));
+
+    __asm__ volatile("dsb ishst; msr icc_sgi1r_el1, %0; isb" : : "r"(v) : "memory");
+}
+
+/* ---- SPI forwarding ------------------------------------------------------- */
+void gic_phys_spi_enable(uint32_t intid, bool on)
+{
+    uint64_t bit = 1u << (intid % 32), w = 4 * (intid / 32);
+
+    if (on) {
+        /* Group 1, priority 0x40 (above the guest's PMR), then enable. */
+        wr32(GICD_PHYS + GICD_IGROUPR + w, rd32(GICD_PHYS + GICD_IGROUPR + w) | bit);
+        wr8(GICD_PHYS + GICD_IPRIORITYR + intid, PRIO_EL2);
+        wr32(GICD_PHYS + GICD_ISENABLER + w, bit);
+    } else {
+        wr32(GICD_PHYS + GICD_ICENABLER + w, bit);
+    }
+}
+
+/* GICD_IROUTER<n> (GIC spec 12.9.x): Aff3 [39:32], Aff2 [23:16], Aff1 [15:8],
+ * Aff0 [7:0], IRM = 0 (route to one PE). */
+void gic_phys_spi_route(uint32_t intid, int vcpu)
+{
+    if (vcpu < 0 || (unsigned)vcpu >= g_ncpu)
+        return;
+    uint32_t a = g_pcpu[vcpu].aff;
+
+    wr64(GICD_PHYS + GICD_IROUTER + 8ULL * intid,
+         ((uint64_t)(a >> 24) << 32) | (a & 0xffffffu));
 }

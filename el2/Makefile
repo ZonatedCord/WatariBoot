@@ -6,7 +6,7 @@ WARN    := -std=c11 -Wall -Wextra -Werror
 INC     := -Iinclude
 BUILD   := build
 LIBSRC  := vgic/vgic.c
-TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi
+TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp
 
 .PHONY: test clean
 test: $(addprefix $(BUILD)/test_,$(TESTS))

@@ -32,6 +32,13 @@ el1_vectors:
     bad 15
 
     .text
+// Entry of secondary cores from PSCI CPU_ON: x0 = context_id = stack top.
+    .global el1_secondary_entry
+el1_secondary_entry:
+    mov     sp, x0
+    bl      el1_secondary_main
+    b       .
+
 el1_irq_entry:
     sub     sp, sp, #0xa0
     stp     x0, x1, [sp, #0x00]
