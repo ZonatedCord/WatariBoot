@@ -120,3 +120,24 @@ Tools: `WATARI_PMODE` bits (build `--parking`; 1 FADT PSCI+HVC, 2 MADT without p
 - **Failed:** clang's integrated assembler: "symbol '__image_start' can not be undefined in a subtraction expression" (verified).
 - **Remedy:** compute `__image_size = __image_end - __image_start` in `linker.ld` and reference that single absolute symbol from the assembly.
 - **Lesson:** the assembler cannot subtract two external symbols; let the linker script do arithmetic on layout symbols. Also: macOS has no `timeout(1)`, so `run-qemu.sh` implements its own 20 s watchdog.
+
+## F-18 · M1-1: alignment fault at EL2 when linking the vGIC model (2026-10-19)
+- **Tried:** linking `el2/vgic/vgic.c` into the freestanding EL2 image (EL2 MMU off).
+- **Failed:** `ESR_EL2=0x96000061` (DFSC 0x21, alignment fault) inside `vgic_reset`: clang merged adjacent byte/halfword stores of the packed `vgic_irq` arrays into a 64-bit store at an odd address (`stur xzr, [x9, #-0x1f]`). With the MMU off all EL2 data accesses are Device memory, which does not allow unaligned access (verified in QEMU TCG).
+- **Remedy:** compile the image with `-mstrict-align`. The proper long-term fix is an EL2 stage-1 identity map with Normal memory for RAM.
+- **Lesson:** without an EL2 MMU every data access is Device; build EL2 code with `-mstrict-align`.
+
+## F-19 · M1-2: QEMU cannot exercise the M1 SEIS erratum (2026-10-19)
+- **Tried:** reading `ICH_VTR_EL2` in QEMU TCG (`virt,virtualization=on,gic-version=3 -cpu max`) to decide HW vs TRAP_EMULATE.
+- **Observed (verified):** `ICH_VTR_EL2 = 0x90b80003`: 4 list registers, PRIbits 5, `SEIS=0`, `TDS=1`. The guest's `ICC_IAR1/EOIR1/PMR/IGRPEN1` work on hardware list registers with no trap; only `ICC_SGI1R_EL1` traps (EC 0x18, `IMO=1`).
+- **Consequence:** the HW-LR mode proven here says nothing about Apple M1, where the erratum forces `TALL1`/`TC` (RISKS R-01). The ICC emulation path (TRAP_EMULATE) is still untested; it must be added and tested with `TALL1=1` in QEMU before M1 hardware (QEMU does implement the `TALL1` trap, so it can be run).
+- **Lesson:** passing in QEMU HW mode is not evidence for the M1 mode. Design hazard caught in review, never hit: the maintenance PPI 25 is a level line, so the LRs must be freed before its EOI, otherwise the IRQ loop re-fires forever (`cpuif_irq`).
+
+## F-20 · M1-3: SMP hazards found in design and review (2026-10-19)
+None of these was hit in the final QEMU runs (`run-m1-3.sh` passes 7/7, with `thread=multi` and `thread=single`); they are recorded because each one was a silent hang or a wrong result waiting to happen.
+- **WFI with no wake-up source.** A first draft of the payload's wait loop did `wfi` on the boot core while waiting for a flag set by another core: nothing ever interrupts that core, so a missed event hangs it for good (F-14). Remedy: `wait_flag()` masks IRQs, checks, then `wfi` only on cores that have a guaranteed wake-up (secondaries keep their 10 ms CNTV timer running while they wait for an SGI or the go-off flag); the boot core polls.
+- **Cross-core kick storm.** Kicking a core that has a deliverable interrupt but no free list register is useless, and two cores in that state would kick each other forever from `cpuif_irq()`. `cpuif_kick_others()` skips cores without a free LR. The proper fix (`ICH_HCR_EL2.UIE` underflow interrupt, LR overflow handling) is still open.
+- **Spin locks on Device memory.** EL2 still runs with the MMU off, so `g_big`/`g_uart` (ldaxr/stlxr via `__atomic_exchange_n`) are exclusives on Device memory. QEMU TCG accepts them; the Arm ARM makes exclusives on Device memory IMPLEMENTATION DEFINED, so on Apple M1 this needs the EL2 stage-1 identity map with Normal WB memory first (same prerequisite as F-18) **[hypothesis, not tested on hardware]**.
+- **CPU_OFF of the last ON core is DENIED** (the spec allows it, PSCI 5.5; nothing could ever wake the system and QEMU would sit silently). Deviation chosen on purpose, documented in `psci.c`.
+- **CPU_OFF -> CPU_ON race.** `state = OFF` is published before the firmware has really powered the core down; an immediate CPU_ON can get the firmware's `ALREADY_ON`. `cpu_on()` retries the firmware call (bounded) instead of failing. Not seen in the runs.
+- **Secondary stack slot = MPIDR Aff0** (`secondary_entry`). Right for QEMU virt (Aff0 = core index, <= 8 cores), wrong for M1 (Aff1 = cluster). Needs a core-index table lookup in assembly before hardware.

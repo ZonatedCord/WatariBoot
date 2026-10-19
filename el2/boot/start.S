@@ -26,7 +26,8 @@ reset:
     cmp     x1, #2
     b.ne    park                    // not at EL2: cannot proceed
 
-    ldr     x1, =__el2_stack_top
+    ldr     x1, =__el2_stacks       // core 0 uses the first 16 KB stack
+    add     x1, x1, #0x4000
     mov     sp, x1
 
     // Zero .bss
@@ -45,7 +46,32 @@ park:
     wfe
     b       park
 
-// void enter_el1(entry x0, el1_sp x1, spsr x2, hcr x3)
+// Entry of cores 1..n at EL2, started by the firmware on guest PSCI CPU_ON
+// (M1-3). x0 = context given to the firmware (unused). MMU off, caches off.
+// Stack: 16 KB slot selected by MPIDR_EL1.Aff0 (QEMU virt numbering; real
+// hardware needs a proper cpu index, see README).
+    .text
+    .global secondary_entry
+secondary_entry:
+    mrs     x1, CurrentEL
+    lsr     x1, x1, #2
+    cmp     x1, #2
+    b.ne    park                    // started below EL2: cannot continue
+    mrs     x1, mpidr_el1
+    and     x1, x1, #0xff
+    cmp     x1, #8
+    b.hs    park
+    ldr     x2, =__el2_stacks
+    add     x1, x1, #1
+    lsl     x1, x1, #14             // (Aff0 + 1) * 0x4000
+    add     sp, x2, x1
+    ldr     x1, =el2_vectors
+    msr     vbar_el2, x1
+    isb
+    bl      el2_secondary_main      // never returns
+    b       park
+
+// void enter_el1(entry x0, el1_sp x1, spsr x2, hcr x3, x0_value x4)
     .text
     .global enter_el1
 enter_el1:
@@ -53,11 +79,11 @@ enter_el1:
     msr     elr_el2, x0
     msr     sp_el1, x1
     msr     spsr_el2, x2
-    // SCTLR_EL1: MMU/caches off, RES1 bits set
-    ldr     x4, =0x30d00800
-    msr     sctlr_el1, x4
+    // SCTLR_EL1: MMU/caches off, RES1 bits set (PSCI 6.4.3.4)
+    ldr     x5, =0x30d00800
+    msr     sctlr_el1, x5
     isb
-    mov     x0, xzr
+    mov     x0, x4                  // PSCI 6.4.3.7: context_id in X0
     eret
 
 // ---------------------------------------------------------------------------

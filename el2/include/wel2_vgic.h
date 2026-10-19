@@ -88,6 +88,8 @@ struct vgic {
 /* Returns 0 on success, -1 on invalid configuration. Leaves the vGIC at reset. */
 int  vgic_init(struct vgic *v, const struct vgic_config *cfg);
 void vgic_reset(struct vgic *v);
+/* Reset the private (SGI/PPI) state and WAKER of one vCPU: PSCI CPU_OFF. */
+void vgic_vcpu_reset(struct vgic *v, unsigned idx);
 
 /* addr is a guest-visible address inside the GICD or GICR window. */
 int vgic_mmio_read(struct vgic *v, uint64_t addr, unsigned size, uint64_t *val);
@@ -97,6 +99,20 @@ int vgic_mmio_write(struct vgic *v, uint64_t addr, unsigned size, uint64_t val);
 int  vgic_set_irq_level(struct vgic *v, unsigned vcpu_idx, uint32_t intid, bool level);
 /* Latch pending state (software set-pending; also used for SGIs). */
 int  vgic_set_pending(struct vgic *v, unsigned vcpu_idx, uint32_t intid);
+
+/*
+ * Software-generated interrupt from a guest write of ICC_SGI1R_EL1 (GIC spec
+ * IHI 0069H.b, 12.2.22): INTID [27:24], TargetList [15:0], Aff1 [23:16],
+ * Aff2 [39:32], Aff3 [55:48], IRM [40], RS [47:44]. Latches the SGI pending on
+ * every target vCPU (IRM=1: all except sender_idx). Returns the number of
+ * vCPUs targeted; targets that do not exist are ignored. The sender is
+ * reported to no one (GICv3 SGIs carry no source). Group is not checked
+ * (DS=1 model). Delivery still depends on enable/priority/group enable.
+ */
+int  vgic_sgi_send(struct vgic *v, unsigned sender_idx, uint64_t sgi1r);
+/* Same, but returns the bitmap of targeted vCPUs (bit i = vCPU index i), so the
+ * caller can kick the physical cores that run them. */
+uint32_t vgic_sgi_send_mask(struct vgic *v, unsigned sender_idx, uint64_t sgi1r);
 
 /* vCPU an SPI is routed to (IROUTER), or -1. */
 int  vgic_route_target(const struct vgic *v, uint32_t intid);
