@@ -98,6 +98,17 @@ int  vgic_set_irq_level(struct vgic *v, unsigned vcpu_idx, uint32_t intid, bool 
 /* Latch pending state (software set-pending; also used for SGIs). */
 int  vgic_set_pending(struct vgic *v, unsigned vcpu_idx, uint32_t intid);
 
+/*
+ * Software-generated interrupt from a guest write of ICC_SGI1R_EL1 (GIC spec
+ * IHI 0069H.b, 12.2.22): INTID [27:24], TargetList [15:0], Aff1 [23:16],
+ * Aff2 [39:32], Aff3 [55:48], IRM [40], RS [47:44]. Latches the SGI pending on
+ * every target vCPU (IRM=1: all except sender_idx). Returns the number of
+ * vCPUs targeted; targets that do not exist are ignored. The sender is
+ * reported to no one (GICv3 SGIs carry no source). Group is not checked
+ * (DS=1 model). Delivery still depends on enable/priority/group enable.
+ */
+int  vgic_sgi_send(struct vgic *v, unsigned sender_idx, uint64_t sgi1r);
+
 /* vCPU an SPI is routed to (IROUTER), or -1. */
 int  vgic_route_target(const struct vgic *v, uint32_t intid);
 

@@ -13,7 +13,7 @@ ASFLAGS := --target=aarch64-none-elf -g
 
 all: $(OUT)/wel2.bin
 
-$(OUT)/%.o: %.c | $(OUT)
+$(OUT)/%.o: %.c boot.h ../include/wel2_vgic.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/vgic.o: ../vgic/vgic.c ../include/wel2_vgic.h | $(OUT)
@@ -22,8 +22,11 @@ $(OUT)/vgic.o: ../vgic/vgic.c ../include/wel2_vgic.h | $(OUT)
 $(OUT)/%.o: %.S | $(OUT)
 	$(CC) $(ASFLAGS) -c $< -o $@
 
-$(OUT)/wel2.elf: $(OUT)/start.o $(OUT)/main.o $(OUT)/vgic.o linker.ld
-	$(LD) -T linker.ld -nostdlib -z norelro --no-dynamic-linker -o $@ $(OUT)/start.o $(OUT)/main.o $(OUT)/vgic.o
+$(OUT)/payload_s.o: payload.S | $(OUT)
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+$(OUT)/wel2.elf: $(OUT)/start.o $(OUT)/payload_s.o $(OUT)/main.o $(OUT)/payload.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/vgic.o linker.ld
+	$(LD) -T linker.ld -nostdlib -z norelro --no-dynamic-linker -o $@ $(OUT)/start.o $(OUT)/payload_s.o $(OUT)/main.o $(OUT)/payload.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/vgic.o
 
 $(OUT)/wel2.bin: $(OUT)/wel2.elf
 	$(OBJCOPY) -O binary $< $@

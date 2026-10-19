@@ -126,3 +126,9 @@ Tools: `WATARI_PMODE` bits (build `--parking`; 1 FADT PSCI+HVC, 2 MADT without p
 - **Failed:** `ESR_EL2=0x96000061` (DFSC 0x21, alignment fault) inside `vgic_reset`: clang merged adjacent byte/halfword stores of the packed `vgic_irq` arrays into a 64-bit store at an odd address (`stur xzr, [x9, #-0x1f]`). With the MMU off all EL2 data accesses are Device memory, which does not allow unaligned access (verified in QEMU TCG).
 - **Remedy:** compile the image with `-mstrict-align`. The proper long-term fix is an EL2 stage-1 identity map with Normal memory for RAM.
 - **Lesson:** without an EL2 MMU every data access is Device; build EL2 code with `-mstrict-align`.
+
+## F-19 · M1-2: QEMU cannot exercise the M1 SEIS erratum (2026-10-19)
+- **Tried:** reading `ICH_VTR_EL2` in QEMU TCG (`virt,virtualization=on,gic-version=3 -cpu max`) to decide HW vs TRAP_EMULATE.
+- **Observed (verified):** `ICH_VTR_EL2 = 0x90b80003`: 4 list registers, PRIbits 5, `SEIS=0`, `TDS=1`. The guest's `ICC_IAR1/EOIR1/PMR/IGRPEN1` work on hardware list registers with no trap; only `ICC_SGI1R_EL1` traps (EC 0x18, `IMO=1`).
+- **Consequence:** the HW-LR mode proven here says nothing about Apple M1, where the erratum forces `TALL1`/`TC` (RISKS R-01). The ICC emulation path (TRAP_EMULATE) is still untested; it must be added and tested with `TALL1=1` in QEMU before M1 hardware (QEMU does implement the `TALL1` trap, so it can be run).
+- **Lesson:** passing in QEMU HW mode is not evidence for the M1 mode. Design hazard caught in review, never hit: the maintenance PPI 25 is a level line, so the LRs must be freed before its EOI, otherwise the IRQ loop re-fires forever (`cpuif_irq`).

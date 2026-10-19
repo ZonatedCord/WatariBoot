@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include "wel2_vgic.h"
+#include "boot.h"
 
 #define UART0_BASE   0x09000000UL
 #define UART_DR      0x00
@@ -28,25 +29,15 @@
 #define PSCI_VER_1_1     0x00010001u
 #define PSCI_NOT_SUPPORTED (-1LL)
 
-/* QEMU virt GICv3 windows (hw/arm/virt.c memmap). */
-#define GICD_PHYS   0x08000000UL
-#define GICD_SIZE   0x10000UL
-#define GICR_PHYS   0x080A0000UL
-#define NR_VCPUS    1u
-
 #define EC_DABT_LOWER 0x24
-
-struct frame {
-    uint64_t x[31];
-    uint64_t esr, elr, spsr, far;
-};
+#define EC_SYSREG     0x18   /* trapped MSR/MRS/system instruction (Arm ARM D24.2) */
 
 extern uint8_t __el1_stack_top[];
 void enter_el1(uint64_t entry, uint64_t sp, uint64_t spsr, uint64_t hcr)
     __attribute__((noreturn));
 
 /* ---- UART (PL011; QEMU needs no init) ---------------------------------- */
-static void putc_(char c)
+void putc_(char c)
 {
     volatile uint32_t *fr = (volatile uint32_t *)(UART0_BASE + UART_FR);
     volatile uint32_t *dr = (volatile uint32_t *)(UART0_BASE + UART_DR);
@@ -55,7 +46,7 @@ static void putc_(char c)
     *dr = (uint32_t)c;
 }
 
-static void puts_(const char *s)
+void puts_(const char *s)
 {
     while (*s) {
         if (*s == '\n')
@@ -64,14 +55,14 @@ static void puts_(const char *s)
     }
 }
 
-static void puthex(uint64_t v)
+void puthex(uint64_t v)
 {
     puts_("0x");
     for (int i = 60; i >= 0; i -= 4)
         putc_("0123456789abcdef"[(v >> i) & 0xf]);
 }
 
-static void put_kv(const char *k, uint64_t v)
+void put_kv(const char *k, uint64_t v)
 {
     puts_(k);
     puthex(v);
@@ -129,6 +120,7 @@ static void handle_hvc(struct frame *f)
             ret = PSCI_VER_1_1;
             break;
         case PSCI_SYSTEM_OFF:
+            cpuif_stats();
             puts_("Watari EL2: PSCI SYSTEM_OFF -> forwarding to QEMU firmware (SMC)\n");
             psci_system_off();
         default:
@@ -336,81 +328,19 @@ void el2_exception(struct frame *f, unsigned idx)
     uint32_t ec = (f->esr >> 26) & 0x3f;
     if (idx == 8 && ec == EC_HVC64) {
         handle_hvc(f);
-        return;
-    }
-    if (idx == 8 && ec == EC_DABT_LOWER) {
+    } else if (idx == 8 && ec == EC_DABT_LOWER) {
         handle_dabt(f, idx);
+    } else if (idx == 8 && ec == EC_SYSREG && cpuif_sysreg_trap(f)) {
+        /* ICC_SGI*R_EL1 write: the SGI is now pending in the model */
+    } else if (idx == 9) {
+        cpuif_irq();                         /* physical IRQ: timer / maintenance */
         return;
+    } else {
+        fatal(f, idx);
     }
-    fatal(f, idx);
-}
-
-/* ---- EL1 payload ---------------------------------------------------------- */
-static uint64_t hvc(uint64_t fid)
-{
-    register uint64_t x0 __asm__("x0") = fid;
-    register uint64_t x1 __asm__("x1") = 0;
-    register uint64_t x2 __asm__("x2") = 0;
-    register uint64_t x3 __asm__("x3") = 0;
-    __asm__ volatile("hvc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : "memory");
-    return x0;
-}
-
-
-/* ---- M1-1 test: guest view of the virtual GIC ------------------------------ */
-static inline uint32_t rd32(uint64_t a) { return *(volatile uint32_t *)a; }
-static inline uint64_t rd64(uint64_t a) { return *(volatile uint64_t *)a; }
-static inline void wr32(uint64_t a, uint32_t v) { *(volatile uint32_t *)a = v; }
-static inline void wr8(uint64_t a, uint8_t v) { *(volatile uint8_t *)a = v; }
-static inline uint8_t rd8(uint64_t a) { return *(volatile uint8_t *)a; }
-
-static void el1_vgic_test(void)
-{
-    const uint64_t D = GICD_PHYS, R = GICR_PHYS;
-    put_kv("Watari EL1: GICD_CTLR  = ", rd32(D + 0x0000));
-    put_kv("Watari EL1: GICD_TYPER = ", rd32(D + 0x0004));
-    put_kv("Watari EL1: GICD_IIDR  = ", rd32(D + 0x0008));
-    put_kv("Watari EL1: GICR_TYPER = ", rd64(R + 0x0008));
-
-    /* GICR_WAKER (RD frame +0x14): ProcessorSleep bit1, ChildrenAsleep bit2.
-     * GIC spec IHI 0069H.b, redistributor power management. */
-    wr32(R + 0x0014, rd32(R + 0x0014) & ~2u);
-    unsigned spins = 0;
-    while ((rd32(R + 0x0014) & 4u) && ++spins < 1000)
-        ;
-    put_kv("Watari EL1: GICR_WAKER = ", rd32(R + 0x0014));
-    puts_(spins < 1000 ? "Watari EL1: redistributor awake\n"
-                       : "Watari EL1: redistributor STILL ASLEEP\n");
-
-    /* SPI 33: GICD_ISENABLER1 bit 1 (0x104), priority byte at 0x400 + 33 */
-    wr32(D + 0x0104, 1u << 1);
-    put_kv("Watari EL1: GICD_ISENABLER1 = ", rd32(D + 0x0104));
-    wr8(D + 0x0400 + 33, 0xa0);
-    put_kv("Watari EL1: IPRIORITYR[33]  = ", rd8(D + 0x0400 + 33));
-}
-
-static void __attribute__((noreturn)) el1_main(void)
-{
-    uint64_t el;
-    __asm__ volatile("mrs %0, CurrentEL" : "=r"(el));
-    puts_("Watari EL1: hello from EL1 (CurrentEL=");
-    putc_('0' + (char)((el >> 2) & 3));
-    puts_(")\n");
-
-    uint64_t v = hvc(PSCI_VERSION);
-    puts_("Watari EL1: PSCI_VERSION returned ");
-    putc_('0' + (char)((v >> 16) & 0xf));
-    putc_('.');
-    putc_('0' + (char)(v & 0xf));
-    puts_("\n");
-
-    el1_vgic_test();
-
-    puts_("Watari EL1: calling PSCI SYSTEM_OFF\n");
-    hvc(PSCI_SYSTEM_OFF);
-    puts_("Watari EL1: SYSTEM_OFF returned?!\n");
-    for (;;)
-        __asm__ volatile("wfe");
+    /* Any guest-visible state change (vGIC MMIO write, SGI, ...) may have made
+     * an interrupt deliverable: refill the list registers before resuming. */
+    cpuif_flush();
 }
 
 /* ---- EL2 main ---------------------------------------------------------------- */
@@ -431,6 +361,9 @@ void __attribute__((noreturn)) el2_main(void)
     vgic_setup();
     stage2_init();
     puts_("Watari EL2: stage-2 on (identity, GICD/GICR unmapped), vGIC ready\n");
+    gic_phys_init();
+    cpuif_init(&g_vgic);
+    puts_("Watari EL2: physical GIC owned by EL2, virtual CPU interface on\n");
     puts_("Watari EL2: eret to EL1h payload\n");
     enter_el1((uint64_t)el1_main, (uint64_t)__el1_stack_top, SPSR_EL1H_MASKED, hcr);
 }

@@ -581,6 +581,43 @@ int vgic_set_pending(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
 	return 0;
 }
 
+int vgic_sgi_send(struct vgic *v, unsigned sender_idx, uint64_t sgi1r)
+{
+	uint32_t intid = (uint32_t)((sgi1r >> 24) & 0xF);
+	unsigned i, n = 0;
+
+	if (sender_idx >= v->nr_vcpus)
+		return 0;
+	if (sgi1r & (1ULL << 40)) { /* IRM: all PEs but the sender; Aff/TargetList RES0 */
+		for (i = 0; i < v->nr_vcpus; i++) {
+			if (i == sender_idx)
+				continue;
+			v->vcpu[i].priv[intid].flags |= VGIC_F_PENDING;
+			n++;
+		}
+		return (int)n;
+	} else {
+		uint32_t list = (uint32_t)(sgi1r & 0xFFFF);
+		uint32_t rs = (uint32_t)((sgi1r >> 44) & 0xF); /* RES0 unless RSS; harmless */
+		uint32_t pfx = (uint32_t)(((sgi1r >> 48) & 0xFF) << 24) |
+			       (uint32_t)(((sgi1r >> 32) & 0xFF) << 16) |
+			       (uint32_t)(((sgi1r >> 16) & 0xFF) << 8);
+
+		for (i = 0; i < v->nr_vcpus; i++) {
+			uint32_t a = v->vcpu[i].aff;
+			uint32_t a0 = a & 0xFF;
+
+			if ((a & 0xFFFFFF00u) != pfx || a0 / 16 != rs)
+				continue;
+			if (!(list & (1u << (a0 % 16))))
+				continue;
+			v->vcpu[i].priv[intid].flags |= VGIC_F_PENDING;
+			n++;
+		}
+	}
+	return (int)n;
+}
+
 bool vgic_next_pending(const struct vgic *v, unsigned vcpu_idx,
 		       uint32_t *intid, uint8_t *prio)
 {
