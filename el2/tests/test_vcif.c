@@ -305,6 +305,23 @@ static void t_dirty_tracking(void)
 	CHECK(C.vmcr_dirty);
 }
 
+/* An LPI above 32767 (IDbits = 16 advertised): owner[] must not truncate it to "free LR". */
+static void t_high_lpi_through_lr(void)
+{
+	uint32_t freed[16];
+
+	setup_vcif();
+	CHECK(vgic_lpi_inject(&F.v, 0, 40000, 0x40));
+	vcif_fill(&C, &F.v, 0);
+	CHECK_EQ(C.owner[0], 40000);
+	CHECK_EQ(vcif_iar1(&C), 40000);
+	vcif_eoir1(&C, 40000);
+	CHECK_EQ(vcif_harvest(&C, &F.v, 0, freed, 16), 1);
+	CHECK_EQ(freed[0], 40000);
+	CHECK(C.owner[0] == -1);
+	CHECK(!vgic_next_pending(&F.v, 0, &freed[1], NULL));   /* nothing stays in flight */
+}
+
 int main(void)
 {
 	RUN(t_overflow_refill_in_priority_order);
@@ -319,5 +336,6 @@ int main(void)
 	RUN(t_level_requeue);
 	RUN(t_noeoi_knob_only_sgis);
 	RUN(t_dirty_tracking);
+	RUN(t_high_lpi_through_lr);
 	TESTS_DONE();
 }

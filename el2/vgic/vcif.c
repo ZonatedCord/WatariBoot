@@ -150,7 +150,7 @@ void vcif_fill(struct wel2_vcif *c, struct vgic *v, unsigned vcpu)
 		c->lr[slot] = VCIF_LR_PENDING | VCIF_LR_GROUP1 |
 			      ((c->no_eoi_maint && id < 16) ? 0 : VCIF_LR_EOI) |
 			      ((uint64_t)prio << 48) | id;
-		c->owner[slot] = (int16_t)id;
+		c->owner[slot] = (int32_t)id;
 		c->lr_dirty |= 1u << slot;
 		c->st_inject++;
 	}

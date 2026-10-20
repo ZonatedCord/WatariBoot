@@ -45,6 +45,10 @@ struct vgic_hooks {
 		    unsigned size, bool is_write, uint64_t val);
 	void (*effect)(void *ctx, enum vgic_effect eff, uint32_t intid, int arg);
 	void *ctx;
+	/* LPI pass-through (M2): the guest wrote a redistributor LPI register of vCPU cpu
+	 * (off = GICR_CTLR 0x0, PROPBASER 0x70, PENDBASER 0x78, INVLPIR 0xA0, INVALLR 0xB0).
+	 * Optional; the model keeps the value, the layer applies it to the physical GICR. */
+	void (*lpi_reg)(void *ctx, unsigned cpu, unsigned off, uint64_t val);
 };
 
 /* Per-interrupt state flags. */
@@ -60,7 +64,19 @@ struct vgic_irq {
 	uint8_t flags;
 };
 
+#define VGIC_LPI_BASE    8192u   /* first LPI INTID (GICv3: 8192) */
+#define VGIC_LPI_QUEUE   64u     /* LPIs the layer can hold per vCPU before it must drop one */
+
+struct vgic_lpi {
+	uint32_t id;                  /* 0 = free slot */
+	uint8_t prio;
+	bool inflight;                /* handed to the guest (vgic_ack), not yet EOI'd */
+};
+
 struct vgic_vcpu {
+	uint32_t rd_ctlr;             /* GICR_CTLR.EnableLPIs (bit 0), LPI mode only */
+	uint64_t propbaser, pendbaser;
+	struct vgic_lpi lpi[VGIC_LPI_QUEUE];
 	uint32_t aff;                 /* Aff3.Aff2.Aff1.Aff0 packed in 32 bits */
 	bool sleep;                   /* GICR_WAKER.ProcessorSleep */
 	struct vgic_irq priv[32];     /* SGIs 0-15 and PPIs 16-31 */
@@ -72,6 +88,7 @@ struct vgic_config {
 	unsigned nr_vcpus;                       /* 1..VGIC_MAX_VCPUS */
 	const uint32_t *affinity;                /* per vCPU, or NULL: aff = index */
 	struct vgic_hooks hooks;
+	bool lpis;                               /* expose LPIs (GICD_TYPER.LPIS, GICR_TYPER.PLPIS) */
 };
 
 struct vgic {
@@ -83,6 +100,7 @@ struct vgic {
 	struct vgic_irq spi[VGIC_NR_SPIS];
 	struct vgic_vcpu vcpu[VGIC_MAX_VCPUS];
 	struct vgic_hooks hooks;
+	bool lpis;
 };
 
 /* Returns 0 on success, -1 on invalid configuration. Leaves the vGIC at reset. */
@@ -119,6 +137,14 @@ uint32_t vgic_sgi_send_mask(struct vgic *v, unsigned sender_idx, uint64_t sgi1r)
 
 /* vCPU an SPI is routed to (IROUTER), or -1. */
 int  vgic_route_target(const struct vgic *v, uint32_t intid);
+
+/* LPI pass-through: a physical LPI arrived for vCPU idx (property-table priority prio).
+ * Queued until the guest acknowledges it; returns false (and drops it) when the queue is full. */
+bool vgic_lpi_inject(struct vgic *v, unsigned vcpu_idx, uint32_t intid, uint8_t prio);
+/* Value the guest last wrote to GICR_PROPBASER of vCPU idx (0 if never). */
+/* GICR_CTLR.EnableLPIs of vCPU idx as the guest set it. */
+bool vgic_lpi_enabled(const struct vgic *v, unsigned vcpu_idx);
+uint64_t vgic_lpi_propbaser(const struct vgic *v, unsigned vcpu_idx);
 
 /* Highest-priority pending+enabled+inactive interrupt deliverable to vcpu_idx. */
 bool vgic_next_pending(const struct vgic *v, unsigned vcpu_idx,

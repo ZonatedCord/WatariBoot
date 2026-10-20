@@ -45,7 +45,11 @@ Everything else stays native: cores, memory, and real peripherals (which still n
 | **V3**: secondary cores via Microsoft's parking protocol, no PSCI | ⚠️ Windows uses it, then fails with `HAL_INITIALIZATION_FAILED` |
 | **V6**: timer delivered as FIQ | ⚠️ inconclusive |
 | Watari EL2: design | ✅ done |
-| Watari EL2: **M0** (first spike: vGIC host tests, layer boots in QEMU) | ⏭️ next |
+| Watari EL2: **M0** (first spike: vGIC host tests, layer boots in QEMU) | ✅ done |
+| Watari EL2: **M1** (stage-2 + vGIC, list-register delivery, SMP via PSCI, EDK2 at EL1 on top of the layer) | ✅ done |
+| Watari EL2: **M1.5** (hardening: LR overflow, EL2 MMU, trap-and-emulate CPU interface for the M1 erratum) | ✅ done |
+| Watari EL2: **M2**: **Windows 11 ARM64 boots to the lock screen on top of Watari EL2** (QEMU TCG, 4 cores, both CPU interface modes) | ✅ done 2026-10-20 ([screenshot](docs/img/m2-lockscreen-trap.png)) |
+| Watari EL2: **M3a** on the real M1 (needs a debug host) | ⏭️ next |
 
 Current state and next steps: [docs/STATUS.md](docs/STATUS.md). Estimated time to Windows on a real M1 (lock screen, framebuffer, USB): months, not weeks.
 
@@ -82,14 +86,14 @@ Watari Boot is developed by a small team with AI agents doing much of the resear
 
 ## Tokens and costs
 <!-- TOKEN-COUNTER:START -->
-**Total tokens: 710,277,723 · Estimated cost: $287.10** (updated 2026-10-20; marco: 7 sessions, $287.10)
+**Total tokens: 766,111,419 · Estimated cost: $304.15** (updated 2026-10-21; marco: 7 sessions, $304.15)
 
 | Model | Input | Output | Cache written | Cache read | Estimated cost |
 |---|---:|---:|---:|---:|---:|
 | `<synthetic>` | 0 | 0 | 0 | 0 | n/d |
 | `claude-haiku-5-5` | 48 | 130 | 317,292 | 1,178,870 | $0.05 |
-| `claude-opus-5-5` | 2,154 | 840,587 | 11,630,079 | 434,648,240 | $196.79 |
-| `claude-sonnet-5-5` | 4,218 | 1,004,751 | 12,017,423 | 248,633,931 | $90.26 |
+| `claude-opus-5-5` | 2,268 | 868,453 | 11,876,783 | 442,958,624 | $200.98 |
+| `claude-sonnet-5-5` | 4,672 | 1,013,931 | 13,457,513 | 294,432,835 | $103.11 |
 
 <sub>Estimate at Anthropic API prices, computed from local Claude Code transcripts with `tools/token-usage.py`. With a subscription (Pro/Max) the real cost is the subscription fee: this is the equivalent pay-as-you-go cost. Subagent output may be under-reported in the logs.</sub>
 <!-- TOKEN-COUNTER:END -->

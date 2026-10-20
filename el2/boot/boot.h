@@ -23,7 +23,7 @@
  * after the carve-out, at the address an arm64 Image with text_offset 0x80000 would
  * have there. */
 #define GUEST_RAM_BASE   0x40000000ULL
-#define GUEST_RAM_END    0xc0000000ULL
+#define GUEST_RAM_END    0x140000000ULL   /* M2: stage-2 maps RAM up to 5 GB (a -m 4G machine ends at 0x13fffffff) */
 #define WEL2_CARVE_SIZE  0x200000ULL
 #define EDK2_FDT_ADDR    GUEST_RAM_BASE
 #define EDK2_ENTRY       (GUEST_RAM_BASE + WEL2_CARVE_SIZE + 0x80000ULL)
@@ -50,6 +50,9 @@ extern unsigned g_ncpu;
 extern struct vgic g_vgic;
 extern uint64_t g_hcr;
 extern bool g_cpuif_noeoi;         /* test knob wel2.test=noeoi: LRs without EOI maintenance */
+bool gic_phys_has_lpis(void);
+void gic_phys_lpi_reg(unsigned cpu, unsigned off, uint64_t val);
+extern bool g_trace_on;          /* main.c: wel2.trace diagnostics */
 extern bool g_cpuif_trap;          /* cpuif.c: TRAP_EMULATE (true) or HW list registers */
 
 /* main.c: UART, locks and per-core helpers. */

@@ -65,7 +65,7 @@ struct cif {
     bool vtimer_masked;                /* PPI 27 masked at the physical GIC */
     uint64_t hcr_base, hcr_cur;        /* ICH_HCR_EL2 without / as currently written */
     unsigned nap;                      /* number of ICH_AP<g>R<n> registers */
-    unsigned st_timer, st_spi, st_kick, st_maint, st_uie;
+    unsigned st_timer, st_spi, st_kick, st_maint, st_uie, st_lpi;
     unsigned st_iar, st_eoir, st_dir, st_pmr_w, st_pmr_r, st_other;
     unsigned pmr_reported;
 };
@@ -215,7 +215,7 @@ void cpuif_init_cpu(void)
     struct cif keep = *c;                                /* statistics survive CPU_OFF -> CPU_ON */
 
     *c = (struct cif){ 0 };
-    c->st_timer = keep.st_timer; c->st_spi = keep.st_spi; c->st_kick = keep.st_kick;
+    c->st_timer = keep.st_timer; c->st_spi = keep.st_spi; c->st_lpi = keep.st_lpi; c->st_kick = keep.st_kick;
     c->st_maint = keep.st_maint; c->st_uie = keep.st_uie; c->st_iar = keep.st_iar;
     c->st_eoir = keep.st_eoir; c->st_dir = keep.st_dir; c->st_pmr_w = keep.st_pmr_w;
     c->st_pmr_r = keep.st_pmr_r; c->st_other = keep.st_other; c->pmr_reported = keep.pmr_reported;
@@ -267,7 +267,9 @@ void cpuif_cpu_down(void)
     struct wel2_vcif *v = &c->vc;
 
     for (unsigned i = 0; i < v->nlr; i++) {
-        if (v->owner[i] >= 32) {                 /* give an SPI back to the device */
+        if (v->owner[i] >= (int)VGIC_LPI_BASE) {      /* an LPI in flight: just forget it */
+            vgic_eoi(g_v, me, (uint32_t)v->owner[i]);
+        } else if (v->owner[i] >= 32) {          /* give an SPI back to the device */
             uint32_t id = (uint32_t)v->owner[i];
 
             vgic_set_irq_level(g_v, me, id, false);
@@ -315,8 +317,14 @@ void cpuif_flush(void)
     for (unsigned i = 0; i < nfreed; i++) {
         uint32_t id = freed[i];
 
-        if (id < 32)
+        if (id < 32 || id >= VGIC_LPI_BASE)
             continue;
+        if (g_trace_on) {
+            static unsigned n_hv;
+
+            if (n_hv++ < 100)
+                put_kv("Watari EL2: TR guest finished SPI, INTID ", id);
+        }
         vgic_set_irq_level(g_v, me, id, false);
         if (g_spi_masked[id / 32] & (1u << (id % 32))) {
             g_spi_masked[id / 32] &= ~(1u << (id % 32));
@@ -400,6 +408,13 @@ static void icc_report(void)
         r += g_cif[i].st_pmr_r;
         o += g_cif[i].st_other;
     }
+    uint64_t cnt, frq;
+
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
+    put_kv("Watari EL2:   report at CNTVCT = ", cnt);       /* M2: rate = delta writes / (delta CNTVCT / CNTFRQ) */
+    put_kv("Watari EL2:   CNTFRQ = ", frq);
+    put_kv("Watari EL2:   timer irqs on cpu 0 = ", g_cif[0].st_timer);
     put_kv("Watari EL2: trapped ICC_PMR_EL1 writes so far = ", t);
     put_kv("Watari EL2:   trapped ICC_PMR_EL1 reads = ", r);
     put_kv("Watari EL2:   trapped ICC_IAR1_EL1 reads = ", a);
@@ -416,7 +431,7 @@ void cpuif_irq(void)
     for (;;) {
         uint32_t id = gic_phys_ack();
 
-        if (id >= 1020)
+        if (id >= 1020 && id <= 1023)
             break;                           /* spurious / none pending */
         if (id == PPI_VTIMER) {
             /* Mask the level PPI at the physical GIC, then deactivate. The
@@ -450,9 +465,36 @@ void cpuif_irq(void)
             cpuif_flush();
         } else if (id == SGI_KICK) {
             /* Another core changed the model: the flush below delivers. */
+        } else if (id >= VGIC_LPI_BASE) {
+            /* Forwarded LPI (M2): the guest's ITS/redistributor programming reached the physical
+             * GIC unchanged (gic_phys_lpi_reg), so an LPI arrives here as a physical interrupt.
+             * Its priority is the byte of the LPI property table the guest set up (GIC spec 6.1.1:
+             * bits [7:2] priority, bit 0 enable); queue it in the model. LPIs are edge: nothing
+             * to mask, the physical EOI below completes it. */
+            uint64_t prop = vgic_lpi_propbaser(g_v, me);
+            uint8_t prio = 0xa0, cfg = 1;       /* default if the guest has not set the table up */
+
+            if (vgic_lpi_enabled(g_v, me) && prop) {
+                uint64_t a = (prop & 0x000FFFFFFFFFF000ULL) + (id - VGIC_LPI_BASE);
+
+                cfg = *(volatile uint8_t *)a;
+                prio = (uint8_t)(cfg & 0xfc);
+            }
+
+            c->st_lpi++;
+            if (g_trace_on && c->st_lpi <= 100)
+                put_kv("Watari EL2: TR physical LPI taken, INTID ", id);
+            if (!(cfg & 1u))
+                ;                               /* LPI disabled in the property table: just EOI */
+            else if (!vgic_lpi_inject(g_v, me, id, prio))
+                put_kv("Watari EL2: LPI queue full, dropped INTID ", id);
+        } else if (id >= 1024) {
+            put_kv("Watari EL2: ignoring unexpected physical INTID ", id);   /* 1024..8191: reserved */
         } else if (id >= 32) {
             /* Forwarded SPI: mask at the physical GICD, raise the model line. */
             c->st_spi++;
+            if (g_trace_on && c->st_spi <= 200)
+                put_kv("Watari EL2: TR physical SPI taken, INTID ", id);
             g_spi_masked[id / 32] |= 1u << (id % 32);
             gic_phys_spi_enable(id, false);
             vgic_set_irq_level(g_v, me, id, true);
@@ -469,6 +511,14 @@ void cpuif_irq(void)
  * the physical distributor. Called from inside vgic_mmio_*, big lock held. */
 void cpuif_vgic_effect(enum vgic_effect eff, uint32_t intid, int arg)
 {
+    static unsigned n_tr;
+
+    if (g_trace_on && intid >= 32 && n_tr < 300) {
+        n_tr++;
+        put_kv("Watari EL2: TR SPI effect (1=unmask 2=mask 3=target) ", (uint64_t)eff);
+        put_kv("Watari EL2: TR    intid ", intid);
+        put_kv("Watari EL2: TR    arg   ", (uint64_t)(int64_t)arg);
+    }
     switch (eff) {
     case VGIC_EFFECT_SET_TARGET:
         gic_phys_spi_route(intid, arg);
@@ -564,6 +614,18 @@ static bool icc_emulate(struct frame *f, uint32_t crn, uint32_t crm, uint32_t op
     }
     if (!known)
         return false;
+    if (g_trace_on && crn == 12) {
+        static unsigned n_icc;
+        bool iar = crm == 12 && op2 == 0 && rd, eoi = (crm == 12 && op2 == 1 && !rd) || (crm == 11 && op2 == 1 && !rd);
+
+        if ((iar && ret >= 32) || (eoi && val >= 32)) {
+            if (n_icc++ < 150) {
+                put_kv(iar ? "Watari EL2: TR guest IAR1 -> " : (crm == 11 ? "Watari EL2: TR guest DIR  <- " : "Watari EL2: TR guest EOIR1 <- "),
+                       iar ? ret : val);
+                put_kv("Watari EL2: TR    at guest pc ", f->elr);
+            }
+        }
+    }
     hw_out(c);
     if (rd && rt != 31)
         f->x[rt] = ret;
@@ -600,6 +662,15 @@ bool cpuif_sysreg_trap(struct frame *f)
     return icc_emulate(f, crn, crm, op2, rt, dir);
 }
 
+static unsigned lpi_total(void)
+{
+    unsigned n = 0;
+
+    for (unsigned i = 0; i < g_ncpu; i++)
+        n += g_cif[i].st_lpi;
+    return n;
+}
+
 void cpuif_stats(void)
 {
     unsigned t[9] = { 0 };
@@ -622,6 +693,7 @@ void cpuif_stats(void)
     put_kv("Watari EL2: stats: underflow maintenance irqs (UIE) = ", t[7]);
     put_kv("Watari EL2: stats: LR evictions (higher priority arrived) = ", t[6]);
     put_kv("Watari EL2: stats: forwarded SPIs = ", t[4]);
+    put_kv("Watari EL2: stats: forwarded LPIs = ", lpi_total());
     put_kv("Watari EL2: stats: cross-core kicks (SGI 15) = ", t[5]);
     if (g_cpuif_trap) {
         icc_report();

@@ -111,24 +111,45 @@ static void handle_hvc(struct frame *f)
     f->x[1] = f->x[2] = f->x[3] = 0;
 }
 
-/* HCR_EL2.TSC=1 (INTERFACES 8, 9): an SMC at EL1 traps here. The PSCI conduit the
- * guest was told is HVC (FDT patched, see chain_to_edk2), so an SMC is a stray:
- * log it and answer SMCCC NOT_SUPPORTED. The preferred return address of a
- * trapped SMC is the SMC itself (Arm ARM D24.2.40, EC 0x17), so ELR must be
- * advanced by hand. */
+/* HCR_EL2.TSC=1 (INTERFACES 8, 9): an SMC at EL1 traps here. The FDT handed to EDK2
+ * says "hvc", but the ACPI FADT that QEMU builds for Windows says SMC (QEMU virt with
+ * virtualization=on uses the SMC conduit: M2, F-23), so Windows calls PSCI with SMC.
+ * Both conduits reach the same PSCI handler (PSCI DEN0022F.b 5.2 allows either; the
+ * conduit only selects the instruction). Anything that is not PSCI gets SMCCC
+ * NOT_SUPPORTED. The preferred return address of a trapped SMC is the SMC itself
+ * (Arm ARM D24.2.40, EC 0x17), so ELR must be advanced by hand. */
 static unsigned g_smc_log_budget = 8;
 
 static void handle_smc(struct frame *f)
 {
+    uint32_t fid = (uint32_t)f->x[0];
+
+    f->elr += 4;
+    if (g_trace_on) {
+        static unsigned n_smc;
+        uint64_t x1 = f->x[1], x2 = f->x[2], x3 = f->x[3];
+        bool ok = psci_handle(f, fid);
+
+        if (n_smc++ < 80) {
+            put_kv("Watari EL2: TR SMC fid ", fid);
+            put_kv("Watari EL2: TR    x1 ", x1);
+            put_kv("Watari EL2: TR    x2 ", x2);
+            put_kv("Watari EL2: TR    x3 ", x3);
+            put_kv("Watari EL2: TR    -> x0 ", f->x[0]);
+        }
+        if (ok)
+            return;
+    } else if (psci_handle(f, fid)) {
+        return;
+    }
     if (g_smc_log_budget) {
         g_smc_log_budget--;
-        puts_("Watari EL2: stray SMC from EL1 (conduit is HVC), fid=");
-        puthex((uint32_t)f->x[0]);
+        puts_("Watari EL2: non-PSCI SMC from EL1, fid=");
+        puthex(fid);
         puts_(" -> NOT_SUPPORTED\n");
     }
     f->x[0] = (uint64_t)-1LL;
     f->x[1] = f->x[2] = f->x[3] = 0;
-    f->elr += 4;
 }
 
 /* ---- Stage-2 translation (identity map, 4 KB granule) ------------------------
@@ -147,7 +168,8 @@ static void handle_smc(struct frame *f)
  *                           guest faults to EL2 there.
  *   0x40000000-0x7fffffff : 1 GB Normal WB block (QEMU virt RAM).
  *   0x80000000-0xbfffffff : 1 GB Normal WB block (RAM of a -m 2G machine, M1-4).
- *   0xc0000000-0xffffffffff : 1 GB device blocks (unused on virt, PCIe high windows).
+ *   0xc0000000-0x13fffffff : 1 GB Normal WB blocks (RAM of a -m 4G machine, M2).
+ *   0x140000000-0xffffffffff : 1 GB device blocks (unused on virt, PCIe high windows).
  * Chain build (M1-4): the first GB is split into 2 MB blocks; in the first block
  * (the layer's carve-out) 4 KB pages hide EL2 (image + stacks).
  * Note: EL2's own image sits in the RAM block, i.e. it is visible to the
@@ -195,7 +217,10 @@ static void stage2_init(void)
 
     s2_l1[0] = (uint64_t)(uintptr_t)s2_l2 | S2_VALID | S2_TABLE;
     s2_l1[1] = 0x40000000ULL | S2_BLOCK_NORMAL;
-    s2_l1[2] = 0x80000000ULL | S2_BLOCK_NORMAL;   /* RAM of a -m 2G machine */
+    /* RAM of a -m 2G..4G machine (M2: Windows runs with -m 4G, RAM up to 0x13fffffff) */
+    s2_l1[2] = 0x80000000ULL | S2_BLOCK_NORMAL;
+    s2_l1[3] = 0xc0000000ULL | S2_BLOCK_NORMAL;
+    s2_l1[4] = 0x100000000ULL | S2_BLOCK_NORMAL;
 #ifdef WEL2_CHAIN
     /* M1-4: the layer (image + stacks, from __image_start to the end of the carve-out)
      * is NOT mapped: a guest access takes a stage-2 translation fault and EL2 dumps it
@@ -212,7 +237,7 @@ static void stage2_init(void)
     s2_l2ram[0] = (uint64_t)(uintptr_t)s2_l3ram | S2_VALID | S2_TABLE;
     s2_l1[1] = (uint64_t)(uintptr_t)s2_l2ram | S2_VALID | S2_TABLE;
 #endif
-    for (unsigned i = 3; i < 512; i++)
+    for (unsigned i = 5; i < 512; i++)
         s2_l1[i] = ((uint64_t)i << 30) | S2_BLOCK_DEV;
     for (unsigned i = 0; i < 512; i++)
         s2_l1hi[i] = ((512ULL << 30) + ((uint64_t)i << 30)) | S2_BLOCK_DEV;
@@ -235,6 +260,20 @@ void stage2_enable(void)
 
 /* ---- Virtual GIC wiring --------------------------------------------------- */
 static unsigned g_log_budget = 16;
+
+/* M2 diagnostics (boot argument wel2.trace=SKIP): log every trapped GICD/GICR access after the first
+ * SKIP ones (EDK2 does ~1000 of them), at most 3000 lines. Off by default. */
+bool g_trace_on;
+static bool g_lpi = true;       /* wel2.lpi=off: hide LPIs from the guest (GICD_TYPER.LPIS = 0) */
+static unsigned g_trace_skip, g_trace_left = 3000;
+
+static unsigned idx_cpu(void)
+{
+    uint64_t i;
+
+    __asm__ volatile("mrs %0, tpidr_el2" : "=r"(i));
+    return (unsigned)i;
+}
 
 static void vgic_log_cb(void *ctx, enum vgic_log_kind kind, uint64_t addr,
                         unsigned size, bool is_write, uint64_t val)
@@ -272,6 +311,17 @@ static void vgic_effect_cb(void *ctx, enum vgic_effect eff, uint32_t intid, int 
     cpuif_vgic_effect(eff, intid, arg);        /* M1-3: apply to the physical GICD */
 }
 
+static void lpi_reg_cb(void *ctx, unsigned cpu, unsigned off, uint64_t val)
+{
+    (void)ctx;
+    if (g_trace_on) {
+        put_kv("Watari EL2: TR LPI register write, offset ", off);
+        put_kv("Watari EL2: TR    cpu ", cpu);
+        put_kv("Watari EL2: TR    value ", val);
+    }
+    gic_phys_lpi_reg(cpu, off, val);
+}
+
 static void vgic_setup(void)
 {
     uint32_t aff[MAX_CPUS];
@@ -283,7 +333,8 @@ static void vgic_setup(void)
         .gicr_base = GICR_PHYS,
         .nr_vcpus = g_ncpu,
         .affinity = aff,
-        .hooks = { vgic_log_cb, vgic_effect_cb, 0 },
+        .hooks = { vgic_log_cb, vgic_effect_cb, 0, lpi_reg_cb },
+        .lpis = g_lpi && gic_phys_has_lpis(),
     };
     if (vgic_init(&g_vgic, &cfg) != 0)
         fatal_msg("vgic_init failed");
@@ -339,6 +390,24 @@ static void handle_dabt(struct frame *f, unsigned idx)
         puts_(")\n");
         put_kv("  IPA       = ", ipa);
         fatal(f, idx);
+    }
+    if (g_trace_on) {
+        static unsigned n_seen;
+
+        if ((f->elr >> 48) == 0xffff && ++n_seen > g_trace_skip && g_trace_left) {
+            g_trace_left--;
+            puts_("Watari EL2: TR cpu=");
+            puthex(idx_cpu());
+            puts_(wnr ? " W " : " R ");
+            puthex(ipa);
+            puts_(" sz=");
+            puthex(size);
+            puts_(" v=");
+            puthex(wnr ? val : (srt == 31 ? 0 : f->x[srt]));
+            puts_(" pc=");
+            puthex(f->elr);
+            puts_("\n");
+        }
     }
     f->elr += 4;   /* AArch64 guest: ISV=1 implies a 4-byte instruction */
 #ifdef WEL2_CHAIN
@@ -466,6 +535,8 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
 
 /* Boot arguments (/chosen/bootargs, QEMU -append), space separated:
  *   wel2.cpuif=hw|trap   mode of the virtual CPU interface (build default WEL2_CPUIF_TRAP_DEFAULT)
+ *   wel2.lpi=off         do not expose LPIs/ITS (default: exposed when the physical GIC has them)
+ *   wel2.trace=SKIP      log trapped GICD/GICR accesses after the first SKIP (M2 diagnostics)
  *   wel2.test=noeoi      test knob: LRs without EOI maintenance, only UIE refills them (#54) */
 static bool arg_is(const char *p, const char *key)
 {
@@ -487,9 +558,17 @@ static void parse_bootargs(uint64_t fdt)
             continue;
         if (arg_is(p, "wel2.cpuif=trap"))
             g_cpuif_trap = true;
+        else if (arg_is(p, "wel2.lpi=off"))
+            g_lpi = false;
         else if (arg_is(p, "wel2.cpuif=hw"))
             g_cpuif_trap = false;
-        else if (arg_is(p, "wel2.test=noeoi"))
+        else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 't' &&
+                 p[6] == 'r' && p[7] == 'a' && p[8] == 'c' && p[9] == 'e' && p[10] == '=') {
+            g_trace_on = true;
+            g_trace_skip = 0;
+            for (const char *q = p + 11; *q >= '0' && *q <= '9'; q++)
+                g_trace_skip = g_trace_skip * 10 + (unsigned)(*q - '0');
+        } else if (arg_is(p, "wel2.test=noeoi"))
             g_cpuif_noeoi = true;
     }
 }

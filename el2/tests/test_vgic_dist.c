@@ -268,7 +268,7 @@ static void t_beyond_nr_irqs_razwi(void)
 
 static void t_init_validation(void)
 {
-	struct vgic_config c = { GICD, GICR, 0, NULL, { NULL, NULL, NULL } };
+	struct vgic_config c = { GICD, GICR, 0, NULL, { NULL, NULL, NULL, NULL }, false };
 	CHECK_EQ(vgic_init(&F.v, &c), -1);
 	c.nr_vcpus = VGIC_MAX_VCPUS + 1;
 	CHECK_EQ(vgic_init(&F.v, &c), -1);
