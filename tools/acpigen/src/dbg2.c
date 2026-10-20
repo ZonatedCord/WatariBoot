@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 /* DBG2 con un solo dispositivo seriale MMIO. Layout (ACPI debug port table 2, Microsoft Learn;
- * ricavato a memoria, ipotesi non confrontata col testo): header 36 + OffsetDbgDeviceInfo u32 +
+ * verified against DebugPort2Table.h, issue #44): header 36 + OffsetDbgDeviceInfo u32 +
  * NumberDbgDeviceInfo u32; device info rev 0 di 22 byte, poi GAS (12), AddressSize (4),
  * NamespaceString (".\0"). */
 #include <string.h>

@@ -3,13 +3,17 @@
 # M1-2: virtual interrupts (CNTV timer PPI 27 + SGI) through the GICv3 list registers. Build the image, boot it in QEMU TCG headless (20 s timeout) and
 # check the UART output. Exit 0 on success.
 set -u
+# CPUIF=trap runs the same test with the virtual CPU interface in TRAP_EMULATE mode
+# (boot argument wel2.cpuif=trap, see cpuif.c); the default is HW list registers.
+APPEND=()
+[ "${CPUIF:-hw}" = trap ] && APPEND=(-append "wel2.cpuif=trap")
 cd "$(dirname "$0")"
 make -s || { echo "FAIL: build"; exit 2; }
 
 LOG=build/uart.log
 : > "$LOG"
 qemu-system-aarch64 -M virt,virtualization=on,gic-version=3 -cpu max -accel tcg \
-    -nographic -m 512M -smp 1 -kernel build/wel2.bin -serial "file:$LOG" -monitor none \
+    -nographic -m 512M -smp 1 -kernel build/wel2.bin ${APPEND[@]+"${APPEND[@]}"} -serial "file:$LOG" -monitor none \
     >build/qemu.out 2>&1 &
 QPID=$!
 

@@ -1,5 +1,20 @@
 # Watari Boot: native Windows ARM64 on the 13" M1 MacBook Pro
 
+## Plan B roadmap: Watari EL2 (current plan, since 2026-10-14)
+
+> The sections below this one describe the original native plan (Plan A) and are kept for history. Since 2026-10-14 the project follows Plan B (`docs/adr/draft-plan-b-el2-layer.md`). **Every problem found is placed here, under the milestone where it must be solved, and has a GitHub issue.**
+
+| Milestone | Goal | Status | Problems to solve in this milestone |
+|---|---|---|---|
+| **M0** | First spike: register check against the Arm specs, vGIC model with host tests, EL2 boots in QEMU | ✅ done (PR #49) | — |
+| **M1** | vGIC wired in (stage-2 traps), list-register delivery (timer, SGI), SMP via PSCI, SPI forwarding, EDK2 at EL1 on top of the layer | ✅ done (PR #56, #57) | — |
+| **M1.5: hardening** (before M2) | Make the layer robust enough for Windows | ✅ done (2026-10-20) | #54 LR overflow ✅ · #53 EL2 stage-1 map ✅ · #52 TRAP_EMULATE path ✅ logic in QEMU (hardware validation in M3a) · #44 acpigen layouts ✅ · #45 testsigning/kernel debug ✅ · follow-ups #60 |
+| **M2** | Windows 11 ARM64 boots on top of Watari EL2 in QEMU (TCG), to the lock screen | ⏭️ next | #43 cost of ICC_PMR_EL1 traps (EDK2: 1 trapped write; Windows to measure) · #60 hardening follow-ups · vGIC fidelity for Windows (F-14 lesson: a wrong register = silent hang) · SMP under Windows (EDK2 never called CPU_ON, F-21) |
+| **M3a** | Watari EL2 on the real M1 MacBook Pro via m1n1, with EDK2 | needs hardware | #40 debug host · #55 M1 cluster MPIDRs · #52 validation on real SEIS hardware · E2H=1 path · #58 16 KB stage-2 granule · #59 AIC backend (QEMU has a GIC) · optional #42 QEMU AIC machine to test earlier |
+| **M3b** | Windows on the real M1 to the lock screen (framebuffer, USB keyboard) | later | #48 drivers (ANS NVMe, DART, USB/Type-C) |
+| **M4** | Usable system | later | #48 SPI keyboard/trackpad, power management, GPU · #47 AICv2 chips (M1 Pro/Max, M2+) |
+| Side tracks | Not on the critical path | open to anyone | #41 report the HVF/GIC issue to EDK2 · #38/#39 native-route questions · #20/#46 hardware timer experiments |
+
 ## Context
 The user's goal: **native dual boot** of Windows ARM64 on the MacBook Pro M1 (13", 2020), exploiting the full power of the hardware.
 - No hypervisor, emulator or VM.

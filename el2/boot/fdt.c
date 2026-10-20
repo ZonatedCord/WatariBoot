@@ -232,3 +232,40 @@ int fdt_patch_for_guest(void *fdt, uint64_t carve_base, uint64_t carve_size,
     *info = (struct fdt_patch_info){ 0 };
     return fdt_walk_props(fdt, patch_cb, &c);
 }
+
+struct bargs_ctx {
+    char *out;
+    unsigned max;
+    int len;
+};
+
+static bool bargs_cb(void *vctx, unsigned depth, const char *node, const char *prop,
+                     uint8_t *val, uint32_t len)
+{
+    struct bargs_ctx *c = vctx;
+
+    if (depth == 1 && name_is(node, "chosen") && str_eq(prop, "bootargs")) {
+        unsigned n = 0;
+
+        while (n < len && val[n] && n + 1 < c->max) {
+            c->out[n] = (char)val[n];
+            n++;
+        }
+        c->out[n] = 0;
+        c->len = (int)n;
+        return true;
+    }
+    return false;
+}
+
+int fdt_get_bootargs(void *fdt, char *out, unsigned max)
+{
+    struct bargs_ctx c = { out, max, -1 };
+
+    if (!max)
+        return -1;
+    out[0] = 0;
+    if (fdt_walk_props(fdt, bargs_cb, &c))
+        return -1;
+    return c.len;
+}

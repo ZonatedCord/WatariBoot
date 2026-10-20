@@ -27,6 +27,22 @@ _Static_assert(offsetof(acpi_gicd, system_vector_base) == 16, "");
 _Static_assert(offsetof(acpi_gicd, gic_version) == 20, "");
 
 _Static_assert(sizeof(acpi_gicr) == 16, "gicr");
+/* GICR and GIC MSI Frame vs EDK2 Acpi65.h (EFI_ACPI_6_5_GICR_STRUCTURE, ..._GIC_MSI_FRAME_STRUCTURE),
+ * offsets computed by compiling Acpi65.h [verified: edk2-stable202608, issue #44]. */
+_Static_assert(offsetof(acpi_gicr, type) == 0, "");
+_Static_assert(offsetof(acpi_gicr, length) == 1, "");
+_Static_assert(offsetof(acpi_gicr, reserved) == 2, "");
+_Static_assert(offsetof(acpi_gicr, discovery_range_base) == 4, "");
+_Static_assert(offsetof(acpi_gicr, discovery_range_length) == 12, "");
+_Static_assert(sizeof(acpi_gic_msi) == 24, "msi");
+_Static_assert(offsetof(acpi_gic_msi, type) == 0, "");
+_Static_assert(offsetof(acpi_gic_msi, length) == 1, "");
+_Static_assert(offsetof(acpi_gic_msi, reserved) == 2, "");
+_Static_assert(offsetof(acpi_gic_msi, msi_frame_id) == 4, "");
+_Static_assert(offsetof(acpi_gic_msi, physical_base_address) == 8, "");
+_Static_assert(offsetof(acpi_gic_msi, flags) == 16, "");
+_Static_assert(offsetof(acpi_gic_msi, spi_count) == 20, "");
+_Static_assert(offsetof(acpi_gic_msi, spi_base) == 22, "");
 
 static acpi_gicc gicc_at(const uint8_t *b, size_t k)
 {
