@@ -64,6 +64,13 @@ expect "Watari EL2:   timer irqs on this cpu so far = 0x0000000000000064"
 expect "[Bds]BdsWait ...Zzzzzzzzzzzz..."
 expect "[Bds]Exit the waiting!"
 [ "${WITH_NIC:-0}" = 1 ] && expect "BdsDxe: failed to load Boot0002"
+if [ "${CPUIF:-hw}" = trap ]; then
+    expect "Watari EL2: cpuif mode = TRAP_EMULATE"
+    expect "Watari EL2: trapped ICC_PMR_EL1 writes so far = "
+    # input for #43 / RISKS R-05: the last periodic report of the layer (every 100th timer tick)
+    echo "ICC traps during this EDK2 boot (last report):"
+    grep -a "Watari EL2: trapped ICC_PMR_EL1 writes so far\|Watari EL2:   trapped\|Watari EL2:   other trapped" build-chain/uart.txt | tail -5
+fi
 if ! grep -qE "BdsDxe: Press any key to enter the Boot Manager|Shell> " build-chain/uart.txt; then
     echo "MISSING: EDK2 end state (Boot Manager prompt or Shell>)"; rc=1
 fi

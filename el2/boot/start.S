@@ -42,6 +42,13 @@ reset:
     ldr     x1, =el2_vectors
     msr     vbar_el2, x1
     isb
+    // #53: EL2 stage-1 identity map. The tables are built by C code that is still MMU-off
+    // (stage1.c, -mstrict-align); s1_enable then switches MMU + caches on, without a stack
+    // access in between. x19 (callee-saved) keeps the FDT pointer across the calls.
+    mov     x19, x0
+    bl      stage1_build
+    bl      s1_enable
+    mov     x0, x19
     bl      el2_main                // never returns
 park:
     wfe
@@ -69,8 +76,37 @@ secondary_entry:
     ldr     x1, =el2_vectors
     msr     vbar_el2, x1
     isb
+    bl      s1_enable               // same tables as the boot core (#53), then C code
     bl      el2_secondary_main      // never returns
     b       park
+
+// s1_enable: MAIR/TCR/TTBR0_EL2 from g_s1 (stage1.c), invalidate TLB + I-cache, then
+// SCTLR_EL2.M/C/I = 1 (A, WXN, EE cleared). Registers only (x0-x4), returns through x30.
+    .text
+    .global s1_enable
+s1_enable:
+    ldr     x0, =g_s1
+    ldp     x1, x2, [x0]            // mair, tcr
+    ldr     x3, [x0, #16]           // ttbr
+    msr     mair_el2, x1
+    msr     tcr_el2, x2
+    msr     ttbr0_el2, x3
+    isb
+    dsb     sy                      // page tables written with the MMU off are visible
+    tlbi    alle2
+    ic      iallu
+    dsb     nsh
+    isb
+    mrs     x4, sctlr_el2
+    orr     x4, x4, #(1 << 0)       // M
+    orr     x4, x4, #(1 << 2)       // C
+    orr     x4, x4, #(1 << 12)      // I
+    bic     x4, x4, #(1 << 1)       // A: unaligned Normal accesses are allowed
+    bic     x4, x4, #(1 << 19)      // WXN
+    bic     x4, x4, #(1 << 25)      // EE
+    msr     sctlr_el2, x4
+    isb
+    ret
 
 // void enter_el1(entry x0, el1_sp x1, spsr x2, hcr x3, x0_value x4)
     .text

@@ -10,11 +10,6 @@
 #include "boot.h"
 #include "fdt.h"
 
-#define UART0_BASE   0x09000000UL
-#define UART_DR      0x00
-#define UART_FR      0x18
-#define UART_FR_TXFF (1u << 5)
-
 #define HCR_VM   (1ULL << 0)
 #define HCR_FMO  (1ULL << 3)
 #define HCR_IMO  (1ULL << 4)
@@ -41,123 +36,11 @@ unsigned g_ncpu;
 struct vgic g_vgic;
 uint64_t g_hcr;
 
-/* ---- Locks ----------------------------------------------------------------
- * EL2 runs with the MMU off, so these exclusives hit Device memory: fine in
- * QEMU TCG; real hardware needs an EL2 stage-1 map with Normal memory first
- * (same prerequisite as F-18). Spins are bounded and report, never hang
- * silently (F-14). */
-static volatile uint32_t g_big, g_uart;
-
-static bool spin_lock(volatile uint32_t *l, unsigned long limit)
-{
-    for (unsigned long n = 0; n < limit; n++) {
-        if (!__atomic_exchange_n(l, 1, __ATOMIC_ACQUIRE))
-            return true;
-        __asm__ volatile("yield");
-    }
-    return false;
-}
-
-static void spin_unlock(volatile uint32_t *l)
-{
-    __atomic_store_n(l, 0, __ATOMIC_RELEASE);
-}
-
-void big_lock(void)
-{
-    if (!spin_lock(&g_big, 1UL << 28)) {
-        puts_("Watari EL2: big lock timeout, stealing it\n");
-        g_big = 1;
-    }
-}
-
-void big_unlock(void)
-{
-    spin_unlock(&g_big);
-}
-
 unsigned this_cpu(void)
 {
     uint64_t v;
     __asm__ volatile("mrs %0, tpidr_el2" : "=r"(v));
     return (unsigned)v;
-}
-
-/* ---- UART (PL011; QEMU needs no init) ---------------------------------------
- * puts_() holds a lock for the whole string so that lines of different cores do
- * not interleave; the EL1 payload shares these functions. */
-void putc_(char c)
-{
-    volatile uint32_t *fr = (volatile uint32_t *)(UART0_BASE + UART_FR);
-    volatile uint32_t *dr = (volatile uint32_t *)(UART0_BASE + UART_DR);
-    while (*fr & UART_FR_TXFF)
-        ;
-    *dr = (uint32_t)c;
-}
-
-void puts_(const char *s)
-{
-    bool got = spin_lock(&g_uart, 1UL << 24);
-
-    while (*s) {
-        if (*s == '\n')
-            putc_('\r');
-        putc_(*s++);
-    }
-    if (got)
-        spin_unlock(&g_uart);
-}
-
-static char *fmt_hex(char *p, uint64_t v)
-{
-    *p++ = '0';
-    *p++ = 'x';
-    for (int i = 60; i >= 0; i -= 4)
-        *p++ = "0123456789abcdef"[(v >> i) & 0xf];
-    return p;
-}
-
-static char *fmt_str(char *p, const char *s, char *end)
-{
-    while (*s && p < end)
-        *p++ = *s++;
-    return p;
-}
-
-void puthex(uint64_t v)
-{
-    char b[19];
-
-    *fmt_hex(b, v) = 0;
-    puts_(b);
-}
-
-/* "<k>0x<v>\n" as one atomic write. */
-void put_kv(const char *k, uint64_t v)
-{
-    char b[160], *p = fmt_str(b, k, b + 120);
-
-    p = fmt_hex(p, v);
-    *p++ = '\n';
-    *p = 0;
-    puts_(b);
-}
-
-/* "<pre><decimal n><post>" as one atomic write (post carries the newline). */
-void put_kn(const char *pre, unsigned n, const char *post)
-{
-    char b[160], t[12], *p = fmt_str(b, pre, b + 100);
-    unsigned k = 0;
-
-    do {
-        t[k++] = (char)('0' + n % 10);
-        n /= 10;
-    } while (n && k < sizeof(t));
-    while (k)
-        *p++ = t[--k];
-    p = fmt_str(p, post, b + 150);
-    *p = 0;
-    puts_(b);
 }
 
 /* ---- Exception handling -------------------------------------------------- */
@@ -246,24 +129,6 @@ static void handle_smc(struct frame *f)
     f->x[0] = (uint64_t)-1LL;
     f->x[1] = f->x[2] = f->x[3] = 0;
     f->elr += 4;
-}
-
-/* libc stubs: the compiler may lower loops to these. */
-void *memset(void *d, int c, unsigned long n)
-{
-    uint8_t *p = d;
-    while (n--)
-        *p++ = (uint8_t)c;
-    return d;
-}
-
-void *memcpy(void *d, const void *s, unsigned long n)
-{
-    uint8_t *p = d;
-    const uint8_t *q = s;
-    while (n--)
-        *p++ = *q++;
-    return d;
 }
 
 /* ---- Stage-2 translation (identity map, 4 KB granule) ------------------------
@@ -585,6 +450,8 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
         fatal_msg("FDT does not fit the hand-off buffer, or sits inside the layer's region");
     memcpy((void *)EDK2_FDT_ADDR, (void *)fdt, total);
     fdt_set_totalsize((void *)EDK2_FDT_ADDR, total);
+    /* EL2 wrote through its cacheable map; the guest starts with MMU and caches off. */
+    dcache_clean_range((void *)EDK2_FDT_ADDR, total);
     put_kv("Watari EL2: patched FDT copied to ", EDK2_FDT_ADDR);
     uint32_t magic = *(volatile uint32_t *)(EDK2_ENTRY + 0x38);
     if (magic != 0x644d5241) {               /* "ARM\x64" */
@@ -627,6 +494,22 @@ static void parse_bootargs(uint64_t fdt)
     }
 }
 
+/* #53: the stage-1 map is already on (start.S). Report the regime so the log proves it, and refuse to
+ * continue without it (the locks and the unaligned-capable code depend on Normal memory). */
+static void stage1_report(void)
+{
+    uint64_t sctlr, tcr, hcr;
+
+    __asm__ volatile("mrs %0, sctlr_el2" : "=r"(sctlr));
+    __asm__ volatile("mrs %0, tcr_el2" : "=r"(tcr));
+    __asm__ volatile("mrs %0, hcr_el2" : "=r"(hcr));
+    if ((sctlr & 0x1005) != 0x1005)
+        fatal_msg("EL2 stage-1 MMU/caches are not on (SCTLR_EL2.M/C/I)");
+    put_kv("Watari EL2: stage-1 on (identity, 4 KB, 39-bit), SCTLR_EL2 = ", sctlr);
+    put_kv("Watari EL2:   TCR_EL2 = ", tcr);
+    put_kv("Watari EL2:   HCR_EL2.E2H = ", (hcr >> 34) & 1);
+}
+
 /* ---- EL2 main ---------------------------------------------------------------- */
 void __attribute__((noreturn)) el2_main(uint64_t fdt)
 {
@@ -635,6 +518,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     __asm__ volatile("mrs %0, vbar_el2" : "=r"(vbar));
 
     puts_("Watari EL2: hello from EL2\n");
+    stage1_report();
     put_kv("Watari EL2: CurrentEL = ", el >> 2);
     put_kv("Watari EL2: VBAR_EL2  = ", vbar);
 
@@ -680,6 +564,13 @@ void __attribute__((noreturn)) el2_secondary_main(void)
     bind_this_cpu();
     unsigned me = this_cpu();
 
+    {
+        uint64_t sctlr;
+
+        __asm__ volatile("mrs %0, sctlr_el2" : "=r"(sctlr));
+        if ((sctlr & 0x1005) != 0x1005)
+            fatal_msg("secondary core: EL2 stage-1 MMU/caches are not on");
+    }
     stage2_enable();
     set_virtual_ids();
     gic_phys_init_cpu();
