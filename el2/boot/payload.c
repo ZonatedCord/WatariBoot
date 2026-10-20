@@ -73,6 +73,11 @@ static inline void timer_arm(void)
     __asm__ volatile("msr cntv_ctl_el0, %0; isb" : : "r"(1ULL));   /* ENABLE=1, IMASK=0 */
 }
 
+/* #54 LR-overflow test state (SGIs 3..11, see el1_lr_overflow_test). */
+static volatile uint32_t g_ov_on;
+static volatile uint32_t g_ov_n;
+static volatile uint32_t g_ov_log[32];
+
 /* M1-3 shared state (all guest data is Device memory here: MMU off). */
 static volatile uint32_t g_tirq[MAX_CPUS];      /* timer irqs of secondaries */
 static volatile uint32_t g_sgi2[MAX_CPUS];      /* SGI 2 received per cpu */
@@ -111,6 +116,10 @@ void el1_irq_handler(void)
     } else if (id == 2) {
         g_sgi2[cpu]++;
         put_kn("Watari EL1: cpu ", cpu, " sgi 2\n");
+    } else if (g_ov_on && id >= 3 && id <= 11) {
+        if (g_ov_n < 32)
+            g_ov_log[g_ov_n] = id;
+        g_ov_n++;
     } else if (id == RTC_SPI) {
         /* PL031: clear the interrupt at the device (RTCICR) and mask it, or the
          * level line would stay asserted. */
@@ -201,6 +210,78 @@ static void el1_irq_test(void)
         puts_("Watari EL1: sgi 1 received\n");
     else
         put_kv("Watari EL1: SGI FAILED, count = ", g_sgi_irqs);
+}
+
+/* ---- #54 test: more pending virtual interrupts than list registers ---------
+ * QEMU has 4 LRs. With IRQs masked the guest sends SGIs to itself (each
+ * ICC_SGI1R write traps to EL2, which fills the LRs), then unmasks IRQs and records
+ * the order in which the handler acks them. Priorities are shuffled against the INTID order.
+ * (a) burst: 8 SGIs at once; the 4 that do not fit wait in the model and enter the LRs as
+ *     they free up (EOI maintenance, or only the underflow interrupt with wel2.test=noeoi).
+ * (b) eviction: 4 low priority SGIs fill the LRs, then a much higher priority SGI arrives;
+ *     it must be delivered first although every LR is taken. */
+static void send_sgi_self(unsigned id)
+{
+    __asm__ volatile("msr icc_sgi1r_el1, %0; isb" : : "r"(((uint64_t)id << 24) | 1ULL));
+}
+
+static void ov_check(const char *name, const uint8_t *want, unsigned n)
+{
+    unsigned spin;
+
+    for (spin = 0; g_ov_n < n && spin < 30000000; spin++)
+        __asm__ volatile("nop");
+    for (spin = 0; spin < 2000000; spin++)           /* a duplicate would show up here */
+        __asm__ volatile("nop");
+    __asm__ volatile("msr daifset, #2");
+    g_ov_on = 0;
+    bool ok = g_ov_n == n;
+    for (unsigned i = 0; ok && i < n; i++)
+        ok = g_ov_log[i] == want[i];
+    if (ok) {
+        puts_("Watari EL1: LR overflow ");
+        puts_(name);
+        puts_(": ok, every SGI once, in priority order\n");
+    } else {
+        puts_("Watari EL1: LR overflow ");
+        puts_(name);
+        put_kn(" FAILED: delivered ", g_ov_n, " SGIs, order follows\n");
+        for (unsigned i = 0; i < g_ov_n && i < 32; i++)
+            put_kn("  ", g_ov_log[i], "\n");
+    }
+}
+
+static void el1_lr_overflow_test(void)
+{
+    static const uint8_t b_ids[8]  = { 3, 4, 5, 6, 7, 8, 9, 10 };
+    static const uint8_t b_prio[8] = { 0x70, 0x30, 0x90, 0x10, 0x50, 0xb0, 0x20, 0xa0 };
+    static const uint8_t b_want[8] = { 6, 9, 4, 7, 3, 5, 10, 8 };       /* ascending priority value */
+    static const uint8_t e_ids[5]  = { 3, 4, 5, 6, 11 };
+    static const uint8_t e_prio[5] = { 0x80, 0x90, 0xa0, 0xb0, 0x08 };
+    static const uint8_t e_want[5] = { 11, 3, 4, 5, 6 };
+    unsigned i;
+
+    for (i = 0; i < 8; i++)
+        wr8(SGI_BASE + 0x400 + b_ids[i], b_prio[i]);
+    wr32(SGI_BASE + 0x100, 0x7f8u);                      /* ISENABLER0: SGIs 3..10 */
+    g_ov_n = 0;
+    g_ov_on = 1;
+    __asm__ volatile("msr daifset, #2");
+    for (i = 0; i < 8; i++)
+        send_sgi_self(b_ids[i]);
+    __asm__ volatile("msr daifclr, #2");
+    ov_check("burst (8 SGIs, 4 LRs)", b_want, 8);
+
+    for (i = 0; i < 5; i++)
+        wr8(SGI_BASE + 0x400 + e_ids[i], e_prio[i]);
+    wr32(SGI_BASE + 0x100, 0x878u);                      /* SGIs 3..6 and 11 */
+    g_ov_n = 0;
+    g_ov_on = 1;
+    __asm__ volatile("msr daifset, #2");
+    for (i = 0; i < 5; i++)
+        send_sgi_self(e_ids[i]);
+    __asm__ volatile("msr daifclr, #2");
+    ov_check("eviction (high priority SGI, LRs full)", e_want, 5);
 }
 
 /* ---- M1-3 test: SMP bring-up, SGI between cores, forwarded SPI, CPU_OFF ------ */
@@ -429,6 +510,7 @@ void __attribute__((noreturn)) el1_main(void)
 
     el1_vgic_test();
     el1_irq_test();
+    el1_lr_overflow_test();
 
     /* More than one redistributor in the vGIC (GICR_TYPER.Last clear on frame 0):
      * run the SMP test. */

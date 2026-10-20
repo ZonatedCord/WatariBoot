@@ -7,6 +7,10 @@
 # Success = EDK2 reaches the Boot Manager / BDS end state (or the UEFI Shell) with the layer
 # having handled the vGIC traps and injected timer interrupts. 60 s timeout. Exit 0 on success.
 set -u
+# CPUIF=trap runs the same test with the virtual CPU interface in TRAP_EMULATE mode
+# (boot argument wel2.cpuif=trap, see cpuif.c); the default is HW list registers.
+APPEND=()
+[ "${CPUIF:-hw}" = trap ] && APPEND=(-append "wel2.cpuif=trap")
 cd "$(dirname "$0")"
 # shellcheck source=/dev/null
 source ../../tools/env.sh || { echo "FAIL: data disk not mounted"; exit 2; }
@@ -22,7 +26,7 @@ TICKS=600                       # 60 s
 LOG=build-chain/uart.log
 : > "$LOG"
 qemu-system-aarch64 -M virt,virtualization=on,gic-version=3 -cpu max -accel tcg \
-    -nographic -m 2G -smp 4 $NIC -kernel build-chain/wel2.bin \
+    -nographic -m 2G -smp 4 $NIC -kernel build-chain/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
     -device loader,file="$FD",addr=0x40280000,force-raw=on \
     -serial "file:$LOG" -monitor none >build-chain/qemu.out 2>&1 &
 QPID=$!
@@ -60,6 +64,13 @@ expect "Watari EL2:   timer irqs on this cpu so far = 0x0000000000000064"
 expect "[Bds]BdsWait ...Zzzzzzzzzzzz..."
 expect "[Bds]Exit the waiting!"
 [ "${WITH_NIC:-0}" = 1 ] && expect "BdsDxe: failed to load Boot0002"
+if [ "${CPUIF:-hw}" = trap ]; then
+    expect "Watari EL2: cpuif mode = TRAP_EMULATE"
+    expect "Watari EL2: trapped ICC_PMR_EL1 writes so far = "
+    # input for #43 / RISKS R-05: the last periodic report of the layer (every 100th timer tick)
+    echo "ICC traps during this EDK2 boot (last report):"
+    grep -a "Watari EL2: trapped ICC_PMR_EL1 writes so far\|Watari EL2:   trapped\|Watari EL2:   other trapped" build-chain/uart.txt | tail -5
+fi
 if ! grep -qE "BdsDxe: Press any key to enter the Boot Manager|Shell> " build-chain/uart.txt; then
     echo "MISSING: EDK2 end state (Boot Manager prompt or Shell>)"; rc=1
 fi

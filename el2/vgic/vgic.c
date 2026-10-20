@@ -698,3 +698,15 @@ bool vgic_eoi(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
 	q->flags &= (uint8_t)~VGIC_F_ACTIVE;
 	return true;
 }
+
+bool vgic_requeue(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
+{
+	struct vgic_irq *q = irq_get(v, (int)vcpu_idx, intid);
+
+	if (!q || !(q->flags & VGIC_F_ACTIVE))
+		return false;
+	q->flags &= (uint8_t)~VGIC_F_ACTIVE;
+	if (intid < 16 || (q->flags & VGIC_F_EDGE))
+		q->flags |= VGIC_F_PENDING;
+	return true;
+}

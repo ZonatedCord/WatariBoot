@@ -49,10 +49,15 @@ extern struct pcpu g_pcpu[MAX_CPUS];
 extern unsigned g_ncpu;
 extern struct vgic g_vgic;
 extern uint64_t g_hcr;
+extern bool g_cpuif_noeoi;         /* test knob wel2.test=noeoi: LRs without EOI maintenance */
+extern bool g_cpuif_trap;          /* cpuif.c: TRAP_EMULATE (true) or HW list registers */
 
 /* main.c: UART, locks and per-core helpers. */
 void putc_(char c);
 void puts_(const char *s);
+void *memcpy(void *d, const void *s, unsigned long n);
+void *memset(void *d, int c, unsigned long n);
+void dcache_clean_range(const void *p, unsigned long n);
 void puthex(uint64_t v);
 void put_kv(const char *k, uint64_t v);
 void put_kn(const char *pre, unsigned n, const char *post);  /* one atomic line */
@@ -61,6 +66,7 @@ void big_lock(void);                         /* serialises all EL2 shared state 
 void big_unlock(void);
 void enter_el1(uint64_t entry, uint64_t sp, uint64_t spsr, uint64_t hcr, uint64_t x0)
     __attribute__((noreturn));
+void stage1_build(void);                     /* stage1.c: boot core, MMU off */
 void stage2_enable(void);                    /* VTCR/VTTBR of this core */
 void fatal_msg(const char *why) __attribute__((noreturn));
 void secondary_entry(void);                  /* start.S: EL2 entry of cores 1..n */

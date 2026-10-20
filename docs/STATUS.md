@@ -56,7 +56,7 @@ No new issues, to avoid sending notifications. Pick one of these, on a `ciani/..
 
 ## Where to resume
 - Latest diary: `docs/sessions/2026-10-15-marco-01.md`.
-- **Next: M2**: boot Windows 11 ARM64 (installed disk, `snapshot=on`) through EDK2 on top of Watari EL2 in QEMU TCG; measure ICC_PMR_EL1 traffic (#43). Open follow-ups: #52 (SEIS trap path), #53 (EL2 stage-1 map), #54 (LR overflow), #55 (M1 cluster MPIDRs).
-- Tests to run first: `make -C el2 test`, `el2/boot/run-qemu.sh`, `make -C tools/acpigen test`.
+- **Next: M2**: boot Windows 11 ARM64 (installed disk, `snapshot=on`) through EDK2 on top of Watari EL2 in QEMU TCG; measure ICC_PMR_EL1 traffic (#43). Hardening done on a worktree branch (to merge): #54 (LR overflow: UIE + eviction), #53 (EL2 stage-1 map, E2H = 0), #52 (TRAP_EMULATE path, `wel2.cpuif=trap`); `el2/boot/run-all.sh` runs everything in both modes (`docs/FAILURES.md` F-22). Open follow-up: #55 (M1 cluster MPIDRs); the E2H = 1 stage-1 layout, 16 KB tables and the real SEIS erratum need M1 hardware (#40).
+- Tests to run first: `make -C el2 test`, `el2/boot/run-all.sh` (or `SKIP_M14=1`), `make -C tools/acpigen test`.
 - The repository is **public** since 2026-10-15; open issues are unassigned on purpose.
 - Failures and lessons learned: `docs/FAILURES.md` (read by all sessions).

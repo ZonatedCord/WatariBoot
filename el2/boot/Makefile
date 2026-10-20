@@ -12,21 +12,30 @@ PAYLOAD_OBJS ?= $(OUT)/payload_s.o $(OUT)/payload.o
 
 CFLAGS := -I../include --target=aarch64-none-elf -std=c11 -Wall -Wextra -Werror -O2 -g \
           -ffreestanding -nostdlib -mgeneral-regs-only -fno-pic -fno-stack-protector \
-          -mno-outline-atomics -fno-builtin -mstrict-align $(XFLAGS)
+          -mno-outline-atomics -fno-builtin $(XFLAGS)
 ASFLAGS := --target=aarch64-none-elf -g
 
-OBJS := $(OUT)/start.o $(OUT)/main.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o \
-        $(OUT)/fdt.o $(OUT)/vgic.o $(PAYLOAD_OBJS)
+OBJS := $(OUT)/start.o $(OUT)/util.o $(OUT)/stage1.o $(OUT)/main.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o \
+        $(OUT)/fdt.o $(OUT)/vgic.o $(OUT)/vcif.o $(PAYLOAD_OBJS)
+
+# Code that runs with the MMU off (stage1.c: table build before the MMU is on; util.c and
+# payload.c: also run by the EL1 test payload, MMU off = Device memory) keeps -mstrict-align
+# (F-18). Everything else runs at EL2 on Normal memory and is built without it (#53).
+STRICT := util stage1 payload
+$(foreach o,$(STRICT),$(OUT)/$(o).o): CFLAGS += -mstrict-align
 
 all: build/wel2.bin
 
 chain:
 	$(MAKE) OUT=build-chain XFLAGS=-DWEL2_CHAIN=1 PAYLOAD_OBJS= build-chain/wel2.bin
 
-$(OUT)/%.o: %.c boot.h fdt.h ../include/wel2_vgic.h | $(OUT)
+$(OUT)/%.o: %.c boot.h fdt.h ../include/wel2_vgic.h ../include/wel2_vcif.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/vgic.o: ../vgic/vgic.c ../include/wel2_vgic.h | $(OUT)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/vcif.o: ../vgic/vcif.c ../include/wel2_vcif.h ../include/wel2_vgic.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/%.o: %.S | $(OUT)
