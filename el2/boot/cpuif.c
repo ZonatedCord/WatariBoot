@@ -408,6 +408,13 @@ static void icc_report(void)
         r += g_cif[i].st_pmr_r;
         o += g_cif[i].st_other;
     }
+    uint64_t cnt, frq;
+
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
+    put_kv("Watari EL2:   report at CNTVCT = ", cnt);       /* M2: rate = delta writes / (delta CNTVCT / CNTFRQ) */
+    put_kv("Watari EL2:   CNTFRQ = ", frq);
+    put_kv("Watari EL2:   timer irqs on cpu 0 = ", g_cif[0].st_timer);
     put_kv("Watari EL2: trapped ICC_PMR_EL1 writes so far = ", t);
     put_kv("Watari EL2:   trapped ICC_PMR_EL1 reads = ", r);
     put_kv("Watari EL2:   trapped ICC_IAR1_EL1 reads = ", a);

@@ -8,6 +8,7 @@
 #   SMP=4 MEM=4G   cores / RAM          TIMEOUT=3600  seconds        SHOT_EVERY=120  seconds
 #   TRACE=SKIP     log trapped GICD/GICR accesses after the first SKIP (wel2.trace=, up to 3000 lines)
 #   ITS=on|off     GIC ITS of the QEMU machine (default on: Windows needs MSI, off = INTx storm, F-23)
+#   STOP_ON_RESET=1  stop at the first PSCI SYSTEM_RESET/OFF (a bugcheck restarts Windows: use SHOT_EVERY=6 to catch the blue screen)
 #   TAG=name       run directory name (default: cpuif mode + timestamp)
 # Output (external disk, never in the repo): $WATARI_DATA/logs/m2/<TAG>/
 #   serial.log (layer + EDK2 + Windows KD on COM1), shot-NNNN.png, qemu.out, sockdir.txt
@@ -61,6 +62,7 @@ START=$(date +%s); N=0; NEXT=0
 while kill -0 "$QPID" 2>/dev/null; do
     NOW=$(( $(date +%s) - START ))
     [ "$NOW" -ge "$TIMEOUT" ] && { echo "timeout after ${NOW}s"; break; }
+    if [ -n "${STOP_ON_RESET:-}" ] && grep -aq "PSCI SYSTEM_RESET\|PSCI SYSTEM_OFF" "$LOG"; then echo "guest reset/off after ${NOW}s"; break; fi
     if [ "$NOW" -ge "$NEXT" ]; then N=$((N + 1)); shot "$N"; NEXT=$((NOW + SHOT_EVERY)); fi
     sleep 5
 done

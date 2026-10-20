@@ -23,7 +23,7 @@
  * after the carve-out, at the address an arm64 Image with text_offset 0x80000 would
  * have there. */
 #define GUEST_RAM_BASE   0x40000000ULL
-#define GUEST_RAM_END    0xc0000000ULL
+#define GUEST_RAM_END    0x140000000ULL   /* M2: stage-2 maps RAM up to 5 GB (a -m 4G machine ends at 0x13fffffff) */
 #define WEL2_CARVE_SIZE  0x200000ULL
 #define EDK2_FDT_ADDR    GUEST_RAM_BASE
 #define EDK2_ENTRY       (GUEST_RAM_BASE + WEL2_CARVE_SIZE + 0x80000ULL)

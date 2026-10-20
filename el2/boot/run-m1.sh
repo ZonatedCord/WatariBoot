@@ -5,8 +5,10 @@
 set -u
 # CPUIF=trap runs the same test with the virtual CPU interface in TRAP_EMULATE mode
 # (boot argument wel2.cpuif=trap, see cpuif.c); the default is HW list registers.
-APPEND=()
-[ "${CPUIF:-hw}" = trap ] && APPEND=(-append "wel2.cpuif=trap")
+# wel2.lpi=off: this test checks the non-LPI GICD_TYPER/GICR_TYPER values of the model (M1-1); the
+# default since M2 exposes LPIs when the physical GIC has them (QEMU virt has an ITS by default).
+APPEND=(-append "wel2.lpi=off")
+[ "${CPUIF:-hw}" = trap ] && APPEND=(-append "wel2.lpi=off wel2.cpuif=trap")
 cd "$(dirname "$0")"
 make -s || { echo "FAIL: build"; exit 2; }
 

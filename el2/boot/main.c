@@ -125,8 +125,23 @@ static void handle_smc(struct frame *f)
     uint32_t fid = (uint32_t)f->x[0];
 
     f->elr += 4;
-    if (psci_handle(f, fid))
+    if (g_trace_on) {
+        static unsigned n_smc;
+        uint64_t x1 = f->x[1], x2 = f->x[2], x3 = f->x[3];
+        bool ok = psci_handle(f, fid);
+
+        if (n_smc++ < 80) {
+            put_kv("Watari EL2: TR SMC fid ", fid);
+            put_kv("Watari EL2: TR    x1 ", x1);
+            put_kv("Watari EL2: TR    x2 ", x2);
+            put_kv("Watari EL2: TR    x3 ", x3);
+            put_kv("Watari EL2: TR    -> x0 ", f->x[0]);
+        }
+        if (ok)
+            return;
+    } else if (psci_handle(f, fid)) {
         return;
+    }
     if (g_smc_log_budget) {
         g_smc_log_budget--;
         puts_("Watari EL2: non-PSCI SMC from EL1, fid=");
