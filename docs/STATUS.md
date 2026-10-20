@@ -4,6 +4,7 @@
 **Strategy (2026-10-14):** **Plan B adopted**, Windows dual boot on top of a minimal EL2 layer (`docs/adr/draft-plan-b-el2-layer.md`, `re/planB-feasibility.md`). The pure native route is closed: GIC mandatory (V2), parking in deadlock (V3, F-15).
 **M0 (2026-10-15):** ✅ Watari EL2 boots in QEMU TCG at EL2, ERETs to EL1, handles HVC/PSCI (`el2/boot/run-qemu.sh`); vGIC distributor/redistributor model with 69 host tests (`make -C el2 test`); 57 register/bit values checked against the Arm specs (44 confirmed, 10 corrected, 3 open: `re/el2-m0-register-check.md`). Next: M1 (stage-2, vGIC wired into the layer, EDK2 at EL1).
 **M1 (2026-10-19, in progress, #50):** ✅ M1-1 stage-2 identity map + GICD/GICR traps answered by the vGIC model · ✅ M1-2 virtual interrupt delivery with GICv3 list registers (guest timer PPI 27, SGIs) · ✅ M1-3 SMP: guest PSCI CPU_ON/OFF/AFFINITY_INFO on 4 cores, cross-core SGIs, a physical SPI (PL031 RTC) forwarded to the guest. All in QEMU TCG, 84 host tests. ✅ **M1-4 (2026-10-20): our EDK2 (ArmVirtQemuKernel) boots at EL1 on top of Watari EL2** and reaches the Boot Manager (FDT handed over with PSCI patched to `hvc`, GICD/GICR traps and timer PPI 27 handled by the layer). **M1 complete.** ⏭️ M2: Windows 11 ARM64 on top of Watari EL2 in QEMU.
+**M1.5 hardening (2026-10-20):** ✅ LR overflow (#54), EL2 stage-1 map with caches on (#53), TRAP_EMULATE ICC path (#52, logic only: QEMU SEIS=0), acpigen layouts verified (#44), VM testsigning + serial kernel debug verified (#45). `el2/boot/run-all.sh`: 15/15 PASS in both modes.
 **Current phase:** 0, the spike on the Windows ARM64 HAL and non-GIC interrupt controllers
 
 ## Milestones
@@ -56,7 +57,7 @@ No new issues, to avoid sending notifications. Pick one of these, on a `ciani/..
 
 ## Where to resume
 - Latest diary: `docs/sessions/2026-10-15-marco-01.md`.
-- **Next: M2**: boot Windows 11 ARM64 (installed disk, `snapshot=on`) through EDK2 on top of Watari EL2 in QEMU TCG; measure ICC_PMR_EL1 traffic (#43). Hardening done on a worktree branch (to merge): #54 (LR overflow: UIE + eviction), #53 (EL2 stage-1 map, E2H = 0), #52 (TRAP_EMULATE path, `wel2.cpuif=trap`); `el2/boot/run-all.sh` runs everything in both modes (`docs/FAILURES.md` F-22). Open follow-up: #55 (M1 cluster MPIDRs); the E2H = 1 stage-1 layout, 16 KB tables and the real SEIS erratum need M1 hardware (#40).
+- **Next: M2**: boot Windows 11 ARM64 (installed disk, `snapshot=on`) through EDK2 on top of Watari EL2 in QEMU TCG, in both cpuif modes (`hw`, `trap`); measure ICC_PMR_EL1 traffic (#43). Run `el2/boot/run-all.sh` first (15 checks). Roadmap and open problems per milestone: `docs/PLAN.md` (Plan B roadmap). Follow-ups: #60, #55, #58, #59.
 - Tests to run first: `make -C el2 test`, `el2/boot/run-all.sh` (or `SKIP_M14=1`), `make -C tools/acpigen test`.
 - The repository is **public** since 2026-10-15; open issues are unassigned on purpose.
 - Failures and lessons learned: `docs/FAILURES.md` (read by all sessions).
