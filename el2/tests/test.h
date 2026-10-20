@@ -47,7 +47,7 @@ static void fx_eff(void *c, enum vgic_effect e, uint32_t id, int arg)
 
 static inline void setup(unsigned nvcpu)
 {
-	struct vgic_config cfg = { GICD, GICR, nvcpu, NULL, { fx_log, fx_eff, NULL } };
+	struct vgic_config cfg = { GICD, GICR, nvcpu, NULL, { fx_log, fx_eff, NULL, NULL }, false };
 	F.logs = F.effects = 0;
 	if (vgic_init(&F.v, &cfg))
 		printf("    vgic_init failed\n");

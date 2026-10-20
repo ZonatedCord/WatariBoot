@@ -7,7 +7,7 @@
 #   CPUIF=trap     virtual CPU interface in TRAP_EMULATE mode (boot argument wel2.cpuif=trap)
 #   SMP=4 MEM=4G   cores / RAM          TIMEOUT=3600  seconds        SHOT_EVERY=120  seconds
 #   TRACE=SKIP     log trapped GICD/GICR accesses after the first SKIP (wel2.trace=, up to 3000 lines)
-#   ITS=off|on     GIC ITS of the QEMU machine (default off: our vGIC has no LPIs)
+#   ITS=on|off     GIC ITS of the QEMU machine (default on: Windows needs MSI, off = INTx storm, F-23)
 #   TAG=name       run directory name (default: cpuif mode + timestamp)
 # Output (external disk, never in the repo): $WATARI_DATA/logs/m2/<TAG>/
 #   serial.log (layer + EDK2 + Windows KD on COM1), shot-NNNN.png, qemu.out, sockdir.txt
@@ -38,7 +38,7 @@ LOG="$OUT/serial.log"; : > "$LOG"
 echo "$SOCKDIR" > "$OUT/sockdir.txt"
 TIMEOUT="${TIMEOUT:-3600}"; SHOT_EVERY="${SHOT_EVERY:-120}"
 
-qemu-system-aarch64 -M "virt,virtualization=on,gic-version=3,its=${ITS:-off}" -cpu max -accel tcg \
+qemu-system-aarch64 -M "virt,virtualization=on,gic-version=3,its=${ITS:-on}" -cpu max -accel tcg \
     -m "${MEM:-4G}" -smp "${SMP:-4}" -display none -nic none \
     -kernel build-chain/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
     -device loader,file="$FD",addr=0x40280000,force-raw=on \

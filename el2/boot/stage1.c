@@ -27,6 +27,7 @@
 //                                      rest (data, bss, stacks)    RW XN
 //   0x40200000-0x7fffffff  Normal WB inner-shareable RW XN, 2 MB blocks
 //   0x80000000-0xbfffffff  Normal WB inner-shareable RW XN, one 1 GB block (RAM of -m 2G)
+//   0xc0000000-0x13fffffff the same, two more 1 GB blocks (RAM of -m 4G, M2)
 //   everything else        unmapped (an EL2 access faults; the vectors dump it)
 // The layer image must lie in the first 2 MB of RAM (linker ASSERT).
 
@@ -97,6 +98,8 @@ void stage1_build(void)
     s1_l1[0] = (uint64_t)(uintptr_t)s1_l2dev | D_VALID | D_TABLE;
     s1_l1[1] = (uint64_t)(uintptr_t)s1_l2ram | D_VALID | D_TABLE;
     s1_l1[2] = 0x80000000ULL | nrm | xn;          /* 1 GB block: RAM of a -m 2G machine */
+    s1_l1[3] = 0xc0000000ULL | nrm | xn;          /* M2: RAM of a -m 4G machine (to 0x13fffffff); the layer reads */
+    s1_l1[4] = 0x100000000ULL | nrm | xn;         /* the guest's LPI property table */
 
     /* TCR_EL2: T0SZ 25 (39-bit), IRGN0 = ORGN0 = 1 (WB WA), SH0 = 3 (ISH), TG0 = 0 (4 KB),
      * physical size = min(PARange, 40 bit). */

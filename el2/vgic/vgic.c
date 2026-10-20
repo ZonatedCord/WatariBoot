@@ -134,6 +134,9 @@ void vgic_vcpu_reset(struct vgic *v, unsigned idx)
 	for (j = 0; j < 16; j++)
 		v->vcpu[idx].priv[j].flags = VGIC_F_EDGE; /* SGIs: always edge */
 	v->vcpu[idx].sleep = true;                        /* WAKER reset value 0x6 */
+	v->vcpu[idx].rd_ctlr = 0;
+	v->vcpu[idx].propbaser = v->vcpu[idx].pendbaser = 0;
+	zero(v->vcpu[idx].lpi, sizeof(v->vcpu[idx].lpi));
 }
 
 void vgic_vcpu_wake(struct vgic *v, unsigned idx)
@@ -164,6 +167,7 @@ int vgic_init(struct vgic *v, const struct vgic_config *cfg)
 	v->gicr_base = cfg->gicr_base;
 	v->nr_vcpus = cfg->nr_vcpus;
 	v->hooks = cfg->hooks;
+	v->lpis = cfg->lpis;
 	for (i = 0; i < v->nr_vcpus; i++)
 		v->vcpu[i].aff = cfg->affinity ? cfg->affinity[i] : i;
 	vgic_reset(v);
@@ -353,7 +357,8 @@ static int gicd_word(struct vgic *v, uint32_t off, bool wr, uint32_t *val)
 		return W_OK;
 	case 0x0004:
 		if (!wr)
-			*val = GICD_TYPER_VALUE;
+			*val = v->lpis ? ((GICD_TYPER_VALUE & ~(0x1fu << 19)) | (15u << 19) | (1u << 17))
+				       : GICD_TYPER_VALUE;     /* LPIS bit 17, IDbits = 15 (16 bits) */
 		return W_OK;
 	case 0x0008:
 		if (!wr)
@@ -416,7 +421,24 @@ static int rd_word(struct vgic *v, unsigned cpu, uint32_t off, bool wr, uint32_t
 		return W_OK;
 	}
 	switch (off) {
-	case 0x0000: /* CTLR: EnableLPIs RAZ/WI, RWP = 0, UWP = 0 */
+	case 0x0000: /* CTLR: EnableLPIs (LPI mode only, else RAZ/WI), RWP = 0, UWP = 0 */
+		if (v->lpis) {
+			if (wr) {
+				c->rd_ctlr = *val & 1u;
+				if (v->hooks.lpi_reg)
+					v->hooks.lpi_reg(v->hooks.ctx, cpu, 0x0, *val & 1u);
+			} else {
+				*val = c->rd_ctlr;
+			}
+			return W_OK;
+		}
+		if (!wr)
+			*val = 0;
+		return W_OK;
+	case 0x00C0: /* SYNCR: nothing is ever in flight in the model (LPI mode) */
+		if (!wr)
+			*val = 0;
+		return v->lpis ? W_OK : W_UNIMPL;
 	case 0x0010: /* STATUSR */
 		if (!wr)
 			*val = 0;
@@ -427,7 +449,7 @@ static int rd_word(struct vgic *v, unsigned cpu, uint32_t off, bool wr, uint32_t
 		return W_OK;
 	case 0x0008: /* TYPER low: Last, Processor_Number; PLPIS/VLPIS/DirectLPI = 0 */
 		if (!wr)
-			*val = (cpu << 8) | (cpu == v->nr_vcpus - 1 ? GICR_TYPER_LAST : 0);
+			*val = (cpu << 8) | (cpu == v->nr_vcpus - 1 ? GICR_TYPER_LAST : 0) | (v->lpis ? 1u : 0);
 		return W_OK;
 	case 0x000C: /* TYPER high: Affinity_Value */
 		if (!wr)
@@ -538,6 +560,41 @@ static int mmio(struct vgic *v, uint64_t addr, unsigned size, bool wr, uint64_t 
 		rd_word(v, cpu, 0xC, false, &hi);
 		if (!wr)
 			*val = ((uint64_t)hi << 32) | lo;
+		return VGIC_OK;
+	}
+	if (kind == K_RD && v->lpis && (off == 0x70 || off == 0x78 || off == 0xA0 || off == 0xB0) &&
+	    (size == 8 || size == 4)) {
+		/* LPI configuration registers (64-bit, accessed as one word or two halves) */
+		struct vgic_vcpu *c = &v->vcpu[cpu];
+		uint64_t *r = off == 0x70 ? &c->propbaser : &c->pendbaser;
+		uint64_t nv;
+
+		if (off >= 0xA0) { /* INVLPIR / INVALLR: write-only, forwarded */
+			if (wr && v->hooks.lpi_reg)
+				v->hooks.lpi_reg(v->hooks.ctx, cpu, off, size == 8 ? orig : orig & 0xFFFFFFFFu);
+			return VGIC_OK;
+		}
+		if (!wr) {
+			*val = (size == 8 ? *r : *r & 0xFFFFFFFFull) & ~(1ull << 62);   /* PTZ reads as zero */
+			return VGIC_OK;
+		}
+		nv = size == 8 ? orig : ((*r & ~0xFFFFFFFFull) | (orig & 0xFFFFFFFFull));
+		*r = nv;
+		if (v->hooks.lpi_reg)
+			v->hooks.lpi_reg(v->hooks.ctx, cpu, off, nv);
+		return VGIC_OK;
+	}
+	if (kind == K_RD && v->lpis && (off == 0x74 || off == 0x7C) && size == 4) { /* high halves */
+		struct vgic_vcpu *c = &v->vcpu[cpu];
+		uint64_t *r = off == 0x74 ? &c->propbaser : &c->pendbaser;
+
+		if (!wr) {
+			*val = (uint32_t)(*r >> 32) & ~(1u << 30);
+			return VGIC_OK;
+		}
+		*r = (*r & 0xFFFFFFFFull) | (orig << 32);
+		if (v->hooks.lpi_reg)
+			v->hooks.lpi_reg(v->hooks.ctx, cpu, off - 4, *r);
 		return VGIC_OK;
 	}
 	if (size != 4 || (off & 3)) {
@@ -673,7 +730,57 @@ bool vgic_next_pending(const struct vgic *v, unsigned vcpu_idx,
 				*prio = q->prio;
 		}
 	}
+	if (v->ctlr & GICD_CTLR_ENGRP1) {
+		const struct vgic_vcpu *c = &v->vcpu[vcpu_idx];
+
+		for (unsigned i = 0; i < VGIC_LPI_QUEUE; i++) {
+			if (!c->lpi[i].id || c->lpi[i].inflight)
+				continue;
+			if (!found || c->lpi[i].prio < best ||
+			    (c->lpi[i].prio == best && intid && *intid >= VGIC_LPI_BASE && c->lpi[i].id < *intid)) {
+				found = true;
+				best = c->lpi[i].prio;
+				if (intid)
+					*intid = c->lpi[i].id;
+				if (prio)
+					*prio = c->lpi[i].prio;
+			}
+		}
+	}
 	return found;
+}
+
+static struct vgic_lpi *lpi_find(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
+{
+	struct vgic_vcpu *c = &v->vcpu[vcpu_idx];
+
+	for (unsigned i = 0; i < VGIC_LPI_QUEUE; i++)
+		if (c->lpi[i].id == intid)
+			return &c->lpi[i];
+	return NULL;
+}
+
+bool vgic_lpi_inject(struct vgic *v, unsigned vcpu_idx, uint32_t intid, uint8_t prio)
+{
+	struct vgic_lpi *e;
+
+	if (vcpu_idx >= v->nr_vcpus || intid < VGIC_LPI_BASE)
+		return false;
+	e = lpi_find(v, vcpu_idx, intid);
+	if (e && !e->inflight)
+		return true;                     /* already pending (the pending bit is idempotent) */
+	e = lpi_find(v, vcpu_idx, 0);            /* new, or a second occurrence while one is in flight */
+	if (!e)
+		return false;
+	e->id = intid;
+	e->prio = prio;
+	e->inflight = false;
+	return true;
+}
+
+uint64_t vgic_lpi_propbaser(const struct vgic *v, unsigned vcpu_idx)
+{
+	return vcpu_idx < v->nr_vcpus ? v->vcpu[vcpu_idx].propbaser : 0;
 }
 
 uint32_t vgic_ack(struct vgic *v, unsigned vcpu_idx)
@@ -683,6 +790,16 @@ uint32_t vgic_ack(struct vgic *v, unsigned vcpu_idx)
 
 	if (!vgic_next_pending(v, vcpu_idx, &id, NULL))
 		return VGIC_INTID_SPURIOUS;
+	if (id >= VGIC_LPI_BASE) {
+		struct vgic_vcpu *c = &v->vcpu[vcpu_idx];
+
+		for (unsigned i = 0; i < VGIC_LPI_QUEUE; i++)
+			if (c->lpi[i].id == id && !c->lpi[i].inflight) {
+				c->lpi[i].inflight = true;
+				return id;
+			}
+		return VGIC_INTID_SPURIOUS;
+	}
 	q = irq_get(v, (int)vcpu_idx, id);
 	q->flags &= (uint8_t)~VGIC_F_PENDING;
 	q->flags |= VGIC_F_ACTIVE;
@@ -691,8 +808,20 @@ uint32_t vgic_ack(struct vgic *v, unsigned vcpu_idx)
 
 bool vgic_eoi(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
 {
-	struct vgic_irq *q = irq_get(v, (int)vcpu_idx, intid);
+	struct vgic_irq *q;
 
+	if (intid >= VGIC_LPI_BASE) {            /* LPI: forget the in-flight entry */
+		struct vgic_vcpu *c = &v->vcpu[vcpu_idx];
+
+		for (unsigned i = 0; i < VGIC_LPI_QUEUE; i++)
+			if (c->lpi[i].id == intid && c->lpi[i].inflight) {
+				c->lpi[i].id = 0;
+				c->lpi[i].inflight = false;
+				return true;
+			}
+		return false;
+	}
+	q = irq_get(v, (int)vcpu_idx, intid);
 	if (!q)
 		return false;
 	q->flags &= (uint8_t)~VGIC_F_ACTIVE;
@@ -701,8 +830,19 @@ bool vgic_eoi(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
 
 bool vgic_requeue(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
 {
-	struct vgic_irq *q = irq_get(v, (int)vcpu_idx, intid);
+	struct vgic_irq *q;
 
+	if (intid >= VGIC_LPI_BASE) {            /* LPI: the pending bit is simply restored */
+		struct vgic_vcpu *c = &v->vcpu[vcpu_idx];
+
+		for (unsigned i = 0; i < VGIC_LPI_QUEUE; i++)
+			if (c->lpi[i].id == intid && c->lpi[i].inflight) {
+				c->lpi[i].inflight = false;
+				return true;
+			}
+		return false;
+	}
+	q = irq_get(v, (int)vcpu_idx, intid);
 	if (!q || !(q->flags & VGIC_F_ACTIVE))
 		return false;
 	q->flags &= (uint8_t)~VGIC_F_ACTIVE;

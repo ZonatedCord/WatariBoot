@@ -249,6 +249,7 @@ static unsigned g_log_budget = 16;
 /* M2 diagnostics (boot argument wel2.trace=SKIP): log every trapped GICD/GICR access after the first
  * SKIP ones (EDK2 does ~1000 of them), at most 3000 lines. Off by default. */
 bool g_trace_on;
+static bool g_lpi = true;       /* wel2.lpi=off: hide LPIs from the guest (GICD_TYPER.LPIS = 0) */
 static unsigned g_trace_skip, g_trace_left = 3000;
 
 static unsigned idx_cpu(void)
@@ -295,6 +296,17 @@ static void vgic_effect_cb(void *ctx, enum vgic_effect eff, uint32_t intid, int 
     cpuif_vgic_effect(eff, intid, arg);        /* M1-3: apply to the physical GICD */
 }
 
+static void lpi_reg_cb(void *ctx, unsigned cpu, unsigned off, uint64_t val)
+{
+    (void)ctx;
+    if (g_trace_on) {
+        put_kv("Watari EL2: TR LPI register write, offset ", off);
+        put_kv("Watari EL2: TR    cpu ", cpu);
+        put_kv("Watari EL2: TR    value ", val);
+    }
+    gic_phys_lpi_reg(cpu, off, val);
+}
+
 static void vgic_setup(void)
 {
     uint32_t aff[MAX_CPUS];
@@ -306,7 +318,8 @@ static void vgic_setup(void)
         .gicr_base = GICR_PHYS,
         .nr_vcpus = g_ncpu,
         .affinity = aff,
-        .hooks = { vgic_log_cb, vgic_effect_cb, 0 },
+        .hooks = { vgic_log_cb, vgic_effect_cb, 0, lpi_reg_cb },
+        .lpis = g_lpi && gic_phys_has_lpis(),
     };
     if (vgic_init(&g_vgic, &cfg) != 0)
         fatal_msg("vgic_init failed");
@@ -507,6 +520,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
 
 /* Boot arguments (/chosen/bootargs, QEMU -append), space separated:
  *   wel2.cpuif=hw|trap   mode of the virtual CPU interface (build default WEL2_CPUIF_TRAP_DEFAULT)
+ *   wel2.lpi=off         do not expose LPIs/ITS (default: exposed when the physical GIC has them)
  *   wel2.trace=SKIP      log trapped GICD/GICR accesses after the first SKIP (M2 diagnostics)
  *   wel2.test=noeoi      test knob: LRs without EOI maintenance, only UIE refills them (#54) */
 static bool arg_is(const char *p, const char *key)
@@ -529,6 +543,8 @@ static void parse_bootargs(uint64_t fdt)
             continue;
         if (arg_is(p, "wel2.cpuif=trap"))
             g_cpuif_trap = true;
+        else if (arg_is(p, "wel2.lpi=off"))
+            g_lpi = false;
         else if (arg_is(p, "wel2.cpuif=hw"))
             g_cpuif_trap = false;
         else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 't' &&

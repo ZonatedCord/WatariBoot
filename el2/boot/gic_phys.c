@@ -192,3 +192,39 @@ void gic_phys_spi_route(uint32_t intid, int vcpu)
     wr64(GICD_PHYS + GICD_IROUTER + 8ULL * intid,
          ((uint64_t)(a >> 24) << 32) | (a & 0xffffffu));
 }
+
+/* ---- LPI pass-through (M2) -------------------------------------------------
+ * Windows needs MSI: with the QEMU virt GIC ITS present its ACPI describes a GITS and the
+ * interrupt of NVMe/xHCI becomes an LPI (without it Windows stays on a level INTx that storms,
+ * F-23). The ITS itself is not trapped (its frame is mapped in stage 2, guest IPA = PA); only
+ * the per-core redistributor LPI registers are forwarded to the physical GICR of the same core
+ * (GIC spec 12.11: GICR_CTLR.EnableLPIs, PROPBASER, PENDBASER, INVLPIR, INVALLR). */
+bool gic_phys_has_lpis(void)
+{
+    return (rd32(GICD_PHYS + 4) >> 17) & 1u;
+}
+
+void gic_phys_lpi_reg(unsigned cpu, unsigned off, uint64_t val)
+{
+    uint64_t base = g_pcpu[cpu].gicr;
+
+    switch (off) {
+    case 0x0: /* GICR_CTLR.EnableLPIs; wait for RWP (bit 31) */
+        wr32(base, (rd32(base) & ~1u) | (uint32_t)(val & 1u));
+        for (unsigned n = 0; n < 1000000 && (rd32(base) >> 31); n++)
+            ;
+        break;
+    case 0x70:
+    case 0x78:
+        wr64(base + off, val);
+        break;
+    case 0xA0:
+    case 0xB0:
+        wr64(base + off, val);
+        for (unsigned n = 0; n < 1000000 && (rd32(base + 0xC0) & 1u); n++) /* SYNCR.Busy */
+            ;
+        break;
+    default:
+        break;
+    }
+}
