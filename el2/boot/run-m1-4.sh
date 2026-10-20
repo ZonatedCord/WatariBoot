@@ -74,7 +74,7 @@ fi
 if ! grep -qE "BdsDxe: Press any key to enter the Boot Manager|Shell> " build-chain/uart.txt; then
     echo "MISSING: EDK2 end state (Boot Manager prompt or Shell>)"; rc=1
 fi
-grep -q "UNEXPECTED\|FATAL\|unhandled guest\|stray SMC" build-chain/uart.txt && { echo "FAIL: the layer reported an unexpected event"; rc=1; }
+grep -q "UNEXPECTED\|FATAL\|unhandled guest\|non-PSCI SMC" build-chain/uart.txt && { echo "FAIL: the layer reported an unexpected event"; rc=1; }
 grep -q "ASSERT\|Synchronous Exception" build-chain/uart.txt && { echo "FAIL: EDK2 reported an ASSERT/exception"; rc=1; }
 [ "$DONE" = 0 ] && { echo "FAIL: timeout before the end state"; rc=1; }
 [ $rc = 0 ] && echo "PASS: EDK2 at EL1 under Watari EL2 (M1-4): BDS reached, vGIC traps handled, timer injected"

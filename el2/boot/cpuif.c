@@ -317,6 +317,12 @@ void cpuif_flush(void)
 
         if (id < 32)
             continue;
+        if (g_trace_on) {
+            static unsigned n_hv;
+
+            if (n_hv++ < 100)
+                put_kv("Watari EL2: TR guest finished SPI, INTID ", id);
+        }
         vgic_set_irq_level(g_v, me, id, false);
         if (g_spi_masked[id / 32] & (1u << (id % 32))) {
             g_spi_masked[id / 32] &= ~(1u << (id % 32));
@@ -453,6 +459,8 @@ void cpuif_irq(void)
         } else if (id >= 32) {
             /* Forwarded SPI: mask at the physical GICD, raise the model line. */
             c->st_spi++;
+            if (g_trace_on && c->st_spi <= 200)
+                put_kv("Watari EL2: TR physical SPI taken, INTID ", id);
             g_spi_masked[id / 32] |= 1u << (id % 32);
             gic_phys_spi_enable(id, false);
             vgic_set_irq_level(g_v, me, id, true);
@@ -469,6 +477,14 @@ void cpuif_irq(void)
  * the physical distributor. Called from inside vgic_mmio_*, big lock held. */
 void cpuif_vgic_effect(enum vgic_effect eff, uint32_t intid, int arg)
 {
+    static unsigned n_tr;
+
+    if (g_trace_on && intid >= 32 && n_tr < 300) {
+        n_tr++;
+        put_kv("Watari EL2: TR SPI effect (1=unmask 2=mask 3=target) ", (uint64_t)eff);
+        put_kv("Watari EL2: TR    intid ", intid);
+        put_kv("Watari EL2: TR    arg   ", (uint64_t)(int64_t)arg);
+    }
     switch (eff) {
     case VGIC_EFFECT_SET_TARGET:
         gic_phys_spi_route(intid, arg);
@@ -564,6 +580,18 @@ static bool icc_emulate(struct frame *f, uint32_t crn, uint32_t crm, uint32_t op
     }
     if (!known)
         return false;
+    if (g_trace_on && crn == 12) {
+        static unsigned n_icc;
+        bool iar = crm == 12 && op2 == 0 && rd, eoi = (crm == 12 && op2 == 1 && !rd) || (crm == 11 && op2 == 1 && !rd);
+
+        if ((iar && ret >= 32) || (eoi && val >= 32)) {
+            if (n_icc++ < 150) {
+                put_kv(iar ? "Watari EL2: TR guest IAR1 -> " : (crm == 11 ? "Watari EL2: TR guest DIR  <- " : "Watari EL2: TR guest EOIR1 <- "),
+                       iar ? ret : val);
+                put_kv("Watari EL2: TR    at guest pc ", f->elr);
+            }
+        }
+    }
     hw_out(c);
     if (rd && rt != 31)
         f->x[rt] = ret;
