@@ -1,10 +1,10 @@
 # Project status
 
-**Updated:** 2026-10-14 (session marco-01, night closed)
+**Updated:** 2026-10-21 (session marco-01 of 2026-10-19, M2 closed)
 **Strategy (2026-10-14):** **Plan B adopted**, Windows dual boot on top of a minimal EL2 layer (`docs/adr/draft-plan-b-el2-layer.md`, `re/planB-feasibility.md`). The pure native route is closed: GIC mandatory (V2), parking in deadlock (V3, F-15).
 **M0 (2026-10-15):** ✅ Watari EL2 boots in QEMU TCG at EL2, ERETs to EL1, handles HVC/PSCI (`el2/boot/run-qemu.sh`); vGIC distributor/redistributor model with 69 host tests (`make -C el2 test`); 57 register/bit values checked against the Arm specs (44 confirmed, 10 corrected, 3 open: `re/el2-m0-register-check.md`). Next: M1 (stage-2, vGIC wired into the layer, EDK2 at EL1).
 **M1 (2026-10-19, in progress, #50):** ✅ M1-1 stage-2 identity map + GICD/GICR traps answered by the vGIC model · ✅ M1-2 virtual interrupt delivery with GICv3 list registers (guest timer PPI 27, SGIs) · ✅ M1-3 SMP: guest PSCI CPU_ON/OFF/AFFINITY_INFO on 4 cores, cross-core SGIs, a physical SPI (PL031 RTC) forwarded to the guest. All in QEMU TCG, 84 host tests. ✅ **M1-4 (2026-10-20): our EDK2 (ArmVirtQemuKernel) boots at EL1 on top of Watari EL2** and reaches the Boot Manager (FDT handed over with PSCI patched to `hvc`, GICD/GICR traps and timer PPI 27 handled by the layer). **M1 complete.** ⏭️ M2: Windows 11 ARM64 on top of Watari EL2 in QEMU.
-**M2 (2026-10-20, branch of the M2 agent, not yet merged):** ✅ Windows 11 ARM64 (installed VM disk, `snapshot=on`) boots through EDK2 on top of Watari EL2 to the **lock screen**, QEMU TCG, `-smp 4`, in both cpuif modes (`hw` and `trap`), about 4-5 minutes. Needed: PSCI over SMC (FADT), LPI/ITS pass-through in the vGIC, RAM maps to 5 GB, `CPU_ON` entry range (F-23). `its=off` is NOT an option: Windows storms on the NVMe INTx, with or without the layer. #43: Windows writes `ICC_PMR_EL1` only 9 times in a whole boot (0/s idle) in trap mode; `ICC_IAR1/EOIR1` traps are the load (~1800/s idle on 4 cores). Launcher: `el2/boot/run-m2.sh`.
+**M2 (2026-10-20, complete):** ✅ Windows 11 ARM64 (installed VM disk, `snapshot=on`) boots through EDK2 on top of Watari EL2 to the **lock screen**, QEMU TCG, `-smp 4`, in both cpuif modes (`hw` and `trap`), about 4-5 minutes. Needed: PSCI over SMC (FADT), LPI/ITS pass-through in the vGIC, RAM maps to 5 GB, `CPU_ON` entry range (F-23). `its=off` is NOT an option: Windows storms on the NVMe INTx, with or without the layer. #43: Windows writes `ICC_PMR_EL1` only 9 times in a whole boot (0/s idle) in trap mode; `ICC_IAR1/EOIR1` traps are the load (~1800/s idle on 4 cores). Launcher: `el2/boot/run-m2.sh`. Verified by Opus (independent trap-mode run, lock screen in ~3 min, again 9 PMR writes; independent code review: 2 LPI queue bugs fixed with tests). Follow-ups: #62 (device interrupts on the M1 without an ITS), #63 (soak test), #64 (LPI hardening), #65 (INTx storm).
 **M1.5 hardening (2026-10-20):** ✅ LR overflow (#54), EL2 stage-1 map with caches on (#53), TRAP_EMULATE ICC path (#52, logic only: QEMU SEIS=0), acpigen layouts verified (#44), VM testsigning + serial kernel debug verified (#45). `el2/boot/run-all.sh`: 15/15 PASS in both modes.
 **Current phase:** 0, the spike on the Windows ARM64 HAL and non-GIC interrupt controllers
 
@@ -57,8 +57,9 @@ No new issues, to avoid sending notifications. Pick one of these, on a `ciani/..
 - **GitHub organization:** optional and postponable. The name is to be chosen (`watari` is taken, `watariboot` is free). It must be created from the browser, then the repo is transferred (history is preserved and the old address is redirected). Reserve the name before any public announcement.
 
 ## Where to resume
-- Latest diary: `docs/sessions/2026-10-15-marco-01.md`.
-- **Next: M2**: boot Windows 11 ARM64 (installed disk, `snapshot=on`) through EDK2 on top of Watari EL2 in QEMU TCG, in both cpuif modes (`hw`, `trap`); measure ICC_PMR_EL1 traffic (#43). Run `el2/boot/run-all.sh` first (15 checks). Roadmap and open problems per milestone: `docs/PLAN.md` (Plan B roadmap). Follow-ups: #60, #55, #58, #59.
+- Latest diary: `docs/sessions/2026-10-19-marco-01.md` (M1, M1.5, M2).
+- **M2 is done**: Windows 11 ARM64 reaches the lock screen on top of Watari EL2 in QEMU TCG (`el2/boot/run-m2.sh`, `CPUIF=trap` for the M1 mode; about 3-5 minutes with 4 cores).
+- **Next without hardware:** #63 soak test (login, desktop, 30 min idle, both modes), #62 design of device interrupts on the M1 without an ITS (design session first), #60/#64 hardening. **Next with hardware (M3a):** needs the debug host (#40), then #55, #58, #59, #52 on the real M1.
 - Tests to run first: `make -C el2 test`, `el2/boot/run-all.sh` (or `SKIP_M14=1`), `make -C tools/acpigen test`.
 - The repository is **public** since 2026-10-15; open issues are unassigned on purpose.
 - Failures and lessons learned: `docs/FAILURES.md` (read by all sessions).
