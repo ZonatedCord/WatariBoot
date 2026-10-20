@@ -19,6 +19,7 @@
 # Build
 Build/
 build/
+build-chain/
 out/
 *.o
 *.obj

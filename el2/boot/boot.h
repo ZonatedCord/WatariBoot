@@ -13,6 +13,20 @@
 #define GICR_PHYS   0x080A0000UL   /* redistributor frame of CPU 0 (RD_base) */
 #define GICR_STRIDE 0x20000UL      /* RD_base + SGI_base frames */
 #define MAX_CPUS    VGIC_MAX_VCPUS
+/* Guest RAM (QEMU virt, up to -m 2G) and, in the M1-4 chain build, the part of it
+ * the layer keeps for itself: the first WEL2_CARVE_SIZE of RAM, cut off the FDT
+ * /memory node (INTERFACES 3.2). Inside it, [RAM base, layer image) is the FDT
+ * hand-off buffer (mapped, read by the guest) and [layer image, carve end) is the
+ * layer (image + stacks, unmapped in stage 2).
+ * The patched FDT is copied to the RAM base: EDK2's early DebugLib reads it at
+ * PcdDeviceTreeInitialBaseAddress = 0x40000000 (F-21). EDK2 itself is loaded right
+ * after the carve-out, at the address an arm64 Image with text_offset 0x80000 would
+ * have there. */
+#define GUEST_RAM_BASE   0x40000000ULL
+#define GUEST_RAM_END    0xc0000000ULL
+#define WEL2_CARVE_SIZE  0x200000ULL
+#define EDK2_FDT_ADDR    GUEST_RAM_BASE
+#define EDK2_ENTRY       (GUEST_RAM_BASE + WEL2_CARVE_SIZE + 0x80000ULL)
 #define PL031_PHYS  0x09010000UL   /* QEMU virt RTC, SPI 2 = INTID 34 */
 
 /* Exception frame saved by start.S (layout fixed there). */
@@ -51,6 +65,7 @@ void stage2_enable(void);                    /* VTCR/VTTBR of this core */
 void fatal_msg(const char *why) __attribute__((noreturn));
 void secondary_entry(void);                  /* start.S: EL2 entry of cores 1..n */
 void el2_secondary_main(void) __attribute__((noreturn));
+void el2_main(uint64_t fdt) __attribute__((noreturn));   /* x0 at reset = FDT from QEMU */
 
 /* psci.c: guest PSCI over HVC (PSCI DEN0022F.b, SMC64 + SMC32 IDs). */
 bool psci_handle(struct frame *f, uint32_t fid);   /* true: x0 holds the result */

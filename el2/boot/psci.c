@@ -24,6 +24,7 @@
 #define PSCI_AFFINITY_INFO_64 0xC4000004u
 #define PSCI_MIGRATE_INFO_TYPE 0x84000006u
 #define PSCI_SYSTEM_OFF       0x84000008u
+#define PSCI_SYSTEM_RESET     0x84000009u
 #define PSCI_FEATURES         0x8400000Au
 
 #define PSCI_VER_1_1          0x00010001u
@@ -36,9 +37,7 @@
 #define PSCI_INTERNAL_FAILURE (-6LL)
 #define PSCI_INVALID_ADDRESS  (-9LL)
 
-/* Guest RAM = the Normal stage-2 block (main.c). */
-#define GUEST_RAM_BASE 0x40000000ULL
-#define GUEST_RAM_END  0x80000000ULL
+/* Guest RAM = the Normal stage-2 blocks (main.c, boot.h). */
 
 /* MPIDR as used by CPU_ON / AFFINITY_INFO (section 5.1.4): Aff3 [39:32],
  * Aff2 [23:16], Aff1 [15:8], Aff0 [7:0]; all other bits must be zero. */
@@ -154,6 +153,7 @@ static int64_t features(uint32_t fid)
     case PSCI_AFFINITY_INFO_64:
     case PSCI_MIGRATE_INFO_TYPE:
     case PSCI_SYSTEM_OFF:
+    case PSCI_SYSTEM_RESET:
     case PSCI_FEATURES:
         return 0;                       /* implemented, no feature flags */
     default:
@@ -194,6 +194,11 @@ bool psci_handle(struct frame *f, uint32_t fid)
         cpuif_stats();
         puts_("Watari EL2: PSCI SYSTEM_OFF -> forwarding to QEMU firmware (SMC)\n");
         psci_system_off();
+    case PSCI_SYSTEM_RESET:                /* 5.11: EDK2 ResetSystem(); M1-4 */
+        cpuif_stats();
+        puts_("Watari EL2: PSCI SYSTEM_RESET -> forwarding to QEMU firmware (SMC)\n");
+        psci_smc(PSCI_SYSTEM_RESET, 0, 0, 0);
+        fatal_msg("SYSTEM_RESET returned");
     case PSCI_CPU_SUSPEND_32:
     case PSCI_CPU_SUSPEND_64:
     default:

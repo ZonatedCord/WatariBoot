@@ -33,17 +33,18 @@ QEMU: `-kernel wel2.elf` (or `Image`) with `-M virt,virtualization=on,gic-versio
 | `x0` | physical address of the patched FDT; `x1..x30 = 0` |
 | `DAIF` | all masked (D, A, I, F = 1) |
 | `SCTLR_EL1` | RES1 bits only; MMU, D and I caches off |
-| GIC state seen by EDK2 | vGIC at reset: all interrupts disabled, `GICR_WAKER.ProcessorSleep=1`, `GICD_CTLR=0` |
+| GIC state seen by EDK2 | vGIC at reset: all interrupts disabled, `GICD_CTLR=0`, **`GICR_WAKER.ProcessorSleep=0` for every vCPU that starts** (EDK2's `ArmGicV3Dxe` never does the wake handshake; verified in M1-4, F-21; Windows does it and is not harmed by an awake redistributor). The vGIC model itself resets with `ProcessorSleep=1`; the hand-off calls `vgic_vcpu_wake()` |
 | `CNTVOFF_EL2` | 0; `CNTFRQ_EL0` as physical (24 MHz on M1 [verified: PB/F0]) |
 
 ### 3.2 Patched FDT (**in-place** modifications, no reallocation)
 | Node/property | Modification |
 |---|---|
-| `/memory/reg` | layer region removed (`fdt_trim_memory`: the region sits at the top of RAM, so the size is reduced) |
+| `/memory/reg` | layer region removed. **QEMU bench (M1-4, verified):** the layer is a `-kernel` Image at `0x40080000`, QEMU refuses an image at the top of RAM (F-21), so the first 2 MB are cut: base `0x40000000` -> `0x40200000`, size reduced (same property length, patched in place by `el2/boot/fdt.c`). On M1 the region can sit at the top, size only reduced. |
 | `/psci/method` | `"smc"` → `"hvc"` (same length, in-place patch). In QEMU with `virtualization=on` the conduit is SMC [verified: `hw/arm/virt.c`] |
 | `/cpus/cpu@N/reg` | virtual MPIDR (see §6.3); `enable-method` from `"spin-table"` to `"psci"` and removal of `cpu-release-addr`: lengths change, so on M1 the `/cpus` node is rebuilt in the hand-off buffer (see note below) |
 | `/chosen/watari,el2` (new, in an additional buffer) | properties in §3.3 |
 | GIC node | in QEMU: already `arm,gic-v3` at the real addresses (which are also the virtual ones); on M1: new node `/watari-intc` (`compatible = "arm,gic-v3"`, `reg = <GICD GICR>`, `redistributor-stride = <0x20000>`) |
+| FDT address handed to EDK2 | **QEMU bench (M1-4):** x0 = a copy of the patched FDT at `0x40000000` (hand-off buffer, mapped in stage 2, outside `/memory`), because `DebugLibFdtPL011Uart` in PrePi reads the FDT at `PcdDeviceTreeInitialBaseAddress` (default `0x40000000`) before PrePi has learnt the real address (F-21). The copy is only the used part of the blob (`fdt_used_size`, QEMU leaves a 1 MB `totalsize`) and its `totalsize` is set accordingly. |
 | `/timer/interrupts` | PPIs 13, 14, 11, 10 (GSIV 29, 30, 27, 26) as QEMU [verified: README acpigen] |
 Note: where the in-place patch is not enough (different lengths) the layer **copies** the FDT into its own buffer (`WEL2_FDT_BUF`, 256 KB) and rebuilds it with a minimal writer; this choice lives in `wel2-fdt` and is invisible to EDK2. The M1 FDT contains many nodes: the writer copies everything verbatim except the nodes listed above.
 
@@ -274,7 +275,7 @@ Convention: `HVC #0`; ID in `w0`, arguments `x1-x3`, result in `x0` (`x1-x3` zer
 | `SYSTEM_RESET` | `0x8400_0009` | does not return: `plat_ops.reset` |
 | `PSCI_FEATURES` | `0x8400_000A` | arg = a function ID (a PSCI function **or `SMCCC_VERSION`**); returns the feature flags (bit31 = 0; 0 when none, which is the case for all functions above in the original `power_state` format) for the functions above and for `SMCCC_VERSION`, `NOT_SUPPORTED` (-1) for the others [verified: PSCI §5.1.14 p.42, §5.16] |
 | any other `HVC` | — | `x0 = -1` (`NOT_SUPPORTED`; the architected "Unknown Function Identifier" is a sign-extended -1 in `W0`/`X0`) [verified: SMCCC §5.2 p.23], log-once. **Never** UNDEF nor hang (F-14) |
-| `SMC` from the guest (EC 0x17, `TSC=1`) | — | `x0 = -1`, `ELR` advanced |
+| `SMC` from the guest (EC 0x17, `TSC=1`) | — | `x0 = -1`, `ELR` advanced (implemented in M1-4 as a backstop: the conduit told to EDK2 is `hvc` through the FDT patch, so an SMC is a stray and is logged) |
 Codes [verified: PSCI Table 5 p.49]: `SUCCESS 0, NOT_SUPPORTED -1, INVALID_PARAMETERS -2, DENIED -3, ALREADY_ON -4, ON_PENDING -5, INTERNAL_FAILURE -6, NOT_PRESENT -7, DISABLED -8, INVALID_ADDRESS -9`.
 
 State on entry of a vCPU powered on with `CPU_ON`: EL1h, `DAIF` masked, MMU off, `x0=context_id` [verified: PSCI §6.4.1/6.4.3.3/6.4.3.4/6.4.3.7 pp.83-85: SP_ELNS = EL1h, `SPSR.{D,A,I,F}={1,1,1,1}`, stage 1 MMU and caches disabled, caches clean and coherent; `CNTFRQ` initialized by firmware]; other registers zeroed (our choice); the vCPU's virtual GIC at reset (`ProcessorSleep=1` until Windows clears it). A `CPU_ON` toward the calling core → `ALREADY_ON`.

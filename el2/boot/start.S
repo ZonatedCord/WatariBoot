@@ -25,6 +25,7 @@ reset:
     lsr     x1, x1, #2
     cmp     x1, #2
     b.ne    park                    // not at EL2: cannot proceed
+    // x0 (the FDT address QEMU passes) stays untouched until el2_main(fdt)
 
     ldr     x1, =__el2_stacks       // core 0 uses the first 16 KB stack
     add     x1, x1, #0x4000
@@ -83,7 +84,10 @@ enter_el1:
     ldr     x5, =0x30d00800
     msr     sctlr_el1, x5
     isb
-    mov     x0, x4                  // PSCI 6.4.3.7: context_id in X0
+    mov     x0, x4                  // PSCI 6.4.3.7: context_id in X0; boot: FDT
+    mov     x1, xzr                 // Linux boot protocol: x1..x3 = 0
+    mov     x2, xzr
+    mov     x3, xzr
     eret
 
 // ---------------------------------------------------------------------------

@@ -136,6 +136,12 @@ void vgic_vcpu_reset(struct vgic *v, unsigned idx)
 	v->vcpu[idx].sleep = true;                        /* WAKER reset value 0x6 */
 }
 
+void vgic_vcpu_wake(struct vgic *v, unsigned idx)
+{
+	if (idx < v->nr_vcpus)
+		v->vcpu[idx].sleep = false;
+}
+
 void vgic_reset(struct vgic *v)
 {
 	unsigned i;

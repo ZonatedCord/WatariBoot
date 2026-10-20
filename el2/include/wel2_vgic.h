@@ -90,6 +90,9 @@ int  vgic_init(struct vgic *v, const struct vgic_config *cfg);
 void vgic_reset(struct vgic *v);
 /* Reset the private (SGI/PPI) state and WAKER of one vCPU: PSCI CPU_OFF. */
 void vgic_vcpu_reset(struct vgic *v, unsigned idx);
+/* Hand-off to a guest that never does the GICR_WAKER handshake (EDK2's ArmGicV3
+ * driver assumes awake redistributors, F-21): mark the vCPU awake. */
+void vgic_vcpu_wake(struct vgic *v, unsigned idx);
 
 /* addr is a guest-visible address inside the GICD or GICR window. */
 int vgic_mmio_read(struct vgic *v, uint64_t addr, unsigned size, uint64_t *val);
