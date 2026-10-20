@@ -18,3 +18,11 @@ User `watari`, password `watari`.
 
 ## Open hypotheses
 All to be verified at the first installation: LabConfig, BypassNRO, acceptance of the GVLK, `HideLocalAccountScreen` on build 26300.
+
+## Verified result (2026-10-20, issue #45)
+Black-box check on the installed VM (HVF, stock EDK2 `QEMU_EFI`, `snapshot=on`, serial to file, keystrokes via the QEMU monitor; the VM keyboard layout is Italian). **[verified]**
+- **Test signing: enabled.** `bcdedit /enum` shows `testsigning Yes`; the desktop shows the "Modalita test" watermark. Screenshot: `docs/img/vm-bcdedit-testsigning-debug.png`.
+- **Kernel debugging: enabled over serial.** `bcdedit /enum` shows `debug Yes`; `bcdedit /dbgsettings` shows `debugtype Serial`, `debugport 1`, `baudrate 115200` (`docs/img/vm-dbgsettings-serial.png`). The QEMU serial log contains real KD packets (leader `0000`, `KDTARGET: Refreshing KD connection`, after `\SystemRoot\system32\ntoskrnl.exe`): the kernel debugger is active on COM1 and waits for a host debugger.
+- **`C:\watari-ok.txt` exists**: `13/10/2026 23:36:47,41`.
+- AutoLogon (LogonCount 1) had already been consumed: the reboot shows the lock screen and a `watari` password prompt (password `watari`). A cmd prompt needs elevation (UAC: Alt+S for "Si").
+No change to `autounattend.xml` was needed.
