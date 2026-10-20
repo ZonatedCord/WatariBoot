@@ -51,7 +51,7 @@ struct wel2_vcif {
 	unsigned pribits;             /* ICH_VTR_EL2.PRIbits + 1 (5..8) */
 	unsigned prebits;             /* ICH_VTR_EL2.PREbits + 1 (5..7) */
 	uint64_t lr[VCIF_MAX_LRS];
-	int16_t  owner[VCIF_MAX_LRS]; /* vINTID the LR was filled for, -1 = free */
+	int32_t  owner[VCIF_MAX_LRS]; /* vINTID the LR was filled for, -1 = free */
 	uint32_t vmcr;
 	uint32_t ap0r[4], ap1r[4];
 	uint32_t lr_dirty;            /* LRs to write back */

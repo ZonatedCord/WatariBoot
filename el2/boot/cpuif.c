@@ -472,14 +472,24 @@ void cpuif_irq(void)
              * bits [7:2] priority, bit 0 enable); queue it in the model. LPIs are edge: nothing
              * to mask, the physical EOI below completes it. */
             uint64_t prop = vgic_lpi_propbaser(g_v, me);
-            uint64_t a = (prop & 0x000FFFFFFFFFF000ULL) + (id - VGIC_LPI_BASE);
-            uint8_t prio = (uint8_t)(*(volatile uint8_t *)a & 0xfc);
+            uint8_t prio = 0xa0, cfg = 1;       /* default if the guest has not set the table up */
+
+            if (vgic_lpi_enabled(g_v, me) && prop) {
+                uint64_t a = (prop & 0x000FFFFFFFFFF000ULL) + (id - VGIC_LPI_BASE);
+
+                cfg = *(volatile uint8_t *)a;
+                prio = (uint8_t)(cfg & 0xfc);
+            }
 
             c->st_lpi++;
             if (g_trace_on && c->st_lpi <= 100)
                 put_kv("Watari EL2: TR physical LPI taken, INTID ", id);
-            if (!vgic_lpi_inject(g_v, me, id, prio))
+            if (!(cfg & 1u))
+                ;                               /* LPI disabled in the property table: just EOI */
+            else if (!vgic_lpi_inject(g_v, me, id, prio))
                 put_kv("Watari EL2: LPI queue full, dropped INTID ", id);
+        } else if (id >= 1024) {
+            put_kv("Watari EL2: ignoring unexpected physical INTID ", id);   /* 1024..8191: reserved */
         } else if (id >= 32) {
             /* Forwarded SPI: mask at the physical GICD, raise the model line. */
             c->st_spi++;

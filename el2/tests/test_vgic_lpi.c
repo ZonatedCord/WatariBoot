@@ -112,6 +112,51 @@ static void t_spi_beats_equal_priority_lpi(void)
 	CHECK_EQ(next(0), 8192);
 }
 
+static void t_duplicates_bounded(void)
+{
+	unsigned i, pending = 0, inflight = 0;
+
+	setup_lpi(1);
+	bring_up();
+	CHECK(vgic_lpi_inject(&F.v, 0, 8500, 0x40));
+	CHECK_EQ(vgic_ack(&F.v, 0), 8500);                 /* in flight */
+	for (i = 0; i < 1000; i++)                         /* a storming device */
+		CHECK(vgic_lpi_inject(&F.v, 0, 8500, 0x40));
+	for (i = 0; i < VGIC_LPI_QUEUE; i++) {
+		if (F.v.vcpu[0].lpi[i].id == 8500)
+			F.v.vcpu[0].lpi[i].inflight ? inflight++ : pending++;
+	}
+	CHECK_EQ(inflight, 1);
+	CHECK_EQ(pending, 1);                              /* at most 1 + 1 */
+	CHECK(vgic_lpi_inject(&F.v, 0, 9000, 0x40));       /* other ids still fit */
+	/* eviction of the in-flight copy while a pending one exists: merge, no second pending copy */
+	CHECK(vgic_requeue(&F.v, 0, 8500));
+	pending = 0;
+	for (i = 0; i < VGIC_LPI_QUEUE; i++)
+		if (F.v.vcpu[0].lpi[i].id == 8500)
+			pending++;
+	CHECK_EQ(pending, 1);
+}
+
+static void t_base_writes_ignored_while_enabled(void)
+{
+	setup_lpi(1);
+	wr64(R(0, 0x70), 0x40000000ull | 15);
+	wr64(R(0, 0x78), 0x50000000ull);
+	wr32(R(0, 0), 1);
+	n_reg = 0;
+	wr64(R(0, 0x70), 0x80000000ull);                   /* UNPREDICTABLE while enabled: ignored */
+	wr32(R(0, 0x78), 0x60000000u);
+	wr32(R(0, 0x74), 0x1);
+	CHECK_EQ(n_reg, 0);
+	CHECK_EQ(rd64(R(0, 0x70)), 0x4000000full);
+	CHECK(vgic_lpi_enabled(&F.v, 0));
+	wr32(R(0, 0), 0);
+	CHECK(!vgic_lpi_enabled(&F.v, 0));
+	wr64(R(0, 0x70), 0x80000000ull);                   /* accepted again once disabled */
+	CHECK_EQ(n_reg, 2);                                /* the CTLR write and this one */
+}
+
 int main(void)
 {
 	RUN(t_typer_bits);
@@ -119,5 +164,7 @@ int main(void)
 	RUN(t_queue_priority_and_lifecycle);
 	RUN(t_queue_full_and_group_gate);
 	RUN(t_spi_beats_equal_priority_lpi);
+	RUN(t_duplicates_bounded);
+	RUN(t_base_writes_ignored_while_enabled);
 	TESTS_DONE();
 }

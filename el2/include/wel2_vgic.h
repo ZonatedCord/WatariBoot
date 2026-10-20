@@ -142,6 +142,8 @@ int  vgic_route_target(const struct vgic *v, uint32_t intid);
  * Queued until the guest acknowledges it; returns false (and drops it) when the queue is full. */
 bool vgic_lpi_inject(struct vgic *v, unsigned vcpu_idx, uint32_t intid, uint8_t prio);
 /* Value the guest last wrote to GICR_PROPBASER of vCPU idx (0 if never). */
+/* GICR_CTLR.EnableLPIs of vCPU idx as the guest set it. */
+bool vgic_lpi_enabled(const struct vgic *v, unsigned vcpu_idx);
 uint64_t vgic_lpi_propbaser(const struct vgic *v, unsigned vcpu_idx);
 
 /* Highest-priority pending+enabled+inactive interrupt deliverable to vcpu_idx. */

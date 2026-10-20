@@ -578,6 +578,8 @@ static int mmio(struct vgic *v, uint64_t addr, unsigned size, bool wr, uint64_t 
 			*val = (size == 8 ? *r : *r & 0xFFFFFFFFull) & ~(1ull << 62);   /* PTZ reads as zero */
 			return VGIC_OK;
 		}
+		if (c->rd_ctlr & 1u)            /* UNPREDICTABLE while EnableLPIs == 1: ignored, not forwarded */
+			return VGIC_OK;
 		nv = size == 8 ? orig : ((*r & ~0xFFFFFFFFull) | (orig & 0xFFFFFFFFull));
 		*r = nv;
 		if (v->hooks.lpi_reg)
@@ -592,6 +594,8 @@ static int mmio(struct vgic *v, uint64_t addr, unsigned size, bool wr, uint64_t 
 			*val = (uint32_t)(*r >> 32) & ~(1u << 30);
 			return VGIC_OK;
 		}
+		if (c->rd_ctlr & 1u)
+			return VGIC_OK;
 		*r = (*r & 0xFFFFFFFFull) | (orig << 32);
 		if (v->hooks.lpi_reg)
 			v->hooks.lpi_reg(v->hooks.ctx, cpu, off - 4, *r);
@@ -750,12 +754,13 @@ bool vgic_next_pending(const struct vgic *v, unsigned vcpu_idx,
 	return found;
 }
 
-static struct vgic_lpi *lpi_find(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
+/* Entry with this id (0 = free slot) in the given state: in flight or not. */
+static struct vgic_lpi *lpi_find(struct vgic *v, unsigned vcpu_idx, uint32_t intid, bool inflight)
 {
 	struct vgic_vcpu *c = &v->vcpu[vcpu_idx];
 
 	for (unsigned i = 0; i < VGIC_LPI_QUEUE; i++)
-		if (c->lpi[i].id == intid)
+		if (c->lpi[i].id == intid && c->lpi[i].inflight == inflight)
 			return &c->lpi[i];
 	return NULL;
 }
@@ -766,16 +771,20 @@ bool vgic_lpi_inject(struct vgic *v, unsigned vcpu_idx, uint32_t intid, uint8_t 
 
 	if (vcpu_idx >= v->nr_vcpus || intid < VGIC_LPI_BASE)
 		return false;
-	e = lpi_find(v, vcpu_idx, intid);
-	if (e && !e->inflight)
+	if (lpi_find(v, vcpu_idx, intid, false))
 		return true;                     /* already pending (the pending bit is idempotent) */
-	e = lpi_find(v, vcpu_idx, 0);            /* new, or a second occurrence while one is in flight */
+	e = lpi_find(v, vcpu_idx, 0, false);     /* new, or a second occurrence while one is in flight */
 	if (!e)
 		return false;
 	e->id = intid;
 	e->prio = prio;
 	e->inflight = false;
 	return true;
+}
+
+bool vgic_lpi_enabled(const struct vgic *v, unsigned vcpu_idx)
+{
+	return vcpu_idx < v->nr_vcpus && v->lpis && (v->vcpu[vcpu_idx].rd_ctlr & 1u);
 }
 
 uint64_t vgic_lpi_propbaser(const struct vgic *v, unsigned vcpu_idx)
@@ -837,7 +846,12 @@ bool vgic_requeue(struct vgic *v, unsigned vcpu_idx, uint32_t intid)
 
 		for (unsigned i = 0; i < VGIC_LPI_QUEUE; i++)
 			if (c->lpi[i].id == intid && c->lpi[i].inflight) {
-				c->lpi[i].inflight = false;
+				if (lpi_find(v, vcpu_idx, intid, false)) {   /* a pending copy exists: merge */
+					c->lpi[i].id = 0;
+					c->lpi[i].inflight = false;
+				} else {
+					c->lpi[i].inflight = false;
+				}
 				return true;
 			}
 		return false;
