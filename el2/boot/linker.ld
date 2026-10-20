@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-/* Watari EL2 M0-C skeleton: linker script. Loaded by QEMU -kernel at RAM base + text_offset. */
+/* Watari EL2 skeleton: linker script. Loaded by QEMU -kernel at RAM base + text_offset. */
 ENTRY(_start)
 SECTIONS
 {

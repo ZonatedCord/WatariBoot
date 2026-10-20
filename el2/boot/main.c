@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Watari EL2 M0-C .. M1-3: boot skeleton (QEMU virt, TCG).
+// Watari EL2 M0-C .. M1-4: boot skeleton (QEMU virt, TCG).
 // Enters at EL2, installs vectors, builds stage 2, drops to a tiny EL1 payload
 // and answers its HVCs (PSCI, see psci.c). M1-3: secondary cores are started by
 // the guest's PSCI CPU_ON and enter through el2_secondary_main().
@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include "wel2_vgic.h"
 #include "boot.h"
+#include "fdt.h"
 
 #define UART0_BASE   0x09000000UL
 #define UART_DR      0x00
@@ -18,16 +19,22 @@
 #define HCR_FMO  (1ULL << 3)
 #define HCR_IMO  (1ULL << 4)
 #define HCR_AMO  (1ULL << 5)
+#define HCR_TSC  (1ULL << 19)   /* trap EL1 SMC to EL2 (EC 0x17) */
 #define HCR_RW   (1ULL << 31)
 
 #define SPSR_EL1H_MASKED 0x3c5ULL   /* M=EL1h, DAIF all masked */
 
 #define EC_HVC64 0x16
+#define EC_SMC64 0x17
 
 #define EC_DABT_LOWER 0x24
 #define EC_SYSREG     0x18   /* trapped MSR/MRS/system instruction (Arm ARM D24.2) */
 
+#ifndef WEL2_CHAIN
 extern uint8_t __el1_stack_top[];
+#else
+extern uint8_t __image_start[];
+#endif
 
 struct pcpu g_pcpu[MAX_CPUS];
 unsigned g_ncpu;
@@ -180,6 +187,18 @@ static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
     put_kv("  ELR_EL2  = ", f->elr);
     put_kv("  FAR_EL2  = ", f->far);
     put_kv("  SPSR_EL2 = ", f->spsr);
+    for (unsigned i = 0; i < 31; i++) {            /* guest registers at the fault */
+        char nm[12] = "  x";
+        unsigned k = 3;
+        if (i >= 10)
+            nm[k++] = (char)('0' + i / 10);
+        nm[k++] = (char)('0' + i % 10);
+        nm[k++] = ' ';
+        nm[k++] = '=';
+        nm[k++] = ' ';
+        nm[k] = 0;
+        put_kv(nm, f->x[i]);
+    }
     puts_("Watari EL2: halted\n");
     for (;;)
         __asm__ volatile("wfe");
@@ -209,6 +228,25 @@ static void handle_hvc(struct frame *f)
     f->x[1] = f->x[2] = f->x[3] = 0;
 }
 
+/* HCR_EL2.TSC=1 (INTERFACES 8, 9): an SMC at EL1 traps here. The PSCI conduit the
+ * guest was told is HVC (FDT patched, see chain_to_edk2), so an SMC is a stray:
+ * log it and answer SMCCC NOT_SUPPORTED. The preferred return address of a
+ * trapped SMC is the SMC itself (Arm ARM D24.2.40, EC 0x17), so ELR must be
+ * advanced by hand. */
+static unsigned g_smc_log_budget = 8;
+
+static void handle_smc(struct frame *f)
+{
+    if (g_smc_log_budget) {
+        g_smc_log_budget--;
+        puts_("Watari EL2: stray SMC from EL1 (conduit is HVC), fid=");
+        puthex((uint32_t)f->x[0]);
+        puts_(" -> NOT_SUPPORTED\n");
+    }
+    f->x[0] = (uint64_t)-1LL;
+    f->x[1] = f->x[2] = f->x[3] = 0;
+    f->elr += 4;
+}
 
 /* libc stubs: the compiler may lower loops to these. */
 void *memset(void *d, int c, unsigned long n)
@@ -234,14 +272,19 @@ void *memcpy(void *d, const void *s, unsigned long n)
  * TG0=16 KB; the map logic (identity, device attributes, GIC holes) is
  * granule independent. [hypothesis for M1 HW]
  *
- * IPA space 32 bits (T0SZ=32), start level 1 (SL0=1): 4 entries of 1 GB.
+ * IPA space 40 bits (T0SZ=24), start level 0 (SL0=2): 2 entries of 512 GB (M1-4: EDK2
+ * touches the PCIe high ECAM at 0x4010000000 and may use the high MMIO window at
+ * 0x8000000000). Level 1 tables hold 1 GB entries:
  *   0x00000000-0x3fffffff : level 2 table of 2 MB device blocks (MMIO), except
  *                           the 2 MB block at 0x08000000, a level-3 table of
  *                           4 KB device pages with the GICD (64 KB) and the
  *                           first 8 GICR frames (8 x 128 KB) UNMAPPED, so the
  *                           guest faults to EL2 there.
  *   0x40000000-0x7fffffff : 1 GB Normal WB block (QEMU virt RAM).
- *   0x80000000-0xffffffff : 1 GB device blocks (unused on virt).
+ *   0x80000000-0xbfffffff : 1 GB Normal WB block (RAM of a -m 2G machine, M1-4).
+ *   0xc0000000-0xffffffffff : 1 GB device blocks (unused on virt, PCIe high windows).
+ * Chain build (M1-4): the first GB is split into 2 MB blocks; in the first block
+ * (the layer's carve-out) 4 KB pages hide EL2 (image + stacks).
  * Note: EL2's own image sits in the RAM block, i.e. it is visible to the
  * guest. Isolating EL2 memory is a later hardening step.
  * M1-3: all cores share these tables (one VTTBR value, VMID 0).
@@ -258,9 +301,15 @@ void *memcpy(void *d, const void *s, unsigned long n)
 #define S2_BLOCK_DEV    (S2_VALID | S2_AF | S2_S2AP_RW | S2_ATTR_DEV | S2_XN)
 #define S2_BLOCK_NORMAL (S2_VALID | S2_AF | S2_S2AP_RW | S2_ATTR_NORMAL | S2_SH_ISH)
 
-static uint64_t s2_l1[4] __attribute__((aligned(4096)));
+static uint64_t s2_l0[512] __attribute__((aligned(4096)));   /* 2 used: 0-512 GB, 512 GB-1 TB */
+static uint64_t s2_l1[512] __attribute__((aligned(4096)));
+static uint64_t s2_l1hi[512] __attribute__((aligned(4096)));
 static uint64_t s2_l2[512] __attribute__((aligned(4096)));
 static uint64_t s2_l3[512] __attribute__((aligned(4096)));
+#ifdef WEL2_CHAIN
+static uint64_t s2_l2ram[512] __attribute__((aligned(4096)));
+static uint64_t s2_l3ram[512] __attribute__((aligned(4096)));
+#endif
 
 static void stage2_init(void)
 {
@@ -281,18 +330,39 @@ static void stage2_init(void)
 
     s2_l1[0] = (uint64_t)(uintptr_t)s2_l2 | S2_VALID | S2_TABLE;
     s2_l1[1] = 0x40000000ULL | S2_BLOCK_NORMAL;
-    s2_l1[2] = 0x80000000ULL | S2_BLOCK_DEV;
-    s2_l1[3] = 0xc0000000ULL | S2_BLOCK_DEV;
+    s2_l1[2] = 0x80000000ULL | S2_BLOCK_NORMAL;   /* RAM of a -m 2G machine */
+#ifdef WEL2_CHAIN
+    /* M1-4: the layer (image + stacks, from __image_start to the end of the carve-out)
+     * is NOT mapped: a guest access takes a stage-2 translation fault and EL2 dumps it
+     * (F-14). The first 2 MB are 4 KB pages, mapped below __image_start (FDT hand-off
+     * buffer) and unmapped above; the rest of the first GB is 2 MB Normal WB blocks. */
+    uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~0xfffULL;
+    for (unsigned i = 0; i < 512; i++) {
+        uint64_t pa = GUEST_RAM_BASE + ((uint64_t)i << 12);
+        s2_l3ram[i] = (pa >= hide_lo && pa < GUEST_RAM_BASE + WEL2_CARVE_SIZE)
+                          ? 0 : (pa | S2_BLOCK_NORMAL | S2_TABLE);
+    }
+    for (unsigned i = 0; i < 512; i++)
+        s2_l2ram[i] = (GUEST_RAM_BASE + ((uint64_t)i << 21)) | S2_BLOCK_NORMAL;
+    s2_l2ram[0] = (uint64_t)(uintptr_t)s2_l3ram | S2_VALID | S2_TABLE;
+    s2_l1[1] = (uint64_t)(uintptr_t)s2_l2ram | S2_VALID | S2_TABLE;
+#endif
+    for (unsigned i = 3; i < 512; i++)
+        s2_l1[i] = ((uint64_t)i << 30) | S2_BLOCK_DEV;
+    for (unsigned i = 0; i < 512; i++)
+        s2_l1hi[i] = ((512ULL << 30) + ((uint64_t)i << 30)) | S2_BLOCK_DEV;
+    s2_l0[0] = (uint64_t)(uintptr_t)s2_l1 | S2_VALID | S2_TABLE;
+    s2_l0[1] = (uint64_t)(uintptr_t)s2_l1hi | S2_VALID | S2_TABLE;
 }
 
 /* Per core: VTCR_EL2 (Arm ARM D24.2.223): RES1 bit31, PS=0b010 (40 bit), TG0=0
- * (4 KB), SH0=3, ORGN0=IRGN0=1 (WB WA), SL0=1 (start level 1), T0SZ=32. */
+ * (4 KB), SH0=3, ORGN0=IRGN0=1 (WB WA), SL0=2 (start level 0), T0SZ=24 (40-bit IPA). */
 void stage2_enable(void)
 {
     uint64_t vtcr = (1ULL << 31) | (2ULL << 16) | (3ULL << 12) | (1ULL << 10) |
-                    (1ULL << 8) | (1ULL << 6) | 32ULL;
+                    (1ULL << 8) | (2ULL << 6) | 24ULL;
     __asm__ volatile("msr vtcr_el2, %0" : : "r"(vtcr));
-    __asm__ volatile("msr vttbr_el2, %0" : : "r"((uint64_t)(uintptr_t)s2_l1));
+    __asm__ volatile("msr vttbr_el2, %0" : : "r"((uint64_t)(uintptr_t)s2_l0));
     /* Tables were written with the MMU off; on real HW add cache maintenance
      * if the stage-2 walker is cacheable. */
     __asm__ volatile("dsb ishst; tlbi vmalls12e1is; dsb ish; isb" : : : "memory");
@@ -406,6 +476,20 @@ static void handle_dabt(struct frame *f, unsigned idx)
         fatal(f, idx);
     }
     f->elr += 4;   /* AArch64 guest: ISV=1 implies a 4-byte instruction */
+#ifdef WEL2_CHAIN
+    /* M1-4: progress evidence for a firmware that does thousands of GIC accesses. */
+    {
+        static unsigned n_gicd, n_gicr;
+        unsigned n = ipa < GICD_PHYS + GICD_SIZE ? ++n_gicd : ++n_gicr;
+
+        for (unsigned p = 1; p <= 1000000; p *= 10) {
+            if (n == p) {
+                put_kv(ipa < GICD_PHYS + GICD_SIZE ? "Watari EL2: vGIC GICD traps handled = "
+                                                   : "Watari EL2: vGIC GICR traps handled = ", n);
+            }
+        }
+    }
+#endif
 }
 
 void el2_exception(struct frame *f, unsigned idx)
@@ -415,6 +499,8 @@ void el2_exception(struct frame *f, unsigned idx)
     big_lock();
     if (idx == 8 && ec == EC_HVC64) {
         handle_hvc(f);
+    } else if (idx == 8 && ec == EC_SMC64) {
+        handle_smc(f);
     } else if (idx == 8 && ec == EC_DABT_LOWER) {
         handle_dabt(f, idx);
     } else if (idx == 8 && ec == EC_SYSREG && cpuif_sysreg_trap(f)) {
@@ -455,8 +541,64 @@ static void set_virtual_ids(void)
     __asm__ volatile("msr vpidr_el2, %0; msr vmpidr_el2, %1; isb" : : "r"(midr), "r"(mpidr));
 }
 
+#ifdef WEL2_CHAIN
+/* M1-4: hand the machine to EDK2 (ArmVirtQemuKernel) at EL1, the way a boot loader
+ * hands over to an arm64 Linux kernel (Linux arm64 booting.rst, entry state):
+ *   x0 = physical address of the FDT, x1 = x2 = x3 = 0, MMU off, D-cache off,
+ *   PSTATE.DAIF masked, the image 4 KB aligned at its load address.
+ * Differences from the plain protocol: EDK2 is entered at EL1 (the layer owns EL2),
+ * and the FDT is patched first (fdt.c): /memory loses the layer's carve-out, the PSCI
+ * conduit becomes "hvc". The entry is the start of the EDK2 image, whose header
+ * (code0 = "adr x1, .") tells the relocatable PrePi where it was loaded. */
+static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
+{
+    struct fdt_patch_info pi;
+
+    /* EDK2's ArmGicV3 driver never does the GICR_WAKER handshake (it expects awake
+     * redistributors, as left by TF-A or QEMU); a vCPU asleep in the model forwards
+     * nothing and the first timer tick would be lost for good (F-21). The boot vCPU
+     * (here) and each vCPU PSCI starts (el2_secondary_main) are handed over awake. */
+    vgic_vcpu_wake(&g_vgic, this_cpu());
+    put_kv("Watari EL2: FDT from QEMU at ", fdt);
+    if (!fdt || (fdt & 7) || fdt_check((void *)fdt))
+        fatal_msg("x0 does not point to a valid FDT (is QEMU -kernel used?)");
+    if (fdt_patch_for_guest((void *)fdt, GUEST_RAM_BASE, WEL2_CARVE_SIZE, &pi))
+        fatal_msg("FDT is malformed, cannot patch it");
+    if (!pi.mem_found || !pi.mem_patched)
+        fatal_msg("FDT /memory not found or does not start at the layer's carve-out");
+    if (!pi.psci_found)
+        fatal_msg("FDT has no /psci/method");
+    put_kv("Watari EL2: FDT /memory base now ", pi.mem_base_new);
+    put_kv("Watari EL2: FDT /memory size now ", pi.mem_size_new);
+    puts_(pi.psci_patched ? "Watari EL2: FDT /psci method \"smc\" patched to \"hvc\"\n"
+                           : "Watari EL2: FDT /psci method already \"hvc\"\n");
+    if (pi.timer_found) {
+        put_kv("Watari EL2: FDT timer INTID secure phys     = ", pi.timer_intid[0]);
+        put_kv("Watari EL2: FDT timer INTID non-secure phys = ", pi.timer_intid[1]);
+        put_kv("Watari EL2: FDT timer INTID virtual         = ", pi.timer_intid[2]);
+    }
+    /* Copy the patched FDT to the RAM base (EDK2_FDT_ADDR): EDK2 PrePi's debug
+     * output reads the FDT there before it learns the real address (F-21). */
+    uint32_t total = fdt_used_size((void *)fdt);
+    put_kv("Watari EL2: FDT used bytes = ", total);
+    if (total > ((uint64_t)(uintptr_t)__image_start - EDK2_FDT_ADDR) || fdt < pi.mem_base_new)
+        fatal_msg("FDT does not fit the hand-off buffer, or sits inside the layer's region");
+    memcpy((void *)EDK2_FDT_ADDR, (void *)fdt, total);
+    fdt_set_totalsize((void *)EDK2_FDT_ADDR, total);
+    put_kv("Watari EL2: patched FDT copied to ", EDK2_FDT_ADDR);
+    uint32_t magic = *(volatile uint32_t *)(EDK2_ENTRY + 0x38);
+    if (magic != 0x644d5241) {               /* "ARM\x64" */
+        put_kv("Watari EL2: no arm64 Image header at EDK2 entry ", EDK2_ENTRY);
+        put_kv("Watari EL2: found ", magic);
+        fatal_msg("EDK2 image missing: add -device loader,file=QEMU_EFI-kernel.fd,addr=0x40280000,force-raw=on");
+    }
+    put_kv("Watari EL2: eret to EDK2 at EL1, entry = ", EDK2_ENTRY);
+    enter_el1(EDK2_ENTRY, 0, SPSR_EL1H_MASKED, g_hcr, EDK2_FDT_ADDR);
+}
+#endif
+
 /* ---- EL2 main ---------------------------------------------------------------- */
-void __attribute__((noreturn)) el2_main(void)
+void __attribute__((noreturn)) el2_main(uint64_t fdt)
 {
     uint64_t el, vbar;
     __asm__ volatile("mrs %0, CurrentEL" : "=r"(el));
@@ -475,9 +617,12 @@ void __attribute__((noreturn)) el2_main(void)
     g_pcpu[this_cpu()].state = CPU_ST_ON;      /* the cold-boot core is ON */
 
     /* HCR_EL2: RW=1 (EL1 is AArch64), IMO/FMO/AMO=1 (physical IRQ/FIQ/SError
-     * routed to EL2, as designed). E2H=0, TSC=0 so far; VM=1 since M1-1 (stage-2
-     * with the GIC windows unmapped). VHE and SMC trapping come later. */
+     * routed to EL2, as designed). E2H=0 so far; VM=1 since M1-1 (stage-2 with the
+     * GIC windows unmapped). M1-4 chain build: TSC=1 (EL1 SMC trapped). VHE later. */
     g_hcr = HCR_RW | HCR_IMO | HCR_FMO | HCR_AMO | HCR_VM;
+#ifdef WEL2_CHAIN
+    g_hcr |= HCR_TSC;
+#endif
     vgic_setup();
     stage2_init();
     stage2_enable();
@@ -487,8 +632,13 @@ void __attribute__((noreturn)) el2_main(void)
     gic_phys_init_cpu();
     cpuif_init(&g_vgic);
     puts_("Watari EL2: physical GIC owned by EL2, virtual CPU interface on\n");
+#ifdef WEL2_CHAIN
+    chain_to_edk2(fdt);
+#else
+    (void)fdt;
     puts_("Watari EL2: eret to EL1h payload\n");
     enter_el1((uint64_t)el1_main, (uint64_t)__el1_stack_top, SPSR_EL1H_MASKED, g_hcr, 0);
+#endif
 }
 
 /* Cores 1..n: started by PSCI CPU_ON through the firmware (secondary_entry in
@@ -505,6 +655,9 @@ void __attribute__((noreturn)) el2_secondary_main(void)
     cpuif_init_cpu();
 
     big_lock();
+#ifdef WEL2_CHAIN
+    vgic_vcpu_wake(&g_vgic, me);               /* same hand-off contract as the boot vCPU */
+#endif
     uint64_t entry = g_pcpu[me].entry, ctx = g_pcpu[me].ctx;
     g_pcpu[me].state = CPU_ST_ON;
     put_kn("Watari EL2: cpu ", me, " up at EL2, eret to the guest entry point\n");

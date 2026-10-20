@@ -72,3 +72,9 @@ Folder: `~/WatariBoot-specs/` (internal disk, outside the repository; ~192 MB in
 The PDFs are the property of Arm and are **not** redistributed: they stay out of the repository. The check made with them is in `re/el2-m0-register-check.md`.
 
 How to remove: `rm -rf ~/WatariBoot-specs` (or `tools/uninstall-watari.sh --yes`, which also removes it).
+
+## M1-4 (2026-10-20): EDK2 `ArmVirtQemuKernel` build
+Nothing downloaded or installed. `tools/build-edk2-kernel.sh` compiles the already-present EDK2 sources (same CLANGDWARF toolchain, `tools/edk2-hvf-gicv3.patch` already applied) on the external data disk:
+- `WatariBoot-data/src/edk2/Build/ArmVirtQemuKernel-AArch64/` (EDK2 build tree, ~200 MB), log `WatariBoot-data/logs/m1-4-build-kernel.log`.
+- `WatariBoot-data/build-kernel/QEMU_EFI-kernel.fd` (3 MB, the image loaded into RAM by `el2/boot/run-m1-4.sh`).
+Removal: delete those paths. In the repo, `el2/boot/build-chain/` is a git-ignored build output (`make -C el2/boot clean`).

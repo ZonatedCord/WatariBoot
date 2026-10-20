@@ -13,7 +13,7 @@
 ## Commands
 - Environment (mounts check, `/tmp/watari-data` link): `source tools/env.sh` (the external disk "Arthur Fonzarelli" must be plugged in)
 - Host tests: `make -C tools/acpigen test` (ACPI generator) · `make -C el2 test` (vGIC model)
-- Watari EL2 in QEMU TCG: `el2/boot/run-qemu.sh` (M0) · `run-m1.sh` · `run-m1-2.sh` · `run-m1-3.sh`
+- Watari EL2 in QEMU TCG: `el2/boot/run-qemu.sh` (M0) · `run-m1.sh` · `run-m1-2.sh` · `run-m1-3.sh` · `run-m1-4.sh` (EDK2 on top of the layer; needs `tools/build-edk2-kernel.sh` once)
 - EDK2 build: `tools/build-edk2.sh` (stock ArmVirtQemu + HVF patch) · `tools/build-edk2-watari.sh [--fiq|--parking|--nogicd]` (our platform)
 - Run: `tools/run-qemu-uefi.sh` (UEFI only) · `tools/run-qemu-windows.sh [--headless] [--tcg] [--unattend]` (Windows VM; window by default)
 - Headless smoke test: `tools/test-qemu-windows.sh`

@@ -78,3 +78,39 @@ Mode: **hardware list registers** (`ICH_HCR_EL2` = En only, TALL0/TALL1/TC = 0).
     Watari EL2: PSCI SYSTEM_OFF -> forwarding to QEMU firmware (SMC)
 
 **Not done / open (M1-3).** EL2 stage-1 MMU (needed for the locks on hardware, F-18/F-20); LR overflow (`UIE`) and a real fix for the kick-storm guard; secondary stack slot from Aff0 only (QEMU numbering); edge-triggered physical SPIs and `GICD_ICFGR` forwarding; SPI priority fixed at 0x40 at EL2 (the guest's priority only orders vIRQs); `HW=1` LRs; the TRAP_EMULATE path for the M1 SEIS erratum (F-19) is still untested; CPU_SUSPEND / SYSTEM_RESET.
+
+## M1-4: EDK2 at EL1 on top of Watari EL2 (QEMU TCG `-smp 4 -m 2G`, verified by `run-m1-4.sh`)
+`./run-m1-4.sh` builds the chain image (`make chain` -> `build-chain/wel2.bin`: `-DWEL2_CHAIN`, no EL1 test payload, `HCR_EL2.TSC=1`) and boots it together with `ArmVirtQemuKernel` (`tools/build-edk2-kernel.sh`, run once; output `$WATARI_DATA/build-kernel/QEMU_EFI-kernel.fd`):
+
+    qemu-system-aarch64 -M virt,virtualization=on,gic-version=3 -cpu max -accel tcg -m 2G -smp 4 -nic none \
+        -kernel build-chain/wel2.bin -device loader,file=QEMU_EFI-kernel.fd,addr=0x40280000,force-raw=on
+
+Success = EDK2 prints `BdsDxe: Press any key to enter the Boot Manager Menu` (about 5 s with `-nic none`; `WITH_NIC=1` keeps the virtio NIC and adds the PXE attempt `failed to load Boot0002`, about 60 s) and the layer log shows vGIC traps handled and timer interrupts injected. `run-qemu.sh`, `run-m1.sh`, `run-m1-2.sh`, `run-m1-3.sh` and `make -C el2 test` still pass (the default `make` image keeps the payload). `ArmVirtQemuKernel` booted alone with plain QEMU (`-kernel QEMU_EFI-kernel.fd`, no layer) also reaches the Boot Manager (checked first).
+
+**Chain, step by step.** (1) QEMU loads the layer as an arm64 `Image` at `0x40080000`, the FDT at `0x48000000`, x0 = FDT, and enters at EL2. (2) The layer does its normal init (stage 2, vGIC, physical GIC, list registers). (3) `chain_to_edk2()` patches the FDT in place (`fdt.c`), copies it to `0x40000000`, wakes the boot vCPU in the vGIC and ERETs to the EDK2 image at `0x40280000`. (4) EDK2's header trampoline (`adr x1, .; b 0x8000`) lets the relocatable PrePi fix itself up at that address; the rest is a normal ArmVirtQemu boot, except that every GIC register access is a stage-2 fault handled by the vGIC and every PSCI call is an HVC.
+
+**Boot protocol handed to EDK2 (Linux arm64 booting, entry state).** Image 4 KB aligned at `0x40280000` (the 2 MB after the layer's carve-out + the image's `text_offset` 0x80000); `x0` = physical address of the FDT (`0x40000000`), `x1 = x2 = x3 = 0` (`enter_el1` zeroes them); MMU off, D-cache off (`SCTLR_EL1` = RES1 only); PSTATE EL1h, DAIF masked. Differences from the plain protocol: entered at EL1 because the layer owns EL2; the FDT is patched; and it sits at the RAM base because of PrePi's early debug output (F-21).
+
+**FDT patch (`fdt.c`, no libfdt, all in place).** `/memory/reg`: first 2 MB removed (base `0x40200000`, size `0x7fe00000`; the carve-out holds the FDT buffer `[0x40000000,0x40080000)` and the layer `[0x40080000,0x40200000)`); `/psci/method` `"smc"` -> `"hvc"`; `/timer/interrupts` is only read and logged.
+
+**PSCI conduit: decision = patch the FDT to `hvc`** (INTERFACES 3.2/9). The guest then calls the layer directly (HVC traps to EL2 with `HCR_EL2.HCD=0`), nothing has to be emulated, and it is the conduit Windows will be told through the FADT. `HCR_EL2.TSC=1` stays on as a backstop: with `TSC=0` a stray SMC would go straight to QEMU's PSCI (with `virtualization=on` it is SMC), start a core at EL2 without layer init and break the machine silently. A trapped SMC gets `NOT_SUPPORTED`, `ELR` advanced (the preferred return address of a trapped SMC is the SMC itself) and a log line. `PSCI_SYSTEM_RESET` is forwarded to QEMU like `SYSTEM_OFF`.
+
+**Timer: EDK2 uses the EL1 virtual timer, INTID 27 (PPI 11).** `ArmVirtPkg/ArmVirt.dsc.inc` selects `ArmGenericTimerVirtCounterLib`, so `TimerDxe` programs `CNTV_CVAL/CTL_EL0`; it registers handlers for all four timer PPIs but only 27 fires. That is the path the layer already delivers since M1-2 (physical PPI 27 -> mask -> list-register injection; `CNTHCTL_EL2` = 3 keeps EL1 access to counters and timers), so no change was needed in the timer code. A guest using the EL1 physical timer (PPI 30) would need PPI 30 enabled and forwarded like 27.
+
+**Stage 2 changes.** IPA space 40 bits (T0SZ=24, start level 0): EDK2 touches the PCIe high ECAM (`0x4010000000`). RAM `0x80000000-0xbfffffff` is Normal (a `-m 2G` machine). In the chain image the layer's own pages (`__image_start` to the end of the 2 MB carve-out) are unmapped: a guest access takes a translation fault and EL2 prints ESR/FAR/IPA and x0-x30 (it never happened in the runs).
+
+**Observed (excerpt of the last `run-m1-4.sh`).**
+
+    Watari EL2: FDT from QEMU at 0x0000000048000000
+    Watari EL2: FDT /memory base now 0x0000000040200000
+    Watari EL2: FDT /psci method "smc" patched to "hvc"
+    Watari EL2: eret to EDK2 at EL1, entry = 0x0000000040280000
+    Found GIC v3 Distributor @ 0x8000000, Len 0x10000
+    Watari EL2: vGIC GICD traps handled = 0x0000000000000064
+    Watari EL2: cpu 0 virtual timer PPI 27 taken, injecting into the guest
+    [Bds]BdsWait(1)..Zzzz...
+    [Bds]Exit the waiting!
+    BdsDxe: No bootable option or device was found.
+    BdsDxe: Press any key to enter the Boot Manager Menu.
+
+**Not done / open (M1-4).** EDK2 never calls `CPU_ON` in this firmware, so SMP under EDK2 is untested (the secondary-core wake-up is in the chain build but never ran); the UEFI Shell is not reached automatically (the firmware waits for a key at the Boot Manager prompt); PPI 27 stays masked if the model ever cannot deliver it (F-21); PCI devices with 64-bit BARs (high MMIO window) were not exercised.

@@ -245,6 +245,16 @@ void cpuif_irq(void)
             c->st_timer++;
             c->vtimer_masked = true;
             gic_phys_ppi_enable(PPI_VTIMER, false);
+#ifdef WEL2_CHAIN
+            /* M1-4: a firmware ticks every 10 ms; log only the first and every 10x. */
+            for (unsigned p = 1; p <= 100000; p *= 10) {
+                if (c->st_timer == p) {
+                    put_kn("Watari EL2: cpu ", me, " virtual timer PPI 27 taken, injecting into the guest\n");
+                    put_kv("Watari EL2:   timer irqs on this cpu so far = ", c->st_timer);
+                    put_kv("Watari EL2:   vIRQ injections (all cpus' LRs) so far = ", g_cif[me].st_inject);
+                }
+            }
+#endif
         } else if (id == PPI_MAINT) {
             /* The maintenance line is level: free the LRs (which removes its
              * source) before the EOI, or it would re-fire immediately. */

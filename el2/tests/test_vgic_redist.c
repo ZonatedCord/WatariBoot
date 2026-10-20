@@ -189,8 +189,27 @@ static void t_redist_bad_access(void)
 	CHECK_EQ(vgic_mmio_read(&F.v, R(0, 0xA), 8, &v), VGIC_ERR_ACCESS);
 }
 
+static void t_vcpu_wake_for_firmware(void)
+{
+	uint32_t id = 0;
+
+	setup(2);
+	wr32(D(0), 2);                               /* EnableGrp1 */
+	wr32(S(0, 0x80), 1u << 27);                  /* IGROUPR0: PPI 27 group 1 */
+	wr32(S(0, 0x100), 1u << 27);                 /* ISENABLER0 */
+	vgic_set_irq_level(&F.v, 0, 27, true);
+	CHECK(!vgic_next_pending(&F.v, 0, &id, NULL));       /* asleep: nothing forwarded */
+	vgic_vcpu_wake(&F.v, 0);
+	CHECK_EQ(rd32(R(0, 0x14)) & 6, 0);                    /* WAKER: awake, children awake */
+	CHECK(vgic_next_pending(&F.v, 0, &id, NULL));
+	CHECK_EQ(id, 27);
+	CHECK_EQ(rd32(R(1, 0x14)) & 2, 2);                    /* vCPU 1 untouched */
+	vgic_vcpu_wake(&F.v, 9);                              /* out of range: ignored */
+}
+
 int main(void)
 {
+	RUN(t_vcpu_wake_for_firmware);
 	RUN(t_typer_last_bit);
 	RUN(t_typer_last_single_vcpu);
 	RUN(t_typer_processor_number_and_affinity);
