@@ -16,8 +16,11 @@
  *    4 (Resource Descriptor Header, 12 byte).
  *  - GICR Structure (MADT tipo 0x0E, 16 byte), FADT rev 6 (276 byte, HW_REDUCED_ACPI bit 20,
  *    ARM_BOOT_ARCH a offset 129, minor version a 131), DBG2 (device info rev 0, 22 byte,
- *    porta 0x8000 seriale, sottotipo 0x0003 = Arm PL011): layout ricavati dalla specifica ACPI 6.5
- *    a memoria, NON confrontati con Acpi65.h (non disponibile in locale): ipotesi da verificare.
+ *    porta 0x8000 seriale, sottotipo 0x0003 = Arm PL011), GIC MSI Frame (tipo 0x0D, 24 byte):
+ *    verificati (issue #44) compilando Acpi65.h / DebugPort2Table.h di edk2-stable202608
+ *    (EFI_ACPI_6_5_FIXED_ACPI_DESCRIPTION_TABLE, EFI_ACPI_6_5_GICR_STRUCTURE,
+ *    EFI_ACPI_6_5_GIC_MSI_FRAME_STRUCTURE, EFI_ACPI_DBG2_DEBUG_DEVICE_INFORMATION_STRUCT):
+ *    nessuna differenza; i _Static_assert in tests/ fissano ogni offset.
  */
 #ifndef ACPIGEN_H
 #define ACPIGEN_H

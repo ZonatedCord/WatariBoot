@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-/* FADT rev 6 minor 5, 276 byte, solo Arm HW-reduced. Offset da ACPI 6.5 tab. 5.9 (a memoria, ipotesi
- * non confrontata con Acpi65.h): FLAGS 112, RESET_VALUE 128, ARM_BOOT_ARCH 129, FADT_MINOR 131,
+/* FADT rev 6 minor 5, 276 byte, solo Arm HW-reduced. Offset da ACPI 6.5 tab. 5.9 (verified against Acpi65.h, issue #44:
+ * tests/test_fadt.c): FLAGS 112, RESET_VALUE 128, ARM_BOOT_ARCH 129, FADT_MINOR 131,
  * X_DSDT 140, HypervisorVendorId 268. Gli altri campi restano zero (HW_REDUCED_ACPI li ignora). */
 #include <string.h>
 #include "internal.h"
