@@ -49,6 +49,8 @@ extern struct pcpu g_pcpu[MAX_CPUS];
 extern unsigned g_ncpu;
 extern struct vgic g_vgic;
 extern uint64_t g_hcr;
+extern bool g_cpuif_noeoi;         /* test knob wel2.test=noeoi: LRs without EOI maintenance */
+extern bool g_cpuif_trap;          /* cpuif.c: TRAP_EMULATE (true) or HW list registers */
 
 /* main.c: UART, locks and per-core helpers. */
 void putc_(char c);

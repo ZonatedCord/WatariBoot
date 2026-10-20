@@ -128,5 +128,11 @@ bool vgic_next_pending(const struct vgic *v, unsigned vcpu_idx,
 uint32_t vgic_ack(struct vgic *v, unsigned vcpu_idx);
 /* End of interrupt (priority drop + deactivate). Returns false for a bad INTID. */
 bool vgic_eoi(struct vgic *v, unsigned vcpu_idx, uint32_t intid);
+/* Take back an interrupt that vgic_ack() handed out but the guest has not
+ * acknowledged yet (LR eviction, #54): active is cleared and, for SGIs and
+ * edge-triggered interrupts, the pending latch that the ack consumed is
+ * restored; a level interrupt becomes pending again through its line. Returns
+ * false if the INTID is bad or not active in the model. */
+bool vgic_requeue(struct vgic *v, unsigned vcpu_idx, uint32_t intid);
 
 #endif

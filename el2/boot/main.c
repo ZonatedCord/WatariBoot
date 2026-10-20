@@ -597,6 +597,36 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
 }
 #endif
 
+/* Boot arguments (/chosen/bootargs, QEMU -append), space separated:
+ *   wel2.cpuif=hw|trap   mode of the virtual CPU interface (build default WEL2_CPUIF_TRAP_DEFAULT)
+ *   wel2.test=noeoi      test knob: LRs without EOI maintenance, only UIE refills them (#54) */
+static bool arg_is(const char *p, const char *key)
+{
+    unsigned k = 0;
+
+    while (key[k] && p[k] == key[k])
+        k++;
+    return !key[k] && (p[k] == 0 || p[k] == ' ');
+}
+
+static void parse_bootargs(uint64_t fdt)
+{
+    char args[160];
+
+    if (!fdt || (fdt & 7) || fdt_check((void *)fdt) || fdt_get_bootargs((void *)fdt, args, sizeof(args)) < 0)
+        return;
+    for (const char *p = args; *p; p++) {
+        if (p != args && p[-1] != ' ')
+            continue;
+        if (arg_is(p, "wel2.cpuif=trap"))
+            g_cpuif_trap = true;
+        else if (arg_is(p, "wel2.cpuif=hw"))
+            g_cpuif_trap = false;
+        else if (arg_is(p, "wel2.test=noeoi"))
+            g_cpuif_noeoi = true;
+    }
+}
+
 /* ---- EL2 main ---------------------------------------------------------------- */
 void __attribute__((noreturn)) el2_main(uint64_t fdt)
 {
@@ -623,6 +653,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
 #ifdef WEL2_CHAIN
     g_hcr |= HCR_TSC;
 #endif
+    parse_bootargs(fdt);
     vgic_setup();
     stage2_init();
     stage2_enable();

@@ -16,17 +16,20 @@ CFLAGS := -I../include --target=aarch64-none-elf -std=c11 -Wall -Wextra -Werror 
 ASFLAGS := --target=aarch64-none-elf -g
 
 OBJS := $(OUT)/start.o $(OUT)/main.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o \
-        $(OUT)/fdt.o $(OUT)/vgic.o $(PAYLOAD_OBJS)
+        $(OUT)/fdt.o $(OUT)/vgic.o $(OUT)/vcif.o $(PAYLOAD_OBJS)
 
 all: build/wel2.bin
 
 chain:
 	$(MAKE) OUT=build-chain XFLAGS=-DWEL2_CHAIN=1 PAYLOAD_OBJS= build-chain/wel2.bin
 
-$(OUT)/%.o: %.c boot.h fdt.h ../include/wel2_vgic.h | $(OUT)
+$(OUT)/%.o: %.c boot.h fdt.h ../include/wel2_vgic.h ../include/wel2_vcif.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/vgic.o: ../vgic/vgic.c ../include/wel2_vgic.h | $(OUT)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/vcif.o: ../vgic/vcif.c ../include/wel2_vcif.h ../include/wel2_vgic.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/%.o: %.S | $(OUT)

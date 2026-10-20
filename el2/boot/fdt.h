@@ -29,4 +29,8 @@ int fdt_walk_props(void *fdt, fdt_prop_cb cb, void *ctx);
 int fdt_patch_for_guest(void *fdt, uint64_t carve_base, uint64_t carve_size,
                         struct fdt_patch_info *info);
 
+/* /chosen/bootargs (QEMU -append) copied into out (NUL-terminated, truncated to max-1).
+ * Returns the string length, or -1 if there is none or the blob is malformed. */
+int fdt_get_bootargs(void *fdt, char *out, unsigned max);
+
 #endif
