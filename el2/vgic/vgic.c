@@ -780,8 +780,12 @@ bool vgic_lpi_inject(struct vgic *v, unsigned vcpu_idx, uint32_t intid, uint8_t 
 {
 	struct vgic_lpi *e;
 
-	if (vcpu_idx >= v->nr_vcpus || intid < VGIC_LPI_BASE || intid >= (1u << v->idbits))
+	if (vcpu_idx >= v->nr_vcpus || intid < VGIC_LPI_BASE)
 		return false;
+	if (intid >= (1u << v->idbits)) {        /* wider than the guest's IDbits: counted as a drop */
+		v->vcpu[vcpu_idx].lpi_dropped++;
+		return false;
+	}
 	if (lpi_find(v, vcpu_idx, intid, false))
 		return true;                     /* already pending (the pending bit is idempotent) */
 	e = lpi_find(v, vcpu_idx, 0, false);     /* new, or a second occurrence while one is in flight */

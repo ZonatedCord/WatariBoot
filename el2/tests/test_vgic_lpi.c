@@ -135,7 +135,8 @@ static void t_idbits_from_config(void)
 	CHECK_EQ(vgic_init(&F.v, &cfg), 0);
 	CHECK_EQ(vgic_idbits(&F.v), 14);
 	CHECK(vgic_lpi_inject(&F.v, 0, 16383, 0x80));
-	CHECK(!vgic_lpi_inject(&F.v, 0, 16384, 0x80));     /* not representable: refused */
+	CHECK(!vgic_lpi_inject(&F.v, 0, 16384, 0x80));     /* not representable: refused and counted */
+	CHECK_EQ(vgic_lpi_dropped(&F.v, 0), 1);
 	cfg.idbits = 40;                                   /* clamped */
 	CHECK_EQ(vgic_init(&F.v, &cfg), 0);
 	CHECK_EQ(vgic_idbits(&F.v), 24);

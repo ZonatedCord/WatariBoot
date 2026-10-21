@@ -524,7 +524,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
     put_kv("Watari EL2: FDT from QEMU at ", fdt);
     if (!fdt || (fdt & 7) || fdt_check((void *)fdt))
         fatal_msg("x0 does not point to a valid FDT (is QEMU -kernel used?)");
-    if (fdt_patch_for_guest((void *)fdt, GUEST_RAM_BASE, WEL2_CARVE_SIZE, &pi))
+    if (fdt_patch_for_guest((void *)fdt, GUEST_RAM_BASE, WEL2_CARVE_SIZE, g_ram_from_fdt ? g_ram_end : 0, &pi))
         fatal_msg("FDT is malformed, cannot patch it");
     if (!pi.mem_found || !pi.mem_patched)
         fatal_msg("FDT /memory not found or does not start at the layer's carve-out");
@@ -532,6 +532,8 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
         fatal_msg("FDT has no /psci/method");
     put_kv("Watari EL2: FDT /memory base now ", pi.mem_base_new);
     put_kv("Watari EL2: FDT /memory size now ", pi.mem_size_new);
+    if (pi.mem_trimmed)
+        put_kv("Watari EL2: FDT /memory trimmed to the mapped RAM end ", g_ram_end);
     puts_(pi.psci_patched ? "Watari EL2: FDT /psci method \"smc\" patched to \"hvc\"\n"
                            : "Watari EL2: FDT /psci method already \"hvc\"\n");
     if (pi.timer_found) {

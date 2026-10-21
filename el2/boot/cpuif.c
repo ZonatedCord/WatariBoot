@@ -45,6 +45,7 @@
 
 #include "boot.h"
 #include "wel2_vcif.h"
+#include "wel2_ram.h"
 
 #define ICH_HCR_EN     (1ULL << 0)
 #define ICH_HCR_UIE    (1ULL << 1)
@@ -66,7 +67,7 @@ struct cif {
     bool vtimer_masked;                /* PPI 27 masked at the physical GIC */
     uint64_t hcr_base, hcr_cur;        /* ICH_HCR_EL2 without / as currently written */
     unsigned nap;                      /* number of ICH_AP<g>R<n> registers */
-    unsigned st_timer, st_spi, st_kick, st_kick_evict, st_maint, st_uie, st_lpi;
+    unsigned st_timer, st_spi, st_kick, st_kick_evict, st_lpi_badtable, st_maint, st_uie, st_lpi;
     unsigned st_iar, st_eoir, st_dir, st_pmr_w, st_pmr_r, st_other;
     unsigned pmr_reported;
 };
@@ -217,7 +218,7 @@ void cpuif_init_cpu(void)
     struct cif keep = *c;                                /* statistics survive CPU_OFF -> CPU_ON */
 
     *c = (struct cif){ 0 };
-    c->st_timer = keep.st_timer; c->st_spi = keep.st_spi; c->st_lpi = keep.st_lpi; c->st_kick = keep.st_kick; c->st_kick_evict = keep.st_kick_evict;
+    c->st_timer = keep.st_timer; c->st_spi = keep.st_spi; c->st_lpi = keep.st_lpi; c->st_kick = keep.st_kick; c->st_kick_evict = keep.st_kick_evict; c->st_lpi_badtable = keep.st_lpi_badtable;
     c->st_maint = keep.st_maint; c->st_uie = keep.st_uie; c->st_iar = keep.st_iar;
     c->st_eoir = keep.st_eoir; c->st_dir = keep.st_dir; c->st_pmr_w = keep.st_pmr_w;
     c->st_pmr_r = keep.st_pmr_r; c->st_other = keep.st_other; c->pmr_reported = keep.pmr_reported;
@@ -480,8 +481,14 @@ void cpuif_irq(void)
             if (vgic_lpi_enabled(g_v, me) && prop) {
                 uint64_t a = (prop & 0x000FFFFFFFFFF000ULL) + (id - VGIC_LPI_BASE);
 
-                cfg = *(volatile uint8_t *)a;
-                prio = (uint8_t)(cfg & 0xfc);
+                /* The table is guest memory: read it only if the byte lies in RAM (a bad PROPBASER
+                 * would otherwise data-abort EL2, now that stage 1 maps just the RAM). */
+                if (wel2_ram_contains(&(struct wel2_ram){ g_ram_base, g_ram_end }, a)) {
+                    cfg = *(volatile uint8_t *)a;
+                    prio = (uint8_t)(cfg & 0xfc);
+                } else {
+                    c->st_lpi_badtable++;
+                }
             }
 
             c->st_lpi++;
@@ -490,7 +497,7 @@ void cpuif_irq(void)
             if (!(cfg & 1u))
                 ;                               /* LPI disabled in the property table: just EOI */
             else if (!vgic_lpi_inject(g_v, me, id, prio))
-                put_kv("Watari EL2: LPI queue full, dropped INTID ", id);
+                put_kv("Watari EL2: LPI dropped (queue full or INTID beyond IDbits), INTID ", id);
         } else if (id >= 1024) {
             put_kv("Watari EL2: ignoring unexpected physical INTID ", id);   /* 1024..8191: reserved */
         } else if (id >= 32) {
@@ -713,7 +720,14 @@ void cpuif_stats(void)
     put_kv("Watari EL2: stats: LR evictions (higher priority arrived) = ", t[6]);
     put_kv("Watari EL2: stats: forwarded SPIs = ", t[4]);
     put_kv("Watari EL2: stats: forwarded LPIs = ", lpi_total());
-    put_kv("Watari EL2: stats: LPI queue overflows (LPIs dropped) = ", lpi_dropped_total());
+    put_kv("Watari EL2: stats: LPIs dropped (queue full or beyond IDbits) = ", lpi_dropped_total());
+    {
+        unsigned bad = 0;
+
+        for (unsigned i = 0; i < g_ncpu; i++)
+            bad += g_cif[i].st_lpi_badtable;
+        put_kv("Watari EL2: stats: LPI property table outside RAM (default priority used) = ", bad);
+    }
     put_kv("Watari EL2: stats: cross-core kicks (SGI 15) = ", t[5]);
     put_kv("Watari EL2: stats: cross-core kicks to evict a worse pending LR = ", kick_evict_total());
     if (g_cpuif_trap) {
