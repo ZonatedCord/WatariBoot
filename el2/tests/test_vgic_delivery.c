@@ -185,6 +185,23 @@ static void t_eoi_deactivates(void)
 	CHECK_EQ(vgic_ack(&F.v, 0), 40);
 }
 
+/* An MSI is a pulse (line high then low before the guest looks): it must stay pending. */
+static void t_edge_pulse_stays_pending(void)
+{
+	setup(1);
+	bring_up();
+	enable_spi(40);
+	wr32(D(0xC08), 2u << 16);
+	vgic_set_irq_level(&F.v, 0, 40, true);
+	vgic_set_irq_level(&F.v, 0, 40, false);
+	CHECK_EQ(vgic_ack(&F.v, 0), 40);
+	CHECK_EQ(vgic_ack(&F.v, 0), 1023);           /* one pulse = one interrupt */
+	vgic_eoi(&F.v, 0, 40);
+	vgic_set_irq_level(&F.v, 0, 40, true);       /* a second pulse while idle */
+	vgic_set_irq_level(&F.v, 0, 40, false);
+	CHECK_EQ(next(0, NULL), 40);
+}
+
 static void t_edge_line_pends_once(void)
 {
 	setup(1);
@@ -310,6 +327,7 @@ int main(void)
 	RUN(t_level_pending_drops_with_line);
 	RUN(t_icpendr_does_not_clear_high_level_line);
 	RUN(t_ppi_per_vcpu);
+	RUN(t_edge_pulse_stays_pending);
 	RUN(t_software_pend_via_mmio);
 	RUN(t_sgi_pend_via_ispendr0);
 	RUN(t_set_level_rejects_bad_intid);

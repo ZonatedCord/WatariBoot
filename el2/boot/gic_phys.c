@@ -17,6 +17,7 @@
 #define GICD_ISENABLER   0x0100
 #define GICD_ICENABLER   0x0180
 #define GICD_IPRIORITYR  0x0400
+#define GICD_ICFGR       0x0C00
 #define GICD_IROUTER     0x6000
 #define GICD_CTLR_ENGRP0 (1u << 0)
 #define GICD_CTLR_ENGRP1 (1u << 1)
@@ -179,6 +180,24 @@ void gic_phys_spi_enable(uint32_t intid, bool on)
     } else {
         wr32(GICD_PHYS + GICD_ICENABLER + w, bit);
     }
+}
+
+/* GICD_ICFGR (GIC spec 12.9.x): 2 bits per SPI, bit 1 = edge. The guest's trigger type is passed
+ * through (a v2m/MSI SPI is a pulse: with a level configuration at the physical GIC it would be
+ * lost). Changing it while the SPI is enabled is UNPREDICTABLE, so disable around the write. */
+void gic_phys_spi_trigger(uint32_t intid, bool edge)
+{
+    uint64_t a = GICD_PHYS + GICD_ICFGR + 4ULL * (intid / 16);
+    uint32_t sh = 2 * (intid % 16) + 1, v = rd32(a);
+    uint64_t bit = 1u << (intid % 32), w = 4 * (intid / 32);
+    bool en = rd32(GICD_PHYS + GICD_ISENABLER + w) & bit;
+
+    v = (v & ~(1u << sh)) | ((uint32_t)edge << sh);
+    if (en)
+        wr32(GICD_PHYS + GICD_ICENABLER + w, bit);
+    wr32(a, v);
+    if (en)
+        wr32(GICD_PHYS + GICD_ISENABLER + w, bit);
 }
 
 /* GICD_IROUTER<n> (GIC spec 12.9.x): Aff3 [39:32], Aff2 [23:16], Aff1 [15:8],

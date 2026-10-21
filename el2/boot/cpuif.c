@@ -74,6 +74,7 @@ static struct vgic *g_v;
 static struct cif g_cif[MAX_CPUS];
 /* SPIs masked at the physical distributor while the guest owns them. */
 static uint32_t g_spi_masked[VGIC_NR_IRQS / 32];
+static uint32_t g_spi_edge[VGIC_NR_IRQS / 32];     /* guest set ICFGR edge: MSI/v2m style, no masking */
 
 #define LR_CASE(i) case i: __asm__ volatile("mrs %0, ich_lr" #i "_el2" : "=r"(v)); break;
 static uint64_t lr_read(unsigned n)
@@ -495,9 +496,15 @@ void cpuif_irq(void)
             c->st_spi++;
             if (g_trace_on && c->st_spi <= 200)
                 put_kv("Watari EL2: TR physical SPI taken, INTID ", id);
-            g_spi_masked[id / 32] |= 1u << (id % 32);
-            gic_phys_spi_enable(id, false);
-            vgic_set_irq_level(g_v, me, id, true);
+            if (g_spi_edge[id / 32] & (1u << (id % 32))) {
+                /* Edge (v2m MSI): a pulse. Latch it as pending, nothing to mask or unmask. */
+                vgic_set_irq_level(g_v, me, id, true);
+                vgic_set_irq_level(g_v, me, id, false);
+            } else {
+                g_spi_masked[id / 32] |= 1u << (id % 32);
+                gic_phys_spi_enable(id, false);
+                vgic_set_irq_level(g_v, me, id, true);
+            }
         } else {
             put_kv("Watari EL2: unexpected physical INTID ", id);
         }
@@ -513,15 +520,22 @@ void cpuif_vgic_effect(enum vgic_effect eff, uint32_t intid, int arg)
 {
     static unsigned n_tr;
 
-    if (g_trace_on && intid >= 32 && n_tr < 300) {
+    if (g_trace_on && intid >= 32 && (eff != VGIC_EFFECT_SET_TARGET || n_tr < 40) && n_tr < 600) {
         n_tr++;
-        put_kv("Watari EL2: TR SPI effect (1=unmask 2=mask 3=target) ", (uint64_t)eff);
+        put_kv("Watari EL2: TR SPI effect (1=unmask 2=mask 3=target 4=trigger) ", (uint64_t)eff);
         put_kv("Watari EL2: TR    intid ", intid);
         put_kv("Watari EL2: TR    arg   ", (uint64_t)(int64_t)arg);
     }
     switch (eff) {
     case VGIC_EFFECT_SET_TARGET:
         gic_phys_spi_route(intid, arg);
+        break;
+    case VGIC_EFFECT_SET_TRIGGER:
+        if (arg)
+            g_spi_edge[intid / 32] |= 1u << (intid % 32);
+        else
+            g_spi_edge[intid / 32] &= ~(1u << (intid % 32));
+        gic_phys_spi_trigger(intid, arg != 0);
         break;
     case VGIC_EFFECT_UNMASK_SPI:
         g_spi_masked[intid / 32] &= ~(1u << (intid % 32));

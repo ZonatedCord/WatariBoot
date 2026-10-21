@@ -59,7 +59,8 @@ No new issues, to avoid sending notifications. Pick one of these, on a `ciani/..
 ## Where to resume
 - Latest diary: `docs/sessions/2026-10-19-marco-01.md` (M1, M1.5, M2).
 - **M2 is done**: Windows 11 ARM64 reaches the lock screen on top of Watari EL2 in QEMU TCG (`el2/boot/run-m2.sh`, `CPUIF=trap` for the M1 mode; about 3-5 minutes with 4 cores).
-- **Next without hardware:** #63 soak test (login, desktop, 30 min idle, both modes), #62 design of device interrupts on the M1 without an ITS (design session first), #60/#64 hardening. **Next with hardware (M3a):** needs the debug host (#40), then #55, #58, #59, #52 on the real M1.
+- **M2.x (2026-10-21 night):** ✅ #63 soak test: login, desktop, 30+ min idle with Start menu and Explorer, both modes (`el2/boot/m2-login.sh`, F-24). ✅ #62 design session: `docs/design/watari-el2-devirq/` + `docs/adr/draft-m1-device-interrupts.md` (SPI-first for ANS NVMe and USB, GICv2m frame for PCIe MSI, no ITS emulation). ✅ M2.x-1: Windows reaches the desktop on top of the layer with **no ITS**, using a GICv2m MSI frame (`MSI=gicv2m`), both modes, after forwarding `GICD_ICFGR` edge to the physical SPI (F-25). #65 answered: with no MSI controller at all Windows does not boot on this QEMU, with or without the layer.
+- **Next without hardware:** #67 interrupt map (M2.x-2/3), #64 and #60 hardening, optional #42 QEMU AIC machine (needs a QEMU build: backup + Marco's go-ahead). **Next with hardware (M3a):** needs the debug host (#40), then #55, #58, #59, #52, #68 on the real M1.
 - Tests to run first: `make -C el2 test`, `el2/boot/run-all.sh` (or `SKIP_M14=1`), `make -C tools/acpigen test`.
 - The repository is **public** since 2026-10-15; open issues are unassigned on purpose.
 - Failures and lessons learned: `docs/FAILURES.md` (read by all sessions).

@@ -98,6 +98,7 @@ void     gic_phys_ppi_enable(unsigned ppi, bool on);   /* this core's redistribu
 void     gic_phys_kick(unsigned cpu);        /* physical SGI_KICK to another core */
 void     gic_phys_spi_enable(uint32_t intid, bool on);
 void     gic_phys_spi_route(uint32_t intid, int vcpu);
+void     gic_phys_spi_trigger(uint32_t intid, bool edge);
 unsigned cpu_from_mpidr(uint64_t mpidr);     /* index into g_pcpu, or ~0u */
 
 /* cpuif.c: virtual CPU interface (ICH_*) driven from the vGIC model. */
