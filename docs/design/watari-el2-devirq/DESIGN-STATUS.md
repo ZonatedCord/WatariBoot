@@ -32,3 +32,6 @@
 
 ## Non-blocking questions
 - Q-D1 .. Q-D7 in RISKS section 5 (notably Q-D1: does the F-23 `its=off` MADT contain a GIC MSI Frame; Q-D7: is building QEMU for #42 acceptable, which needs a backup and Marco's go-ahead).
+
+## Q-D1 answered (2026-10-21, M2.x-1 on the QEMU 11.1.2 bench) [verified: guest-RAM MADT dump, `el2/boot/m2-madt.py`]
+The F-23 `its=off` MADT contains **no GIC MSI Frame and no ITS** (164 bytes; `msi=auto` without an ITS gives no controller on this QEMU). `msi=gicv2m` adds a GIC MSI Frame (type 0x0D) at `0x08020000`, flags 1 (use the MADT range), **SPI base 80, count 64** (188 bytes). Windows then boots: it allocates its MSI from the frame (INTID 80-84, edge) and reaches the desktop **both without the layer and on Watari EL2 in hw and trap cpuif modes**, once the layer forwards `GICD_ICFGR` edge (F-25). So option C (GICv2m, no ITS) is validated on the bench; the remaining unknowns are the Apple-side ones (E-HW1). Results: `el2/boot/README.md`, "MSI matrix (M2.x-1)".
