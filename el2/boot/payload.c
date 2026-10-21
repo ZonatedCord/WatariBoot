@@ -84,6 +84,14 @@ static volatile uint32_t g_sgi2[MAX_CPUS];      /* SGI 2 received per cpu */
 static volatile uint32_t g_spi_cpu;             /* 1 + cpu that took SPI 34 */
 #define RTC_SPI 34u
 
+/* #60 cross-core kick test state (SGIs 3..6 and 11 sent by cpu 0 to cpu 1, see xc_core0/xc_core1). */
+static volatile uint32_t g_xc_quiet;            /* cpu 1: virtual timer stopped, handler must not re-arm */
+static volatile uint32_t g_xc_ready;            /* cpu 1: timer off, IRQs masked, waiting */
+static volatile uint32_t g_xc_go;               /* cpu 0: SGIs queued, cpu 1 may unmask */
+static volatile uint32_t g_xc_on;
+static volatile uint32_t g_xc_n;
+static volatile uint32_t g_xc_log[16];
+
 static inline unsigned my_cpu(void)
 {
     uint64_t m;
@@ -105,7 +113,10 @@ void el1_irq_handler(void)
     }
     if (id == 27 && cpu != 0) {
         g_tirq[cpu]++;
-        timer_arm();
+        if (g_xc_quiet && cpu == 1)
+            __asm__ volatile("msr cntv_ctl_el0, xzr; isb");     /* stay off: ENABLE = 0 */
+        else
+            timer_arm();
     } else if (id == 27) {
         g_timer_irqs++;
         put_kv("Watari EL1: irq INTID = ", id);
@@ -113,6 +124,10 @@ void el1_irq_handler(void)
     } else if (id == 1) {
         g_sgi_irqs++;
         put_kv("Watari EL1: irq INTID = ", id);
+    } else if (g_xc_on && cpu == 1 && id >= 3 && id <= 11) {
+        if (g_xc_n < 16)
+            g_xc_log[g_xc_n] = id;
+        g_xc_n++;
     } else if (id == 2) {
         g_sgi2[cpu]++;
         put_kn("Watari EL1: cpu ", cpu, " sgi 2\n");
@@ -348,6 +363,82 @@ static void expect_ret(const char *what, int64_t got, int64_t want)
     }
 }
 
+/* ---- #60 test: cross-core kick for LR eviction -----------------------------
+ * cpu 1 stops its timer, masks IRQs and spins, so it never leaves the guest on its own.
+ * cpu 0 sends it four low priority SGIs (they fill all 4 LRs; each send kicks cpu 1, whose EL2
+ * fills the LRs) and then one much better SGI. Only a physical kick makes cpu 1's EL2 evict a
+ * pending LR for it while the guest runs with IRQs masked. When cpu 1 unmasks, the better SGI
+ * must come first. Without the kick it is injected only after the first EOI (order 3, 11, 4, 5, 6). */
+static void delay_ms(unsigned ms)
+{
+    uint64_t end = cnt() + (uint64_t)ms * read_cntfrq() / 1000;
+
+    while (cnt() < end)
+        ;
+}
+
+static void xc_core1(unsigned n)
+{
+    const uint64_t S = GICR_PHYS + (uint64_t)n * 0x20000 + 0x10000;
+    static const uint8_t ids[5]  = { 3, 4, 5, 6, 11 };
+    static const uint8_t prio[5] = { 0x80, 0x90, 0xa0, 0xb0, 0x08 };
+    static const uint8_t want[5] = { 11, 3, 4, 5, 6 };
+    unsigned i;
+    bool ok;
+
+    for (i = 0; i < 5; i++)
+        wr8(S + 0x400 + ids[i], prio[i]);
+    wr32(S + 0x100, 0x878u);                              /* ISENABLER0: SGIs 3..6 and 11 */
+    g_xc_quiet = 1;
+    __asm__ volatile("msr cntv_ctl_el0, xzr; isb");
+    delay_ms(50);                                         /* IRQs are still on: drain the timer's LR */
+    __asm__ volatile("msr daifset, #2");
+    g_xc_n = 0;
+    g_xc_ready = 1;
+    {
+        uint64_t end = cnt() + 20 * read_cntfrq();
+
+        while (!g_xc_go && cnt() < end)
+            ;
+    }
+    g_xc_on = 1;
+    __asm__ volatile("msr daifclr, #2");
+    for (unsigned spin = 0; g_xc_n < 5 && spin < 30000000; spin++)
+        __asm__ volatile("nop");
+    delay_ms(20);                                         /* a duplicate would show up here */
+    __asm__ volatile("msr daifset, #2");
+    g_xc_on = 0;
+    ok = g_xc_n == 5;
+    for (i = 0; ok && i < 5; i++)
+        ok = g_xc_log[i] == want[i];
+    if (ok) {
+        put_kn("Watari EL1: cpu ", n, " cross-core kick eviction: ok, the better SGI came first, every SGI once\n");
+    } else {
+        put_kn("Watari EL1: cpu ", n, " cross-core kick eviction FAILED, order follows\n");
+        for (i = 0; i < g_xc_n && i < 16; i++)
+            put_kn("  ", g_xc_log[i], "\n");
+    }
+    g_xc_quiet = 0;
+    wr32(S + 0x180, 0x878u);                              /* ICENABLER0: SGIs 3..6 and 11 */
+    timer_arm();
+    __asm__ volatile("msr daifclr, #2");
+}
+
+static void xc_core0(void)
+{
+    static const uint8_t ids[5] = { 3, 4, 5, 6, 11 };
+
+    if (!wait_flag(&g_xc_ready, 1, 10, false)) {
+        puts_("Watari EL1: cross-core kick test: cpu 1 DID NOT get ready\n");
+        return;
+    }
+    for (unsigned i = 0; i < 5; i++) {
+        __asm__ volatile("msr icc_sgi1r_el1, %0; isb" : : "r"(((uint64_t)ids[i] << 24) | 2ULL));
+        delay_ms(30);                                     /* let the kick be taken and the LR filled */
+    }
+    g_xc_go = 1;
+}
+
 /* Every secondary core starts here from PSCI CPU_ON (x0 = stack top = context_id).
  * Register programming follows GIC spec IHI 0069H.b (GICR_WAKER, IGROUPR0,
  * ISENABLER0, IPRIORITYR, ICC_*_EL1) like el1_irq_test(). */
@@ -390,6 +481,8 @@ void el1_secondary_main(void)
 
     if (!wait_flag(&g_sgi2[n], 1, 10, true))
         put_kn("Watari EL1: cpu ", n, " SGI FAILED\n");
+    if (n == 1)
+        xc_core1(n);
     for (unsigned t = 0; t < 30 && !g_go_off && g_off_early != n + 1; t++)
         wait_flag(&g_go_off, 1, 1, true);
     __asm__ volatile("msr cntv_ctl_el0, xzr; isb");      /* timer off */
@@ -453,6 +546,7 @@ static void smp_test(unsigned ncpu)
     for (i = 1; i < ncpu; i++)
         if (!wait_flag(&g_sgi2[i], 1, 10, false))
             put_kn("Watari EL1: cpu ", i, " NEVER GOT SGI 2\n");
+    xc_core0();
 
     /* SPI: PL031 RTC alarm (QEMU virt SPI 2 = INTID 34), routed to the last core.
      * GICD registers: IGROUPR1 +0x84, IPRIORITYR +0x400, IROUTER +0x6000, ISENABLER1 +0x104. */

@@ -18,18 +18,18 @@
           "output": 65
         },
         "claude-opus-5-5": {
-          "cache_read": 242312218,
-          "cache_write_1h": 6991048,
+          "cache_read": 247448860,
+          "cache_write_1h": 7019206,
           "cache_write_5m": 0,
-          "input": 1232,
-          "output": 439476
+          "input": 1282,
+          "output": 449813
         },
         "claude-sonnet-5-5": {
-          "cache_read": 219339632,
+          "cache_read": 239118394,
           "cache_write_1h": 0,
-          "cache_write_5m": 11296391,
-          "input": 3192,
-          "output": 617053
+          "cache_write_5m": 11963969,
+          "input": 3406,
+          "output": 624855
         }
       }
     },

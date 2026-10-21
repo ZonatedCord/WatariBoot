@@ -168,6 +168,11 @@ int vgic_init(struct vgic *v, const struct vgic_config *cfg)
 	v->nr_vcpus = cfg->nr_vcpus;
 	v->hooks = cfg->hooks;
 	v->lpis = cfg->lpis;
+	v->idbits = cfg->idbits ? cfg->idbits : 16;
+	if (v->idbits < 14)
+		v->idbits = 14;                  /* an LPI INTID (8192 and up) needs 14 bits */
+	if (v->idbits > 24)
+		v->idbits = 24;
 	for (i = 0; i < v->nr_vcpus; i++)
 		v->vcpu[i].aff = cfg->affinity ? cfg->affinity[i] : i;
 	vgic_reset(v);
@@ -363,8 +368,8 @@ static int gicd_word(struct vgic *v, uint32_t off, bool wr, uint32_t *val)
 		return W_OK;
 	case 0x0004:
 		if (!wr)
-			*val = v->lpis ? ((GICD_TYPER_VALUE & ~(0x1fu << 19)) | (15u << 19) | (1u << 17))
-				       : GICD_TYPER_VALUE;     /* LPIS bit 17, IDbits = 15 (16 bits) */
+			*val = v->lpis ? ((GICD_TYPER_VALUE & ~(0x1fu << 19)) | ((v->idbits - 1) << 19) | (1u << 17))
+				       : GICD_TYPER_VALUE;     /* LPIS bit 17, IDbits = physical IDbits */
 		return W_OK;
 	case 0x0008:
 		if (!wr)
@@ -777,15 +782,28 @@ bool vgic_lpi_inject(struct vgic *v, unsigned vcpu_idx, uint32_t intid, uint8_t 
 
 	if (vcpu_idx >= v->nr_vcpus || intid < VGIC_LPI_BASE)
 		return false;
+	if (intid >= (1u << v->idbits)) {        /* wider than the guest's IDbits: counted as a drop */
+		v->vcpu[vcpu_idx].lpi_dropped++;
+		return false;
+	}
 	if (lpi_find(v, vcpu_idx, intid, false))
 		return true;                     /* already pending (the pending bit is idempotent) */
 	e = lpi_find(v, vcpu_idx, 0, false);     /* new, or a second occurrence while one is in flight */
-	if (!e)
+	if (!e) {
+		v->vcpu[vcpu_idx].lpi_dropped++;
 		return false;
+	}
 	e->id = intid;
 	e->prio = prio;
 	e->inflight = false;
 	return true;
+}
+
+unsigned vgic_idbits(const struct vgic *v) { return v->idbits; }
+
+uint32_t vgic_lpi_dropped(const struct vgic *v, unsigned vcpu_idx)
+{
+	return vcpu_idx < v->nr_vcpus ? v->vcpu[vcpu_idx].lpi_dropped : 0;
 }
 
 bool vgic_lpi_enabled(const struct vgic *v, unsigned vcpu_idx)

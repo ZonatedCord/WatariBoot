@@ -19,7 +19,7 @@ static void t_typer_last_single_vcpu(void)
 static void t_typer_processor_number_and_affinity(void)
 {
 	static const uint32_t aff[3] = { 0x00000000, 0x00000100, 0x01020304 };
-	struct vgic_config c = { GICD, GICR, 3, aff, { fx_log, fx_eff, NULL, NULL }, false };
+	struct vgic_config c = { GICD, GICR, 3, aff, { fx_log, fx_eff, NULL, NULL }, false, 0 };
 
 	CHECK_EQ(vgic_init(&F.v, &c), 0);
 	CHECK_EQ((rd64(R(1, 8)) >> 8) & 0xFFFF, 1);

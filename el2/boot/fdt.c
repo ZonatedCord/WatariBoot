@@ -167,7 +167,7 @@ int fdt_walk_props(void *fdt, fdt_prop_cb cb, void *ctx)
 
 struct patch_ctx {
     struct fdt_patch_info *info;
-    uint64_t carve_base, carve_size;
+    uint64_t carve_base, carve_size, ram_end;
     unsigned addr_cells, size_cells;
 };
 
@@ -199,6 +199,12 @@ static bool patch_cb(void *vctx, unsigned depth, const char *node, const char *p
             i->mem_patched = true;
             i->mem_base_new = base + c->carve_size;
             i->mem_size_new = size - c->carve_size;
+            if (c->ram_end && i->mem_base_new < c->ram_end &&
+                i->mem_base_new + i->mem_size_new > c->ram_end) {
+                i->mem_size_new = c->ram_end - i->mem_base_new;    /* never hand out an unmapped tail */
+                put_be_cells(val + 4 * a, s, i->mem_size_new);
+                i->mem_trimmed = true;
+            }
         }
     } else if (depth == 1 && name_is(node, "psci") && str_eq(prop, "method") && len == 4) {
         const char *m = (const char *)val;
@@ -224,10 +230,10 @@ static bool patch_cb(void *vctx, unsigned depth, const char *node, const char *p
     return false;
 }
 
-int fdt_patch_for_guest(void *fdt, uint64_t carve_base, uint64_t carve_size,
+int fdt_patch_for_guest(void *fdt, uint64_t carve_base, uint64_t carve_size, uint64_t ram_end,
                         struct fdt_patch_info *info)
 {
-    struct patch_ctx c = { info, carve_base, carve_size, 2, 2 };
+    struct patch_ctx c = { info, carve_base, carve_size, ram_end, 2, 2 };
 
     *info = (struct fdt_patch_info){ 0 };
     return fdt_walk_props(fdt, patch_cb, &c);
@@ -268,4 +274,40 @@ int fdt_get_bootargs(void *fdt, char *out, unsigned max)
     if (fdt_walk_props(fdt, bargs_cb, &c))
         return -1;
     return c.len;
+}
+
+struct mem_ctx {
+    struct wel2_ram *ram;
+    uint64_t min_base, max_end;
+    unsigned addr_cells, size_cells;
+    bool found;
+    int rc;
+};
+
+static bool mem_cb(void *vctx, unsigned depth, const char *node, const char *prop,
+                   uint8_t *val, uint32_t len)
+{
+    struct mem_ctx *c = vctx;
+
+    if (depth == 0 && len == 4) {
+        if (str_eq(prop, "#address-cells"))
+            c->addr_cells = be32(val);
+        else if (str_eq(prop, "#size-cells"))
+            c->size_cells = be32(val);
+    } else if (depth == 1 && name_is(node, "memory") && str_eq(prop, "reg")) {
+        c->found = true;
+        c->rc = wel2_ram_from_reg(c->ram, val, len, c->addr_cells, c->size_cells,
+                                  c->min_base, c->max_end);
+        return true;
+    }
+    return false;
+}
+
+int fdt_get_memory(void *fdt, struct wel2_ram *ram, uint64_t min_base, uint64_t max_end)
+{
+    struct mem_ctx c = { ram, min_base, max_end, 2, 2, false, -1 };
+
+    if (fdt_walk_props(fdt, mem_cb, &c))
+        return -1;
+    return c.found ? c.rc : -1;
 }

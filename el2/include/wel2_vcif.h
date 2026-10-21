@@ -48,8 +48,9 @@
 
 struct wel2_vcif {
 	unsigned nlr;                 /* 1..VCIF_MAX_LRS */
-	unsigned pribits;             /* ICH_VTR_EL2.PRIbits + 1 (5..8) */
-	unsigned prebits;             /* ICH_VTR_EL2.PREbits + 1 (5..7) */
+	unsigned pribits;             /* ICH_VTR_EL2.PRIbits + 1 (5..7) */
+	unsigned prebits;             /* ICH_VTR_EL2.PREbits + 1 (5..PRIbits+1) */
+	unsigned idbits;              /* INTID bits the guest sees: 16 or 24 (default 16) */
 	uint64_t lr[VCIF_MAX_LRS];
 	int32_t  owner[VCIF_MAX_LRS]; /* vINTID the LR was filled for, -1 = free */
 	uint32_t vmcr;
@@ -66,6 +67,9 @@ struct wel2_vcif {
 };
 
 void vcif_init(struct wel2_vcif *c, unsigned nlr, unsigned pribits, unsigned prebits);
+/* INTID width reported in ICC_CTLR_EL1.IDbits (0 = 16 bits, 1 = 24 bits, 12.2.6): up to 16 bits
+ * reads as 16, above as 24; EOIR/DIR INTIDs are masked to it. */
+void vcif_set_idbits(struct wel2_vcif *c, unsigned idbits);
 /* VMCR reset: everything off, binary points at their minimum, PMR 0. */
 void vcif_reset_vmcr(struct wel2_vcif *c);
 unsigned vcif_valid_lrs(const struct wel2_vcif *c);        /* LRs with State != 0 */
@@ -80,6 +84,11 @@ unsigned vcif_harvest(struct wel2_vcif *c, struct vgic *v, unsigned vcpu,
  * With no free LR a pending-only LR of strictly lower priority is evicted
  * (given back with vgic_requeue()). */
 void vcif_fill(struct wel2_vcif *c, struct vgic *v, unsigned vcpu);
+/* True if vcif_fill() would change something right now: a deliverable interrupt waits and
+ * there is a free LR or an evictable pending-only LR of strictly worse priority. Another
+ * core uses it to decide whether a physical kick is worth sending (#60): after the kicked
+ * core has flushed, it is false again, so two cores cannot kick each other forever. */
+bool vcif_fill_can_progress(const struct wel2_vcif *c, const struct vgic *v, unsigned vcpu);
 /* True if, after vcif_fill(), the model still holds a deliverable interrupt:
  * the caller arms ICH_HCR_EL2.UIE (only meaningful with >= 2 valid LRs). */
 bool vcif_overflow(const struct wel2_vcif *c, const struct vgic *v, unsigned vcpu);
@@ -98,7 +107,7 @@ uint32_t vcif_bpr0_get(const struct wel2_vcif *c);
 void     vcif_bpr0_set(struct wel2_vcif *c, uint32_t v);
 uint32_t vcif_igrpen_get(const struct wel2_vcif *c, unsigned group);
 void     vcif_igrpen_set(struct wel2_vcif *c, unsigned group, uint32_t v);
-/* ICC_CTLR_EL1 as the guest sees it (SEIS hidden, IDbits = 16). */
+/* ICC_CTLR_EL1 as the guest sees it (SEIS hidden, IDbits from vcif_set_idbits). */
 uint32_t vcif_ctlr_get(const struct wel2_vcif *c);
 void     vcif_ctlr_set(struct wel2_vcif *c, uint32_t v);
 uint32_t vcif_ap_get(const struct wel2_vcif *c, unsigned group, unsigned n);

@@ -25,15 +25,25 @@
 //                                      [__image_start, __text_end) RO X  (code + vectors)
 //                                      [__text_end, __rodata_end)  RO XN
 //                                      rest (data, bss, stacks)    RW XN
-//   0x40200000-0x7fffffff  Normal WB inner-shareable RW XN, 2 MB blocks
-//   0x80000000-0xbfffffff  Normal WB inner-shareable RW XN, one 1 GB block (RAM of -m 2G)
-//   0xc0000000-0x13fffffff the same, two more 1 GB blocks (RAM of -m 4G, M2)
+//   0x40200000-0x7fffffff  Normal WB inner-shareable RW XN, 2 MB blocks, where RAM exists
+//   further 1 GB entries   Normal WB inner-shareable RW XN: one 1 GB block where the GB is all RAM,
+//                          a level-2 table of 2 MB blocks for the last, partly filled GB
 //   everything else        unmapped (an EL2 access faults; the vectors dump it)
+// "Where RAM exists" (#60): the range comes from the FDT /memory node (wel2_ram.h), read here with the
+// MMU still off. Without a usable node the old fixed map applies (0x40000000-0x13fffffff).
 // The layer image must lie in the first 2 MB of RAM (linker ASSERT).
 
 #include "boot.h"
+#include "fdt.h"
+#include "wel2_ram.h"
 
 extern uint8_t __image_start[], __text_end[], __rodata_end[];
+
+/* The RAM the maps cover; written once by the boot core with the MMU off, read by everyone after. */
+uint64_t g_ram_base = GUEST_RAM_BASE;
+uint64_t g_ram_end = GUEST_RAM_BASE + 0x100000000ULL;
+bool g_ram_from_fdt;
+#define S1_MAX_PA (512ULL << 30)     /* 39-bit VA = PA */
 
 /* Read by s1_enable in start.S: offsets 0, 8, 16. */
 struct s1_regs {
@@ -56,11 +66,13 @@ static uint64_t s1_l1[512] __attribute__((aligned(4096)));
 static uint64_t s1_l2dev[512] __attribute__((aligned(4096)));
 static uint64_t s1_l2ram[512] __attribute__((aligned(4096)));
 static uint64_t s1_l3ram[512] __attribute__((aligned(4096)));
+static uint64_t s1_l2tail[512] __attribute__((aligned(4096)));   /* the last GB when only part of it is RAM */
 
 /* Boot core, MMU off. */
-void stage1_build(void)
+void stage1_build(uint64_t fdt)
 {
     uint64_t hcr, mmfr0;
+    struct wel2_ram ram;
 
     __asm__ volatile("mrs %0, hcr_el2" : "=r"(hcr));
     __asm__ volatile("mrs %0, id_aa64mmfr0_el1" : "=r"(mmfr0));
@@ -76,6 +88,20 @@ void stage1_build(void)
     uint64_t text_hi = (uint64_t)(uintptr_t)__text_end;
     uint64_t ro_hi = (uint64_t)(uintptr_t)__rodata_end;
 
+    /* RAM range: the FDT /memory node (must start at the layer's RAM base), else the old fixed map. */
+    ram.base = g_ram_base;
+    ram.end = g_ram_end;
+    if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
+        !fdt_get_memory((void *)fdt, &ram, GUEST_RAM_BASE, S1_MAX_PA) &&
+        ram.base == GUEST_RAM_BASE && ram.end - ram.base >= WEL2_CARVE_SIZE) {
+        g_ram_base = ram.base;
+        g_ram_end = ram.end;
+        g_ram_from_fdt = true;
+    } else {
+        ram.base = g_ram_base;
+        ram.end = g_ram_end;
+    }
+
     for (unsigned i = 0; i < 512; i++) {
         uint64_t pa = GUEST_RAM_BASE + ((uint64_t)i << 12);
         uint64_t d;
@@ -90,16 +116,30 @@ void stage1_build(void)
     }
     for (unsigned i = 0; i < 512; i++) {
         s1_l2dev[i] = ((uint64_t)i << 21) | dev;
-        s1_l2ram[i] = (GUEST_RAM_BASE + ((uint64_t)i << 21)) | nrm | xn;
+        uint64_t pa = GUEST_RAM_BASE + ((uint64_t)i << 21);
+
+        s1_l2ram[i] = wel2_ram_has_block(&ram, pa) ? (pa | nrm | xn) : 0;
     }
     s1_l2ram[0] = (uint64_t)(uintptr_t)s1_l3ram | D_VALID | D_TABLE;
     for (unsigned i = 0; i < 512; i++)
         s1_l1[i] = 0;
     s1_l1[0] = (uint64_t)(uintptr_t)s1_l2dev | D_VALID | D_TABLE;
     s1_l1[1] = (uint64_t)(uintptr_t)s1_l2ram | D_VALID | D_TABLE;
-    s1_l1[2] = 0x80000000ULL | nrm | xn;          /* 1 GB block: RAM of a -m 2G machine */
-    s1_l1[3] = 0xc0000000ULL | nrm | xn;          /* M2: RAM of a -m 4G machine (to 0x13fffffff); the layer reads */
-    s1_l1[4] = 0x100000000ULL | nrm | xn;         /* the guest's LPI property table */
+    /* The GBs after the first: all RAM = one 1 GB block, partly RAM = 2 MB blocks, else unmapped. */
+    for (unsigned gb = (unsigned)(GUEST_RAM_BASE >> 30) + 1; gb < 512; gb++) {
+        enum wel2_ram_cover cv = wel2_ram_cover(&ram, gb);
+
+        if (cv == WEL2_RAM_FULL) {
+            s1_l1[gb] = ((uint64_t)gb << 30) | nrm | xn;
+        } else if (cv == WEL2_RAM_PARTIAL) {          /* only the last GB can be (the base is 1 GB aligned) */
+            for (unsigned i = 0; i < 512; i++) {
+                uint64_t pa = ((uint64_t)gb << 30) + ((uint64_t)i << 21);
+
+                s1_l2tail[i] = wel2_ram_has_block(&ram, pa) ? (pa | nrm | xn) : 0;
+            }
+            s1_l1[gb] = (uint64_t)(uintptr_t)s1_l2tail | D_VALID | D_TABLE;
+        }
+    }
 
     /* TCR_EL2: T0SZ 25 (39-bit), IRGN0 = ORGN0 = 1 (WB WA), SH0 = 3 (ISH), TG0 = 0 (4 KB),
      * physical size = min(PARange, 40 bit). */

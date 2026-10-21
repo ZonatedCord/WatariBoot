@@ -15,7 +15,7 @@ static void lpi_cb(void *c, unsigned cpu, unsigned off, uint64_t val)
 
 static void setup_lpi(unsigned n)
 {
-	struct vgic_config cfg = { GICD, GICR, n, NULL, { fx_log, fx_eff, NULL, lpi_cb }, true };
+	struct vgic_config cfg = { GICD, GICR, n, NULL, { fx_log, fx_eff, NULL, lpi_cb }, true, 0 };
 
 	n_reg = 0;
 	F.logs = F.effects = 0;
@@ -100,6 +100,51 @@ static void t_queue_full_and_group_gate(void)
 	CHECK_EQ(next(0), VGIC_INTID_SPURIOUS);
 }
 
+/* #64: overflow of the LPI queue is counted per vCPU (and the stats line prints it). */
+static void t_queue_overflow_counted(void)
+{
+	setup_lpi(2);
+	bring_up();
+	CHECK_EQ(vgic_lpi_dropped(&F.v, 0), 0);
+	for (unsigned i = 0; i < VGIC_LPI_QUEUE; i++)
+		CHECK(vgic_lpi_inject(&F.v, 0, 8192 + i, 0x80));
+	CHECK(vgic_lpi_inject(&F.v, 0, 8192, 0x80));       /* duplicate of a queued one: not a drop */
+	CHECK_EQ(vgic_lpi_dropped(&F.v, 0), 0);
+	CHECK(!vgic_lpi_inject(&F.v, 0, 9000, 0x80));
+	CHECK(!vgic_lpi_inject(&F.v, 0, 9001, 0x80));
+	CHECK_EQ(vgic_lpi_dropped(&F.v, 0), 2);
+	CHECK_EQ(vgic_lpi_dropped(&F.v, 1), 0);            /* per vCPU */
+	CHECK(!vgic_lpi_inject(&F.v, 0, 100, 0x80));       /* below 8192: refused, not an overflow */
+	CHECK_EQ(vgic_lpi_dropped(&F.v, 0), 2);
+	CHECK_EQ(vgic_lpi_dropped(&F.v, 7), 0);            /* bad vCPU */
+}
+
+/* #64: IDbits comes from the physical GICD_TYPER (config), default 16 (GIC spec 12.9.4 GICD_TYPER.IDbits). */
+static void t_idbits_from_config(void)
+{
+	struct vgic_config cfg = { GICD, GICR, 1, NULL, { fx_log, fx_eff, NULL, lpi_cb }, true, 24 };
+
+	setup_lpi(1);
+	CHECK_EQ(vgic_idbits(&F.v), 16);
+	CHECK_EQ((rd32(D(4)) >> 19) & 0x1f, 15);
+	CHECK_EQ(vgic_init(&F.v, &cfg), 0);
+	CHECK_EQ(vgic_idbits(&F.v), 24);
+	CHECK_EQ((rd32(D(4)) >> 19) & 0x1f, 23);
+	CHECK(vgic_lpi_inject(&F.v, 0, 0xffffff, 0x80));   /* the largest 24-bit INTID */
+	cfg.idbits = 14;                                   /* an LPI INTID needs 14 bits at least */
+	CHECK_EQ(vgic_init(&F.v, &cfg), 0);
+	CHECK_EQ(vgic_idbits(&F.v), 14);
+	CHECK(vgic_lpi_inject(&F.v, 0, 16383, 0x80));
+	CHECK(!vgic_lpi_inject(&F.v, 0, 16384, 0x80));     /* not representable: refused and counted */
+	CHECK_EQ(vgic_lpi_dropped(&F.v, 0), 1);
+	cfg.idbits = 40;                                   /* clamped */
+	CHECK_EQ(vgic_init(&F.v, &cfg), 0);
+	CHECK_EQ(vgic_idbits(&F.v), 24);
+	cfg.idbits = 3;
+	CHECK_EQ(vgic_init(&F.v, &cfg), 0);
+	CHECK_EQ(vgic_idbits(&F.v), 14);
+}
+
 static void t_spi_beats_equal_priority_lpi(void)
 {
 	setup_lpi(1);
@@ -165,6 +210,8 @@ int main(void)
 	RUN(t_queue_full_and_group_gate);
 	RUN(t_spi_beats_equal_priority_lpi);
 	RUN(t_duplicates_bounded);
+	RUN(t_queue_overflow_counted);
+	RUN(t_idbits_from_config);
 	RUN(t_base_writes_ignored_while_enabled);
 	TESTS_DONE();
 }

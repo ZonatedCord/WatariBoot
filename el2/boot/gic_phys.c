@@ -223,6 +223,19 @@ bool gic_phys_has_lpis(void)
     return (rd32(GICD_PHYS + 4) >> 17) & 1u;
 }
 
+/* INTID bits the guest may use: the smaller of the physical GICD_TYPER.IDbits [23:19] + 1 (GIC spec
+ * 12.9.4) and the vINTID width of the list registers, ICH_VTR_EL2.IDbits [25:23] (0 = 16, 1 = 24 bits;
+ * 12.4.9; ICV_CTLR_EL1.IDbits aliases it). */
+unsigned gic_phys_idbits(void)
+{
+    uint64_t vtr;
+    unsigned phys = ((rd32(GICD_PHYS + 4) >> 19) & 0x1f) + 1;
+
+    __asm__ volatile("mrs %0, ich_vtr_el2" : "=r"(vtr));
+    unsigned lr = ((vtr >> 23) & 7) ? 24 : 16;
+    return phys < lr ? phys : lr;
+}
+
 void gic_phys_lpi_reg(unsigned cpu, unsigned off, uint64_t val)
 {
     uint64_t base = g_pcpu[cpu].gicr;
