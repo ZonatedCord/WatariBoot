@@ -2,7 +2,7 @@
 CC      = clang
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -Iinclude -Isrc -O1
 LIBSRC  := src/common.c src/madt.c src/gtdt.c src/pptt.c src/csrt.c src/fadt.c src/dbg2.c src/t8103_model.c src/qemu_virt_model.c
-TESTS   := madt gtdt pptt csrt fadt dbg2 models fadt dbg2 models
+TESTS   := madt gtdt pptt csrt fadt dbg2 models gsiv
 BUILD   := build
 
 all: $(BUILD)/acpigen
@@ -10,6 +10,14 @@ all: $(BUILD)/acpigen
 $(BUILD)/acpigen: $(LIBSRC) src/main.c include/acpigen.h src/internal.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(LIBSRC) src/main.c -o $@
+
+# GSIVs come from the layer's shared interrupt map (el2/include/wel2_intr_map.h).
+INTR_INC := -I../../el2/include
+INTR_SRC := ../../el2/vgic/intr_map.c
+
+$(BUILD)/test_gsiv: tests/test_gsiv.c $(LIBSRC) tests/test.h include/acpigen.h src/internal.h $(INTR_SRC) ../../el2/include/wel2_intr_map.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(INTR_INC) $(LIBSRC) $(INTR_SRC) $< -o $@
 
 $(BUILD)/test_%: tests/test_%.c $(LIBSRC) tests/test.h include/acpigen.h src/internal.h
 	@mkdir -p $(BUILD)

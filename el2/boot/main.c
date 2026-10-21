@@ -336,6 +336,7 @@ static void vgic_setup(void)
         .hooks = { vgic_log_cb, vgic_effect_cb, 0, lpi_reg_cb },
         .lpis = g_lpi && gic_phys_has_lpis(),
     };
+    pirq_qemu_init(&g_vgic, g_ncpu);            /* SPI policy first: vGIC effects reach it */
     if (vgic_init(&g_vgic, &cfg) != 0)
         fatal_msg("vgic_init failed");
 }
@@ -618,6 +619,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
 #endif
     parse_bootargs(fdt);
     vgic_setup();
+    pirq_vcpu_on(&g_pirq, this_cpu());          /* the cold-boot core can take SPIs */
     stage2_init();
     stage2_enable();
     set_virtual_ids();
@@ -661,6 +663,7 @@ void __attribute__((noreturn)) el2_secondary_main(void)
 #endif
     uint64_t entry = g_pcpu[me].entry, ctx = g_pcpu[me].ctx;
     g_pcpu[me].state = CPU_ST_ON;
+    pirq_vcpu_on(&g_pirq, me);                 /* SPIs the guest routed here come back */
     put_kn("Watari EL2: cpu ", me, " up at EL2, eret to the guest entry point\n");
     big_unlock();
     /* No flush needed here: interrupts sent while ON_PENDING are delivered on

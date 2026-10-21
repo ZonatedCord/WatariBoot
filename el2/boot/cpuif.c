@@ -72,9 +72,9 @@ struct cif {
 
 static struct vgic *g_v;
 static struct cif g_cif[MAX_CPUS];
-/* SPIs masked at the physical distributor while the guest owns them. */
-static uint32_t g_spi_masked[VGIC_NR_IRQS / 32];
-static uint32_t g_spi_edge[VGIC_NR_IRQS / 32];     /* guest set ICFGR edge: MSI/v2m style, no masking */
+/* SPI life cycle (mask while the guest owns a level source, edge pulses, ICFGR, routing,
+ * re-target on CPU_OFF) lives in g_pirq (../vgic/pirq.c, host-tested); pirq_qemu.c is its
+ * backend on the physical GICv3. */
 
 #define LR_CASE(i) case i: __asm__ volatile("mrs %0, ich_lr" #i "_el2" : "=r"(v)); break;
 static uint64_t lr_read(unsigned n)
@@ -273,12 +273,9 @@ void cpuif_cpu_down(void)
         } else if (v->owner[i] >= 32) {          /* give an SPI back to the device */
             uint32_t id = (uint32_t)v->owner[i];
 
-            vgic_set_irq_level(g_v, me, id, false);
+            pirq_line_low(&g_pirq, me, id);
             vgic_eoi(g_v, me, id);
-            if (g_spi_masked[id / 32] & (1u << (id % 32))) {
-                g_spi_masked[id / 32] &= ~(1u << (id % 32));
-                gic_phys_spi_enable(id, true);
-            }
+            pirq_finish(&g_pirq, id);
         }
         v->lr[i] = 0;
         v->owner[i] = -1;
@@ -326,11 +323,8 @@ void cpuif_flush(void)
             if (n_hv++ < 100)
                 put_kv("Watari EL2: TR guest finished SPI, INTID ", id);
         }
-        vgic_set_irq_level(g_v, me, id, false);
-        if (g_spi_masked[id / 32] & (1u << (id % 32))) {
-            g_spi_masked[id / 32] &= ~(1u << (id % 32));
-            gic_phys_spi_enable(id, true);   /* still asserted -> fires again */
-        }
+        pirq_line_low(&g_pirq, me, id);
+        pirq_finish(&g_pirq, id);            /* a level line still asserted fires again */
     }
 
     /* Level-sensitive virtual timer: the model line follows the timer. While
@@ -494,17 +488,21 @@ void cpuif_irq(void)
         } else if (id >= 32) {
             /* Forwarded SPI: mask at the physical GICD, raise the model line. */
             c->st_spi++;
+#ifndef WEL2_CHAIN
+            {
+                static unsigned n_log;
+
+                if (n_log++ < 8) {       /* M2.x-2 re-target test: which core took the physical SPI */
+                    put_kn("Watari EL2: physical SPI ", id, "");
+                    put_kn(" taken on cpu ", me, "\n");
+                }
+            }
+#endif
             if (g_trace_on && c->st_spi <= 200)
                 put_kv("Watari EL2: TR physical SPI taken, INTID ", id);
-            if (g_spi_edge[id / 32] & (1u << (id % 32))) {
-                /* Edge (v2m MSI): a pulse. Latch it as pending, nothing to mask or unmask. */
-                vgic_set_irq_level(g_v, me, id, true);
-                vgic_set_irq_level(g_v, me, id, false);
-            } else {
-                g_spi_masked[id / 32] |= 1u << (id % 32);
-                gic_phys_spi_enable(id, false);
-                vgic_set_irq_level(g_v, me, id, true);
-            }
+            /* pirq: edge (v2m MSI) = a latched pulse, level = masked until the guest
+             * deactivates, source not exposed = quieted. */
+            pirq_arrive(&g_pirq, me, id);
         } else {
             put_kv("Watari EL2: unexpected physical INTID ", id);
         }
@@ -526,26 +524,7 @@ void cpuif_vgic_effect(enum vgic_effect eff, uint32_t intid, int arg)
         put_kv("Watari EL2: TR    intid ", intid);
         put_kv("Watari EL2: TR    arg   ", (uint64_t)(int64_t)arg);
     }
-    switch (eff) {
-    case VGIC_EFFECT_SET_TARGET:
-        gic_phys_spi_route(intid, arg);
-        break;
-    case VGIC_EFFECT_SET_TRIGGER:
-        if (arg)
-            g_spi_edge[intid / 32] |= 1u << (intid % 32);
-        else
-            g_spi_edge[intid / 32] &= ~(1u << (intid % 32));
-        gic_phys_spi_trigger(intid, arg != 0);
-        break;
-    case VGIC_EFFECT_UNMASK_SPI:
-        g_spi_masked[intid / 32] &= ~(1u << (intid % 32));
-        gic_phys_spi_enable(intid, true);
-        break;
-    case VGIC_EFFECT_MASK_SPI:
-        g_spi_masked[intid / 32] &= ~(1u << (intid % 32));
-        gic_phys_spi_enable(intid, false);
-        break;
-    }
+    pirq_effect(&g_pirq, eff, intid, arg);
 }
 
 /* ---- Trapped system registers ----------------------------------------------

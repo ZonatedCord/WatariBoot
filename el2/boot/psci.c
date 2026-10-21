@@ -117,6 +117,10 @@ static int64_t cpu_off(void)
 
     put_kn("Watari EL2: PSCI CPU_OFF cpu ", me, "\n");
     vgic_vcpu_reset(&g_vgic, me);      /* redistributor asleep, private IRQs dropped */
+    uint32_t moved = g_pirq.st.retargets;
+
+    pirq_vcpu_off(&g_pirq, me);        /* SPIs routed here move to an online core first */
+    put_kv("Watari EL2: SPIs re-routed away from the core going off = ", g_pirq.st.retargets - moved);
     cpuif_cpu_down();
     gic_phys_cpu_down();
     g_pcpu[me].state = CPU_ST_OFF;
