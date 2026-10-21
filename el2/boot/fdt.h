@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "wel2_ram.h"
 
 struct fdt_patch_info {
     bool mem_found, mem_patched;
@@ -28,6 +29,12 @@ int fdt_walk_props(void *fdt, fdt_prop_cb cb, void *ctx);
  * keep the blob size. Returns 0, or -1 if the blob is malformed. */
 int fdt_patch_for_guest(void *fdt, uint64_t carve_base, uint64_t carve_size,
                         struct fdt_patch_info *info);
+
+/* First /memory "reg" pair as a RAM range (wel2_ram_from_reg: rounded to 2 MB, end clamped to max_end).
+ * 0 = found and usable, -1 = no /memory, unusable cells, or the blob is malformed. Reads only, and
+ * is safe with the MMU off (stage1.c calls it before the EL2 map exists: this file is built with
+ * -mstrict-align). */
+int fdt_get_memory(void *fdt, struct wel2_ram *ram, uint64_t min_base, uint64_t max_end);
 
 /* /chosen/bootargs (QEMU -append) copied into out (NUL-terminated, truncated to max-1).
  * Returns the string length, or -1 if there is none or the blob is malformed. */

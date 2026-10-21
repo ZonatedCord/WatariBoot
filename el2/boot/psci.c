@@ -74,7 +74,7 @@ static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
         return PSCI_INVALID_PARAMETERS;
     /* Entry point: a 4-byte aligned address inside guest RAM, else the
      * implementation knows it is unavailable to the caller (5.6.2). */
-    if ((entry & 3) || entry < GUEST_RAM_BASE || entry >= GUEST_RAM_END)
+    if ((entry & 3) || entry < GUEST_RAM_BASE || entry >= g_ram_end)
         return PSCI_INVALID_ADDRESS;
     if (g_pcpu[idx].state == CPU_ST_ON)
         return PSCI_ALREADY_ON;

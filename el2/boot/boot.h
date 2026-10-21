@@ -24,7 +24,6 @@
  * after the carve-out, at the address an arm64 Image with text_offset 0x80000 would
  * have there. */
 #define GUEST_RAM_BASE   0x40000000ULL
-#define GUEST_RAM_END    0x140000000ULL   /* M2: stage-2 maps RAM up to 5 GB (a -m 4G machine ends at 0x13fffffff) */
 #define WEL2_CARVE_SIZE  0x200000ULL
 #define EDK2_FDT_ADDR    GUEST_RAM_BASE
 #define EDK2_ENTRY       (GUEST_RAM_BASE + WEL2_CARVE_SIZE + 0x80000ULL)
@@ -70,7 +69,11 @@ void big_lock(void);                         /* serialises all EL2 shared state 
 void big_unlock(void);
 void enter_el1(uint64_t entry, uint64_t sp, uint64_t spsr, uint64_t hcr, uint64_t x0)
     __attribute__((noreturn));
-void stage1_build(void);                     /* stage1.c: boot core, MMU off */
+void stage1_build(uint64_t fdt);             /* stage1.c: boot core, MMU off; fdt = x0 from the loader */
+/* Guest RAM [g_ram_base, g_ram_end) as the FDT /memory node describes it (stage1.c). Without a
+ * usable node: the old fixed map, 0x40000000-0x13fffffff (a -m 4G machine). g_ram_from_fdt says which. */
+extern uint64_t g_ram_base, g_ram_end;
+extern bool g_ram_from_fdt;
 void stage2_enable(void);                    /* VTCR/VTTBR of this core */
 void fatal_msg(const char *why) __attribute__((noreturn));
 void secondary_entry(void);                  /* start.S: EL2 entry of cores 1..n */

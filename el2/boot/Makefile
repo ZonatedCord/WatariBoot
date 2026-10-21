@@ -16,12 +16,12 @@ CFLAGS := -I../include --target=aarch64-none-elf -std=c11 -Wall -Wextra -Werror 
 ASFLAGS := --target=aarch64-none-elf -g
 
 OBJS := $(OUT)/start.o $(OUT)/util.o $(OUT)/stage1.o $(OUT)/main.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o \
-        $(OUT)/pirq_qemu.o $(OUT)/fdt.o $(OUT)/vgic.o $(OUT)/vcif.o $(OUT)/intr_map.o $(OUT)/pirq.o $(PAYLOAD_OBJS)
+        $(OUT)/pirq_qemu.o $(OUT)/fdt.o $(OUT)/vgic.o $(OUT)/vcif.o $(OUT)/intr_map.o $(OUT)/pirq.o $(OUT)/ram_map.o $(PAYLOAD_OBJS)
 
 # Code that runs with the MMU off (stage1.c: table build before the MMU is on; util.c and
 # payload.c: also run by the EL1 test payload, MMU off = Device memory) keeps -mstrict-align
 # (F-18). Everything else runs at EL2 on Normal memory and is built without it (#53).
-STRICT := util stage1 payload
+STRICT := util stage1 payload fdt ram_map
 $(foreach o,$(STRICT),$(OUT)/$(o).o): CFLAGS += -mstrict-align
 
 all: build/wel2.bin
@@ -29,7 +29,7 @@ all: build/wel2.bin
 chain:
 	$(MAKE) OUT=build-chain XFLAGS=-DWEL2_CHAIN=1 PAYLOAD_OBJS= build-chain/wel2.bin
 
-$(OUT)/%.o: %.c boot.h fdt.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h | $(OUT)
+$(OUT)/%.o: %.c boot.h fdt.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_ram.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/vgic.o: ../vgic/vgic.c ../include/wel2_vgic.h | $(OUT)
@@ -42,6 +42,9 @@ $(OUT)/intr_map.o: ../vgic/intr_map.c ../include/wel2_intr_map.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/pirq.o: ../vgic/pirq.c ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_vgic.h | $(OUT)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/ram_map.o: ../vgic/ram_map.c ../include/wel2_ram.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/%.o: %.S | $(OUT)

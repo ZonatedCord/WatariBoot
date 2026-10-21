@@ -46,7 +46,7 @@ reset:
     // (stage1.c, -mstrict-align); s1_enable then switches MMU + caches on, without a stack
     // access in between. x19 (callee-saved) keeps the FDT pointer across the calls.
     mov     x19, x0
-    bl      stage1_build
+    bl      stage1_build            // x0 = FDT: the map covers the RAM it describes
     bl      s1_enable
     mov     x0, x19
     bl      el2_main                // never returns

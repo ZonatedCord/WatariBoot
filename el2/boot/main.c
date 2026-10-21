@@ -166,10 +166,11 @@ static void handle_smc(struct frame *f)
  *                           4 KB device pages with the GICD (64 KB) and the
  *                           first 8 GICR frames (8 x 128 KB) UNMAPPED, so the
  *                           guest faults to EL2 there.
- *   0x40000000-0x7fffffff : 1 GB Normal WB block (QEMU virt RAM).
- *   0x80000000-0xbfffffff : 1 GB Normal WB block (RAM of a -m 2G machine, M1-4).
- *   0xc0000000-0x13fffffff : 1 GB Normal WB blocks (RAM of a -m 4G machine, M2).
- *   0x140000000-0xffffffffff : 1 GB device blocks (unused on virt, PCIe high windows).
+ *   RAM (g_ram_base..g_ram_end, from the FDT /memory node, #60; default 0x40000000-0x13fffffff):
+ *                           1 GB Normal WB blocks where the whole GB is RAM; a level-2 table of
+ *                           2 MB blocks for a GB that is only partly RAM (Normal where RAM exists,
+ *                           device blocks around it, like everywhere else outside RAM).
+ *   everything else       : 1 GB device blocks (PCIe high windows on virt).
  * Chain build (M1-4): the first GB is split into 2 MB blocks; in the first block
  * (the layer's carve-out) 4 KB pages hide EL2 (image + stacks).
  * Note: EL2's own image sits in the RAM block, i.e. it is visible to the
@@ -193,10 +194,21 @@ static uint64_t s2_l1[512] __attribute__((aligned(4096)));
 static uint64_t s2_l1hi[512] __attribute__((aligned(4096)));
 static uint64_t s2_l2[512] __attribute__((aligned(4096)));
 static uint64_t s2_l3[512] __attribute__((aligned(4096)));
+static uint64_t s2_l2ram[512] __attribute__((aligned(4096)));    /* the RAM base GB in 2 MB blocks */
+static uint64_t s2_l2tail[512] __attribute__((aligned(4096)));   /* the last GB when partly RAM */
 #ifdef WEL2_CHAIN
-static uint64_t s2_l2ram[512] __attribute__((aligned(4096)));
 static uint64_t s2_l3ram[512] __attribute__((aligned(4096)));
 #endif
+
+/* 2 MB blocks of one GB: Normal where RAM exists, device elsewhere. */
+static void s2_fill_l2(uint64_t *l2, uint64_t gb_base, const struct wel2_ram *ram)
+{
+    for (unsigned i = 0; i < 512; i++) {
+        uint64_t pa = gb_base + ((uint64_t)i << 21);
+
+        l2[i] = pa | (wel2_ram_has_block(ram, pa) ? S2_BLOCK_NORMAL : S2_BLOCK_DEV);
+    }
+}
 
 static void stage2_init(void)
 {
@@ -215,12 +227,31 @@ static void stage2_init(void)
         s2_l2[i] = ((uint64_t)i << 21) | S2_BLOCK_DEV;
     s2_l2[GICD_PHYS >> 21] = (uint64_t)(uintptr_t)s2_l3 | S2_VALID | S2_TABLE;
 
+    struct wel2_ram ram = { g_ram_base, g_ram_end };
+    unsigned gb0 = (unsigned)(GUEST_RAM_BASE >> 30);
+#ifdef WEL2_CHAIN
+    const bool split_first = true;
+#else
+    const bool split_first = false;
+#endif
+
     s2_l1[0] = (uint64_t)(uintptr_t)s2_l2 | S2_VALID | S2_TABLE;
-    s2_l1[1] = 0x40000000ULL | S2_BLOCK_NORMAL;
-    /* RAM of a -m 2G..4G machine (M2: Windows runs with -m 4G, RAM up to 0x13fffffff) */
-    s2_l1[2] = 0x80000000ULL | S2_BLOCK_NORMAL;
-    s2_l1[3] = 0xc0000000ULL | S2_BLOCK_NORMAL;
-    s2_l1[4] = 0x100000000ULL | S2_BLOCK_NORMAL;
+    for (unsigned gb = 1; gb < 512; gb++) {
+        enum wel2_ram_cover cv = wel2_ram_cover(&ram, gb);
+
+        if (gb == gb0 && (split_first || cv != WEL2_RAM_FULL)) {
+            /* RAM base GB: 2 MB blocks (the chain build also splits the first 2 MB, below) */
+            s2_fill_l2(s2_l2ram, (uint64_t)gb << 30, &ram);
+            s2_l1[gb] = (uint64_t)(uintptr_t)s2_l2ram | S2_VALID | S2_TABLE;
+        } else if (cv == WEL2_RAM_FULL) {
+            s2_l1[gb] = ((uint64_t)gb << 30) | S2_BLOCK_NORMAL;
+        } else if (cv == WEL2_RAM_PARTIAL) {
+            s2_fill_l2(s2_l2tail, (uint64_t)gb << 30, &ram);
+            s2_l1[gb] = (uint64_t)(uintptr_t)s2_l2tail | S2_VALID | S2_TABLE;
+        } else {
+            s2_l1[gb] = ((uint64_t)gb << 30) | S2_BLOCK_DEV;
+        }
+    }
 #ifdef WEL2_CHAIN
     /* M1-4: the layer (image + stacks, from __image_start to the end of the carve-out)
      * is NOT mapped: a guest access takes a stage-2 translation fault and EL2 dumps it
@@ -232,13 +263,8 @@ static void stage2_init(void)
         s2_l3ram[i] = (pa >= hide_lo && pa < GUEST_RAM_BASE + WEL2_CARVE_SIZE)
                           ? 0 : (pa | S2_BLOCK_NORMAL | S2_TABLE);
     }
-    for (unsigned i = 0; i < 512; i++)
-        s2_l2ram[i] = (GUEST_RAM_BASE + ((uint64_t)i << 21)) | S2_BLOCK_NORMAL;
     s2_l2ram[0] = (uint64_t)(uintptr_t)s2_l3ram | S2_VALID | S2_TABLE;
-    s2_l1[1] = (uint64_t)(uintptr_t)s2_l2ram | S2_VALID | S2_TABLE;
 #endif
-    for (unsigned i = 5; i < 512; i++)
-        s2_l1[i] = ((uint64_t)i << 30) | S2_BLOCK_DEV;
     for (unsigned i = 0; i < 512; i++)
         s2_l1hi[i] = ((512ULL << 30) + ((uint64_t)i << 30)) | S2_BLOCK_DEV;
     s2_l0[0] = (uint64_t)(uintptr_t)s2_l1 | S2_VALID | S2_TABLE;
@@ -589,6 +615,8 @@ static void stage1_report(void)
     put_kv("Watari EL2: stage-1 on (identity, 4 KB, 39-bit), SCTLR_EL2 = ", sctlr);
     put_kv("Watari EL2:   TCR_EL2 = ", tcr);
     put_kv("Watari EL2:   HCR_EL2.E2H = ", (hcr >> 34) & 1);
+    put_kv(g_ram_from_fdt ? "Watari EL2: RAM from the FDT /memory node, base " : "Watari EL2: no usable FDT /memory node: default RAM, base ", g_ram_base);
+    put_kv("Watari EL2:   RAM end = ", g_ram_end);
 }
 
 /* ---- EL2 main ---------------------------------------------------------------- */
