@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "wel2_vgic.h"
+#include "wel2_pirq.h"
 
 /* QEMU virt GICv3 windows (hw/arm/virt.c memmap). */
 #define GICD_PHYS   0x08000000UL
@@ -100,6 +101,10 @@ void     gic_phys_spi_enable(uint32_t intid, bool on);
 void     gic_phys_spi_route(uint32_t intid, int vcpu);
 void     gic_phys_spi_trigger(uint32_t intid, bool edge);
 unsigned cpu_from_mpidr(uint64_t mpidr);     /* index into g_pcpu, or ~0u */
+
+/* pirq_qemu.c: SPI policy (wel2_pirq.h) on the QEMU physical GICv3. */
+extern struct pirq g_pirq;
+void pirq_qemu_init(struct vgic *v, unsigned nr_vcpus);   /* before the guest can touch the vGIC */
 
 /* cpuif.c: virtual CPU interface (ICH_*) driven from the vGIC model. */
 void cpuif_init(struct vgic *v);             /* boot core: shared + per-core init */

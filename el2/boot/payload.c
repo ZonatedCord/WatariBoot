@@ -306,6 +306,7 @@ static volatile uint32_t g_online[MAX_CPUS];           /* "cpu N online" printed
 static volatile uint32_t g_ready[MAX_CPUS];            /* 3 timer irqs done */
 static volatile uint32_t g_rounds[MAX_CPUS];           /* times the cpu entered */
 static volatile uint32_t g_go_off;
+static volatile uint32_t g_off_early;               /* 1 + the one core asked to go off first (re-target test) */
 static volatile uint32_t g_fail;
 
 static inline uint64_t cnt(void)
@@ -389,7 +390,8 @@ void el1_secondary_main(void)
 
     if (!wait_flag(&g_sgi2[n], 1, 10, true))
         put_kn("Watari EL1: cpu ", n, " SGI FAILED\n");
-    wait_flag(&g_go_off, 1, 30, true);
+    for (unsigned t = 0; t < 30 && !g_go_off && g_off_early != n + 1; t++)
+        wait_flag(&g_go_off, 1, 1, true);
     __asm__ volatile("msr cntv_ctl_el0, xzr; isb");      /* timer off */
 
     /* Offline sequence of an OS: interrupts off, CPU interface off, redistributor
@@ -468,6 +470,42 @@ static void smp_test(unsigned ncpu)
             put_kv("Watari EL1: SPI delivered to the WRONG cpu: ", g_spi_cpu - 1);
     } else {
         puts_("Watari EL1: SPI FAILED (no RTC interrupt)\n");
+    }
+
+    /* Re-target on CPU_OFF (M2.x-2): the RTC SPI is still routed to `tgt` in IROUTER, but that
+     * core now powers off. The layer moves the physical routing to a core that is on (before
+     * this, a core that was off kept its routing): the alarm is taken at EL2 on core 0 (the
+     * layer logs "physical SPI 34 taken on cpu 0") and, as GICv3 requires for an interrupt
+     * routed to a PE that is off, stays pending for the guest. Migrating the interrupt in
+     * IROUTER, as an OS does when it offlines a core, delivers it to cpu 0. */
+    {
+        uint64_t end = cnt() + 10 * read_cntfrq();
+        int64_t st = 0;
+
+        g_off_early = tgt + 1;
+        while (cnt() < end && (st = psci(PSCI_AFFINITY_INFO, tgt, 0, 0)) != 1)
+            ;
+        if (st != 1) {
+            put_kn("Watari EL1: cpu ", tgt, " DID NOT GO OFF (re-target test)\n");
+        } else {
+            g_spi_cpu = 0;
+            now = rd32(PL031_PHYS + 0x00);
+            wr32(PL031_PHYS + 0x04, now + 2);
+            wr32(PL031_PHYS + 0x10, 1);
+            if (wait_flag(&g_spi_cpu, 1, 3, false)) {
+                put_kv("Watari EL1: retarget FAILED (SPI routed to an off core delivered to cpu ", g_spi_cpu - 1);
+            } else {
+                puts_("Watari EL1: retarget: no delivery yet, migrating SPI 34 to cpu 0\n");
+                *(volatile uint64_t *)(D + 0x6000 + 8ULL * RTC_SPI) = 0;   /* migrate to cpu 0 */
+                if (!wait_flag(&g_spi_cpu, 1, 10, false))
+                    puts_("Watari EL1: retarget FAILED (no RTC interrupt after migration)\n");
+                else if (g_spi_cpu != 1)
+                    put_kv("Watari EL1: retarget FAILED (SPI delivered to the WRONG cpu: ", g_spi_cpu - 1);
+                else
+                    put_kn("Watari EL1: retarget ok, SPI 34 stayed pending while cpu ", tgt,
+                           " was off and arrived on cpu 0 after migration\n");
+            }
+        }
     }
 
     /* Power the secondaries off: each one calls CPU_OFF itself. */
