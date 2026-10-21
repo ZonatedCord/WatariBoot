@@ -14,6 +14,7 @@
 #   serial.log (layer + EDK2 + Windows KD on COM1), shot-NNNN.png, qemu.out, sockdir.txt
 # Sockets live in a short temp dir (path in sockdir.txt): mon.sock (QEMU monitor), ser.sock (COM1).
 # The Windows disk is ALWAYS attached with snapshot=on (never modified); never run two QEMUs on it.
+# The display wake key is Ctrl (Shift x5 would open the Sticky Keys dialog, F-23). Log in / drive Windows: m2-login.sh.
 # Interact with the EDK2 shell/boot manager:  printf 'FS0:\r' | nc -U <sockdir>/ser.sock
 set -u
 cd "$(dirname "$0")"
@@ -54,7 +55,7 @@ echo "$QPID" > "$OUT/qemu.pid"
 echo "QEMU pid $QPID, mode $MODE, output $OUT, sockets $SOCKDIR"
 
 shot() {
-    printf 'sendkey shift\n' | nc -U "$SOCKDIR/mon.sock" -w 1 >/dev/null 2>&1; sleep 1
+    printf 'sendkey ctrl\n' | nc -U "$SOCKDIR/mon.sock" -w 1 >/dev/null 2>&1; sleep 1
     printf 'screendump %s/s.ppm\n' "$SOCKDIR" | nc -U "$SOCKDIR/mon.sock" -w 1 >/dev/null 2>&1; sleep 1
     [ -s "$SOCKDIR/s.ppm" ] && sips -s format png "$SOCKDIR/s.ppm" --out "$OUT/shot-$(printf %04d "$1").png" >/dev/null 2>&1
 }
