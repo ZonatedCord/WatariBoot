@@ -518,6 +518,20 @@ static void t_route_while_off_then_on(void)
 	CHECK_EQ(FK.target[50], 1);
 }
 
+static void t_unrouted_spi_still_moves_on_cpu_off(void)
+{
+	setup_pirq(4, false);
+	enable_spi(70);
+	route_to(70, 2);
+	CHECK_EQ(FK.target[70], 2);
+	wr64(D(0x6000 + 8 * 70), 0x77);                  /* affinity that matches no vCPU */
+	CHECK_EQ(P.guest_target[70], -1);
+	CHECK_EQ(P.phys_target[70], 2);                  /* physical route unchanged */
+	CHECK_EQ(FK.target[70], 2);
+	pirq_vcpu_off(&P, 2);
+	CHECK_EQ(FK.target[70], 0);                      /* not stranded on the core that left */
+}
+
 static void t_fallback_moves_again(void)
 {
 	setup_pirq(4, false);
@@ -595,6 +609,7 @@ int main(void)
 	RUN(t_retarget_off_on);
 	RUN(t_retarget_untouched_and_idempotent);
 	RUN(t_route_while_off_then_on);
+	RUN(t_unrouted_spi_still_moves_on_cpu_off);
 	RUN(t_fallback_moves_again);
 	RUN(t_retarget_eight_vcpus_and_last_cpu);
 	RUN(t_retarget_aic_exposed_only);

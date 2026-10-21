@@ -15,7 +15,8 @@ static const struct intr_entry t8103_allow[] = {
 	/* DWC3 xHCI controllers (their DART interrupts 781/861 stay denied). */
 	{ 777, INTR_TRIG_LEVEL, "dwc3_0" },
 	{ 857, INTR_TRIG_LEVEL, "dwc3_1" },
-	/* PCIe root-port interrupts (INTx fallback, M4); exposing them is [hypothesis]: they
+	/* [hypothesis] 695/698/701 must be confirmed (E-HW0) before the AIC backend uses this table.
+	 * PCIe root-port interrupts (INTx fallback, M4); exposing them is [hypothesis]: they
 	 * are only listed so the arithmetic of ARCHITECTURE 6 is covered by one table. */
 	{ 695, INTR_TRIG_LEVEL, "pcie-port0" },
 	{ 698, INTR_TRIG_LEVEL, "pcie-port1" },

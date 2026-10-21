@@ -134,6 +134,8 @@ void pirq_effect(struct pirq *p, enum vgic_effect eff, uint32_t intid, int arg)
 	switch (eff) {
 	case VGIC_EFFECT_SET_TARGET:
 		p->guest_target[intid] = (int8_t)arg;
+		if (arg < 0)
+			break;                  /* routes nowhere: the physical route stays where it is */
 		{
 			int t = effective_target(p, arg);
 
@@ -172,8 +174,17 @@ void pirq_effect(struct pirq *p, enum vgic_effect eff, uint32_t intid, int arg)
 static void reroute(struct pirq *p, uint32_t id)
 {
 	uint32_t phys = p->ops->phys_of(p->ops->ctx, id);
-	int t = effective_target(p, p->guest_target[id]);
+	int g = p->guest_target[id], t;
 
+	if (g < 0) {                            /* guest names no vCPU: move only if the old one left */
+		t = p->phys_target[id];
+		if (t >= 0 && !(p->online & (1u << t)))
+			t = first_online(p);
+	} else {
+		t = effective_target(p, g);
+	}
+	if (t < 0)
+		return;
 	if (phys == INTR_INVALID || t == p->phys_target[id])
 		return;
 	p->phys_target[id] = (int8_t)t;
