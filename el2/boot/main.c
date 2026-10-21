@@ -335,6 +335,7 @@ static void vgic_setup(void)
         .affinity = aff,
         .hooks = { vgic_log_cb, vgic_effect_cb, 0, lpi_reg_cb },
         .lpis = g_lpi && gic_phys_has_lpis(),
+        .idbits = gic_phys_idbits(),
     };
     pirq_qemu_init(&g_vgic, g_ncpu);            /* SPI policy first: vGIC effects reach it */
     if (vgic_init(&g_vgic, &cfg) != 0)

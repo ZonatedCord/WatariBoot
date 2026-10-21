@@ -62,14 +62,23 @@ void vcif_init(struct wel2_vcif *c, unsigned nlr, unsigned pribits, unsigned pre
 {
 	*c = (struct wel2_vcif){ 0 };
 	c->nlr = nlr > VCIF_MAX_LRS ? VCIF_MAX_LRS : nlr;
-	c->pribits = pribits < 5 ? 5 : (pribits > 8 ? 8 : pribits);
-	c->prebits = prebits < 5 ? 5 : (prebits > 7 ? 7 : prebits);
+	/* ICH_VTR_EL2 (GIC spec 12.4.9): PRIbits+1 is 5..7, PREbits+1 is 5..PRIbits+1. */
+	c->pribits = pribits < 5 ? 5 : (pribits > 7 ? 7 : pribits);
+	c->prebits = prebits < 5 ? 5 : (prebits > c->pribits ? c->pribits : prebits);
+	c->idbits = 16;
 	for (unsigned i = 0; i < VCIF_MAX_LRS; i++)
 		c->owner[i] = -1;
 	c->lr_dirty = (1u << c->nlr) - 1;
 	vcif_reset_vmcr(c);
 	c->ap_dirty = true;
 }
+
+void vcif_set_idbits(struct wel2_vcif *c, unsigned idbits)
+{
+	c->idbits = idbits > 16 ? 24 : 16;
+}
+
+static uint32_t idmask(const struct wel2_vcif *c) { return c->idbits > 16 ? 0xffffffu : 0xffffu; }
 
 void vcif_reset_vmcr(struct wel2_vcif *c)
 {
@@ -110,37 +119,47 @@ unsigned vcif_harvest(struct wel2_vcif *c, struct vgic *v, unsigned vcpu,
 	return n;
 }
 
+/* LR a newcomer of priority `prio` would use: a free one, else the worst pending-only LR
+ * (the guest has not touched it) if it is strictly worse than `prio`. -1 = none. The second
+ * result says whether that LR must be evicted first. */
+static int pick_slot(const struct wel2_vcif *c, unsigned prio, bool *evict)
+{
+	int slot = -1;
+	unsigned worst = 0;
+
+	*evict = false;
+	for (unsigned n = 0; n < c->nlr; n++)
+		if (c->owner[n] < 0)
+			return (int)n;
+	for (unsigned n = 0; n < c->nlr; n++) {
+		unsigned p = lr_prio(c, c->lr[n]);
+
+		if (lr_state(c->lr[n]) == 1 && (slot < 0 || p > worst)) {
+			slot = (int)n;
+			worst = p;
+		}
+	}
+	if (slot < 0 || worst <= prio)
+		return -1;
+	*evict = true;
+	return slot;
+}
+
 void vcif_fill(struct wel2_vcif *c, struct vgic *v, unsigned vcpu)
 {
 	for (;;) {
 		uint32_t id;
 		uint8_t prio;
-		int slot = -1;
+		bool evict;
+		int slot;
 
 		if (!vgic_next_pending(v, vcpu, &id, &prio))
 			return;
 		prio &= (uint8_t)pmask(c);
-		for (unsigned n = 0; n < c->nlr; n++) {
-			if (c->owner[n] < 0) {
-				slot = (int)n;
-				break;
-			}
-		}
-		if (slot < 0) {
-			/* Full: the worst pending-only LR (the guest has not touched it)
-			 * makes room if the newcomer has a strictly better priority. */
-			unsigned worst = 0;
-
-			for (unsigned n = 0; n < c->nlr; n++) {
-				unsigned p = lr_prio(c, c->lr[n]);
-
-				if (lr_state(c->lr[n]) == 1 && (slot < 0 || p > worst)) {
-					slot = (int)n;
-					worst = p;
-				}
-			}
-			if (slot < 0 || worst <= prio)
-				return;
+		slot = pick_slot(c, prio, &evict);
+		if (slot < 0)
+			return;
+		if (evict) {
 			vgic_requeue(v, vcpu, (uint32_t)c->owner[slot]);
 			c->owner[slot] = -1;
 			c->lr[slot] = 0;
@@ -154,6 +173,16 @@ void vcif_fill(struct wel2_vcif *c, struct vgic *v, unsigned vcpu)
 		c->lr_dirty |= 1u << slot;
 		c->st_inject++;
 	}
+}
+
+bool vcif_fill_can_progress(const struct wel2_vcif *c, const struct vgic *v, unsigned vcpu)
+{
+	uint8_t prio;
+	bool evict;
+
+	if (!vgic_next_pending(v, vcpu, 0, &prio))
+		return false;
+	return pick_slot(c, prio & (uint8_t)pmask(c), &evict) >= 0;
 }
 
 bool vcif_overflow(const struct wel2_vcif *c, const struct vgic *v, unsigned vcpu)
@@ -244,7 +273,7 @@ static void priority_drop(struct wel2_vcif *c)
 
 void vcif_eoir1(struct wel2_vcif *c, uint32_t intid)
 {
-	intid &= 0xffff;                          /* IDbits = 16 */
+	intid &= idmask(c);
 	if (intid >= 1020 && intid <= 1023)
 		return;                           /* special INTIDs: no priority drop */
 	priority_drop(c);
@@ -254,7 +283,7 @@ void vcif_eoir1(struct wel2_vcif *c, uint32_t intid)
 
 void vcif_dir(struct wel2_vcif *c, uint32_t intid)
 {
-	intid &= 0xffff;
+	intid &= idmask(c);
 	if (!(c->vmcr & VCIF_VMCR_VEOIM))
 		return;                           /* UNPREDICTABLE with EOImode 0: ignored */
 	if (intid >= 1020 || !deactivate(c, intid))
@@ -311,12 +340,12 @@ void vcif_igrpen_set(struct wel2_vcif *c, unsigned group, uint32_t v)
 /* ICC_CTLR_EL1 (12.2.6): CBPR 0, EOImode 1, PRIbits [10:8], IDbits [13:11],
  * SEIS 14, A3V 15. SEIS is reported 0 on purpose (the SEIS erratum is the
  * reason this path exists: the guest must not think it has to handle SEIS);
- * IDbits = 0 (16 bits) as the vGIC model has 960 INTIDs; A3V = 1. */
+ * IDbits follows the vGIC model (physical GICD_TYPER.IDbits, 16 or 24 bits); A3V = 1. */
 uint32_t vcif_ctlr_get(const struct wel2_vcif *c)
 {
 	return ((c->vmcr & VCIF_VMCR_VCBPR) ? 1u : 0u) |
 	       ((c->vmcr & VCIF_VMCR_VEOIM) ? 2u : 0u) |
-	       ((c->pribits - 1) << 8) | (1u << 15);
+	       ((c->pribits - 1) << 8) | ((c->idbits > 16 ? 1u : 0u) << 11) | (1u << 15);
 }
 
 void vcif_ctlr_set(struct wel2_vcif *c, uint32_t v)

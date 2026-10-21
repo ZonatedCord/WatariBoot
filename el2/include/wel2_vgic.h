@@ -78,6 +78,7 @@ struct vgic_vcpu {
 	uint32_t rd_ctlr;             /* GICR_CTLR.EnableLPIs (bit 0), LPI mode only */
 	uint64_t propbaser, pendbaser;
 	struct vgic_lpi lpi[VGIC_LPI_QUEUE];
+	uint32_t lpi_dropped;         /* LPIs lost because the queue was full */
 	uint32_t aff;                 /* Aff3.Aff2.Aff1.Aff0 packed in 32 bits */
 	bool sleep;                   /* GICR_WAKER.ProcessorSleep */
 	struct vgic_irq priv[32];     /* SGIs 0-15 and PPIs 16-31 */
@@ -90,6 +91,7 @@ struct vgic_config {
 	const uint32_t *affinity;                /* per vCPU, or NULL: aff = index */
 	struct vgic_hooks hooks;
 	bool lpis;                               /* expose LPIs (GICD_TYPER.LPIS, GICR_TYPER.PLPIS) */
+	unsigned idbits;                         /* INTID bits (physical GICD_TYPER.IDbits + 1); 0 = 16; kept in 14..24 */
 };
 
 struct vgic {
@@ -102,6 +104,7 @@ struct vgic {
 	struct vgic_vcpu vcpu[VGIC_MAX_VCPUS];
 	struct vgic_hooks hooks;
 	bool lpis;
+	unsigned idbits;                         /* 14..24 */
 };
 
 /* Returns 0 on success, -1 on invalid configuration. Leaves the vGIC at reset. */
@@ -144,6 +147,9 @@ int  vgic_route_target(const struct vgic *v, uint32_t intid);
 bool vgic_lpi_inject(struct vgic *v, unsigned vcpu_idx, uint32_t intid, uint8_t prio);
 /* Value the guest last wrote to GICR_PROPBASER of vCPU idx (0 if never). */
 /* GICR_CTLR.EnableLPIs of vCPU idx as the guest set it. */
+/* INTID width advertised to the guest, and LPIs dropped on a full queue (per vCPU). */
+unsigned vgic_idbits(const struct vgic *v);
+uint32_t vgic_lpi_dropped(const struct vgic *v, unsigned vcpu_idx);
 bool vgic_lpi_enabled(const struct vgic *v, unsigned vcpu_idx);
 uint64_t vgic_lpi_propbaser(const struct vgic *v, unsigned vcpu_idx);
 

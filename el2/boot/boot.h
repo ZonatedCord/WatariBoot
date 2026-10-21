@@ -96,6 +96,7 @@ void     gic_phys_cpu_down(void);            /* redistributor to sleep, before C
 uint32_t gic_phys_ack(void);                 /* ICC_IAR1_EL1 at EL2 */
 void     gic_phys_eoi(uint32_t intid);       /* ICC_EOIR1_EL1 at EL2 */
 void     gic_phys_ppi_enable(unsigned ppi, bool on);   /* this core's redistributor */
+unsigned gic_phys_idbits(void);              /* physical GICD_TYPER.IDbits + 1 */
 void     gic_phys_kick(unsigned cpu);        /* physical SGI_KICK to another core */
 void     gic_phys_spi_enable(uint32_t intid, bool on);
 void     gic_phys_spi_route(uint32_t intid, int vcpu);

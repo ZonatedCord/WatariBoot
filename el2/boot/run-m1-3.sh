@@ -60,6 +60,10 @@ l_taken=$(grep -n "physical SPI 34 taken on cpu 0" build/uart.txt | head -1 | cu
 l_mig=$(grep -n "retarget: no delivery yet" build/uart.txt | head -1 | cut -d: -f1)
 { [ -n "$l_taken" ] && [ -n "$l_mig" ] && [ "$l_taken" -lt "$l_mig" ]; } || { echo "MISSING: physical SPI 34 on cpu 0 before the guest's migration"; rc=1; }
 expect "Watari EL1: retarget ok, SPI 34 stayed pending while cpu 3 was off and arrived on cpu 0 after migration"
+expect "Watari EL1: cpu 1 cross-core kick eviction: ok, the better SGI came first, every SGI once"
+# the layer must have kicked a core whose LRs were full to evict a worse pending LR (#60)
+l=$(grep -a -F -- "cross-core kicks to evict a worse pending LR" build/uart.txt | head -1)
+{ [ -n "$l" ] && [ "${l##*= }" != "0x0000000000000000" ]; } || { echo "MISSING (zero or absent): cross-core kicks to evict a worse pending LR"; rc=1; }
 expect "Watari EL1: cpu 1 online again after CPU_OFF"
 expect "Watari EL2: PSCI SYSTEM_OFF"
 grep -q "FAILED\|STILL ASLEEP\|unexpected irq\|DID NOT\|NEVER\|WRONG\|did not\|timeout" build/uart.txt && { echo "FAIL: a test reported failure"; rc=1; }

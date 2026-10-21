@@ -223,6 +223,12 @@ bool gic_phys_has_lpis(void)
     return (rd32(GICD_PHYS + 4) >> 17) & 1u;
 }
 
+/* INTID bits of the physical GIC: GICD_TYPER.IDbits [23:19] + 1 (GIC spec 12.9.4). */
+unsigned gic_phys_idbits(void)
+{
+    return ((rd32(GICD_PHYS + 4) >> 19) & 0x1f) + 1;
+}
+
 void gic_phys_lpi_reg(unsigned cpu, unsigned off, uint64_t val)
 {
     uint64_t base = g_pcpu[cpu].gicr;

@@ -33,7 +33,8 @@
 // armed only while interrupts overflow and at least two LRs are valid (so it
 // cannot assert at once). NPIE is not used: it stays asserted while every valid
 // LR is active, a condition EL2 cannot clear. A pending-only LR is evicted when
-// a strictly higher priority interrupt waits (vcif_fill).
+// a strictly higher priority interrupt waits (vcif_fill); a core with full LRs whose pending-only
+// LR would be evicted is kicked by the core that queued the interrupt (cpuif_kick_others, #60).
 //
 // M1-3: everything here is per core (index = this_cpu() = vCPU index); the
 // shared vGIC model is only touched with the big lock held (taken in
@@ -65,7 +66,7 @@ struct cif {
     bool vtimer_masked;                /* PPI 27 masked at the physical GIC */
     uint64_t hcr_base, hcr_cur;        /* ICH_HCR_EL2 without / as currently written */
     unsigned nap;                      /* number of ICH_AP<g>R<n> registers */
-    unsigned st_timer, st_spi, st_kick, st_maint, st_uie, st_lpi;
+    unsigned st_timer, st_spi, st_kick, st_kick_evict, st_maint, st_uie, st_lpi;
     unsigned st_iar, st_eoir, st_dir, st_pmr_w, st_pmr_r, st_other;
     unsigned pmr_reported;
 };
@@ -216,7 +217,7 @@ void cpuif_init_cpu(void)
     struct cif keep = *c;                                /* statistics survive CPU_OFF -> CPU_ON */
 
     *c = (struct cif){ 0 };
-    c->st_timer = keep.st_timer; c->st_spi = keep.st_spi; c->st_lpi = keep.st_lpi; c->st_kick = keep.st_kick;
+    c->st_timer = keep.st_timer; c->st_spi = keep.st_spi; c->st_lpi = keep.st_lpi; c->st_kick = keep.st_kick; c->st_kick_evict = keep.st_kick_evict;
     c->st_maint = keep.st_maint; c->st_uie = keep.st_uie; c->st_iar = keep.st_iar;
     c->st_eoir = keep.st_eoir; c->st_dir = keep.st_dir; c->st_pmr_w = keep.st_pmr_w;
     c->st_pmr_r = keep.st_pmr_r; c->st_other = keep.st_other; c->pmr_reported = keep.pmr_reported;
@@ -224,6 +225,7 @@ void cpuif_init_cpu(void)
     c->vc.st_inject = keep.vc.st_inject; c->vc.st_evict = keep.vc.st_evict;
     c->vc.st_eoi = keep.vc.st_eoi; c->vc.eoicount = keep.vc.eoicount;
     c->vc.no_eoi_maint = g_cpuif_noeoi;
+    vcif_set_idbits(&c->vc, vgic_idbits(g_v));
     c->nap = 1u << (c->vc.prebits - 5);
     hw_out(c);                                           /* LRs 0, VMCR reset, AP 0 */
 
@@ -356,16 +358,22 @@ void cpuif_kick_others(void)
     for (unsigned j = 0; j < g_ncpu; j++) {
         if (j == me || g_pcpu[j].state != CPU_ST_ON)
             continue;
-        /* No free list register: a kick would be useless (and two cores in
-         * that state would kick each other forever). Such a core refills by its
-         * EOI / underflow maintenance interrupts; it is not kicked to evict (a
-         * higher priority arrival waits for its next exit). */
-        bool room = false;
+        /* Kick only when the flush there would change something: a free list register, or
+         * (#60) a pending-only LR of strictly worse priority that the waiting interrupt
+         * evicts (vcif_fill_can_progress). The kicked core's own flush makes the predicate
+         * false again, so two cores with full LRs cannot kick each other forever (the
+         * kick-storm guard of F-20); a core whose LRs are all active or at least as good
+         * is not kicked and refills by its EOI / underflow maintenance interrupts. */
+        struct wel2_vcif *vj = &g_cif[j].vc;
 
-        for (unsigned n = 0; n < g_cif[j].vc.nlr; n++)
-            room |= g_cif[j].vc.owner[n] < 0;
-        if (room && vgic_next_pending(g_v, j, 0, 0)) {
+        if (vcif_fill_can_progress(vj, g_v, j)) {
+            bool room = false;
+
+            for (unsigned n = 0; n < vj->nlr; n++)
+                room |= vj->owner[n] < 0;
             g_cif[me].st_kick++;
+            if (!room)
+                g_cif[me].st_kick_evict++;
             gic_phys_kick(j);
         }
     }
@@ -664,6 +672,24 @@ static unsigned lpi_total(void)
     return n;
 }
 
+static unsigned kick_evict_total(void)
+{
+    unsigned n = 0;
+
+    for (unsigned i = 0; i < g_ncpu; i++)
+        n += g_cif[i].st_kick_evict;
+    return n;
+}
+
+static unsigned lpi_dropped_total(void)
+{
+    unsigned n = 0;
+
+    for (unsigned i = 0; i < g_ncpu; i++)
+        n += vgic_lpi_dropped(g_v, i);
+    return n;
+}
+
 void cpuif_stats(void)
 {
     unsigned t[9] = { 0 };
@@ -687,7 +713,9 @@ void cpuif_stats(void)
     put_kv("Watari EL2: stats: LR evictions (higher priority arrived) = ", t[6]);
     put_kv("Watari EL2: stats: forwarded SPIs = ", t[4]);
     put_kv("Watari EL2: stats: forwarded LPIs = ", lpi_total());
+    put_kv("Watari EL2: stats: LPI queue overflows (LPIs dropped) = ", lpi_dropped_total());
     put_kv("Watari EL2: stats: cross-core kicks (SGI 15) = ", t[5]);
+    put_kv("Watari EL2: stats: cross-core kicks to evict a worse pending LR = ", kick_evict_total());
     if (g_cpuif_trap) {
         icc_report();
         put_kv("Watari EL2: stats: EOIR/DIR without a matching active LR = ", t[8]);
