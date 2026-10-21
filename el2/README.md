@@ -12,7 +12,9 @@ currently holds the first host-testable piece: the **virtual GICv3 model**
   priority, ICFGR, IROUTER, ID registers) and per-vCPU GICR (CTLR, TYPER with the
   Last bit and affinity, WAKER sleep handshake, SGI/PPI frame). Freestanding C11
   (only `stdint.h`, `stdbool.h`, `stddef.h`).
-- `tests/`: host tests (69 cases) with a tiny harness (`test.h`).
+- `include/wel2_intr_map.h`, `vgic/intr_map.c` (M2.x-3): shared interrupt map hwirq <-> vINTID/GSIV (32 + hwirq, MSI pool 704-735 -> 928-959, default-deny allow-list, trigger per entry).
+- `include/wel2_pirq.h`, `vgic/pirq.c` (M2.x-2): physical source -> vINTID policy (level/edge, re-target on CPU_OFF/CPU_ON) behind `struct pirq_ops`.
+- `tests/`: host tests with a tiny harness (`test.h`); `fake_pirq.h` is the fake GIC/AIC backend.
 
 ## Behavior notes
 
