@@ -203,6 +203,24 @@ static void t_effect_set_target_on_irouter_write(void)
 	CHECK_EQ(F.last_eff_arg, 1);
 }
 
+static void t_effect_set_trigger_on_icfgr_write(void)
+{
+	setup(1);
+	F.effects = 0;
+	wr32(D(0xC08), 2u << 16);                    /* INTID 40 -> edge */
+	CHECK_EQ(F.effects, 1);
+	CHECK_EQ(F.last_eff, VGIC_EFFECT_SET_TRIGGER);
+	CHECK_EQ(F.last_eff_intid, 40);
+	CHECK_EQ(F.last_eff_arg, 1);
+	wr32(D(0xC08), 2u << 16);                    /* unchanged: no effect */
+	CHECK_EQ(F.effects, 1);
+	wr32(D(0xC08), 0);                           /* back to level */
+	CHECK_EQ(F.effects, 2);
+	CHECK_EQ(F.last_eff_arg, 0);
+	wr32(D(0xC04), 0xFFFFFFFF);                  /* INTIDs 16-31 are PPIs, words 0/1 not SPIs */
+	CHECK_EQ(F.effects, 2);
+}
+
 static void t_unimplemented_offset_logged(void)
 {
 	setup(1);
@@ -301,6 +319,7 @@ int main(void)
 	RUN(t_irouter_reserved_intids);
 	RUN(t_effects_on_enable_disable);
 	RUN(t_effect_set_target_on_irouter_write);
+	RUN(t_effect_set_trigger_on_icfgr_write);
 	RUN(t_unimplemented_offset_logged);
 	RUN(t_known_razwi_not_logged);
 	RUN(t_setspi_sgir_ignored_logged);

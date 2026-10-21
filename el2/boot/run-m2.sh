@@ -7,9 +7,13 @@
 #   CPUIF=trap     virtual CPU interface in TRAP_EMULATE mode (boot argument wel2.cpuif=trap)
 #   SMP=4 MEM=4G   cores / RAM          TIMEOUT=3600  seconds        SHOT_EVERY=120  seconds
 #   TRACE=SKIP     log trapped GICD/GICR accesses after the first SKIP (wel2.trace=, up to 3000 lines)
-#   ITS=on|off     GIC ITS of the QEMU machine (default on: Windows needs MSI, off = INTx storm, F-23)
+#   MSI=its|gicv2m|off|auto   MSI controller of the QEMU machine (default its = current working config;
+#                  gicv2m = no ITS, GICv2m frame in the MADT; off = no MSI controller; F-23, #62, #65)
+#   ITS=on|off     legacy knob: ITS=off is the same as MSI=off (default on)
+#   NOLAYER=1      control run: no Watari EL2, plain QEMU (no virtualization=on) loads the same EDK2 as -kernel
 #   STOP_ON_RESET=1  stop at the first PSCI SYSTEM_RESET/OFF (a bugcheck restarts Windows: use SHOT_EVERY=6 to catch the blue screen)
 #   TAG=name       run directory name (default: cpuif mode + timestamp)
+#   LOGDIR=m2x     log directory under $WATARI_DATA/logs (default m2)
 # Output (external disk, never in the repo): $WATARI_DATA/logs/m2/<TAG>/
 #   serial.log (layer + EDK2 + Windows KD on COM1), shot-NNNN.png, qemu.out, sockdir.txt
 # Sockets live in a short temp dir (path in sockdir.txt): mon.sock (QEMU monitor), ser.sock (COM1).
@@ -34,16 +38,31 @@ ARGS=""
 APPEND=()
 [ -n "$ARGS" ] && APPEND=(-append "$ARGS")
 TAG="${TAG:-${MODE}-$(date +%m%d-%H%M)}"
-OUT="$WATARI_DATA/logs/m2/$TAG"; mkdir -p "$OUT"
+OUT="$WATARI_DATA/logs/${LOGDIR:-m2}/$TAG"; mkdir -p "$OUT"
 SOCKDIR="$(mktemp -d /tmp/wm2.XXXXXX)"   # unix socket paths must be short
 LOG="$OUT/serial.log"; : > "$LOG"
 echo "$SOCKDIR" > "$OUT/sockdir.txt"
 TIMEOUT="${TIMEOUT:-3600}"; SHOT_EVERY="${SHOT_EVERY:-120}"
 
-qemu-system-aarch64 -M "virt,virtualization=on,gic-version=3,its=${ITS:-on}" -cpu max -accel tcg \
+MSI="${MSI:-}"
+[ -z "$MSI" ] && { [ "${ITS:-on}" = off ] && MSI=off || MSI=its; }
+case "$MSI" in
+    its) MSIOPT="its=on" ;;
+    gicv2m) MSIOPT="its=off,msi=gicv2m" ;;
+    off) MSIOPT="its=off,msi=off" ;;
+    auto) MSIOPT="its=off" ;;   # as F-23: its=off, msi left at QEMU auto
+    *) echo "FAIL: MSI=$MSI (its|gicv2m|off|auto)"; exit 2 ;;
+esac
+if [ -n "${NOLAYER:-}" ]; then
+    MACH="virt,gic-version=3,$MSIOPT"; LOADER=(-kernel "$FD")
+else
+    MACH="virt,virtualization=on,gic-version=3,$MSIOPT"
+    LOADER=(-kernel build-chain/wel2.bin ${APPEND[@]+"${APPEND[@]}"} -device loader,file="$FD",addr=0x40280000,force-raw=on)
+fi
+echo "machine: $MACH"
+qemu-system-aarch64 -M "$MACH" -cpu max -accel tcg \
     -m "${MEM:-4G}" -smp "${SMP:-4}" -display none -nic none \
-    -kernel build-chain/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
-    -device loader,file="$FD",addr=0x40280000,force-raw=on \
+    "${LOADER[@]}" \
     -chardev "socket,id=ser0,path=$SOCKDIR/ser.sock,server=on,wait=off,logfile=$LOG" -serial chardev:ser0 \
     -monitor "unix:$SOCKDIR/mon.sock,server,nowait" \
     -device ramfb -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 \

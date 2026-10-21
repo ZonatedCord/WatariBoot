@@ -270,8 +270,14 @@ static int cfg_access(struct vgic *v, int vcpu, uint32_t base, bool wr, uint32_t
 
 		if (!q)
 			continue;
-		if (wr && base + i >= 16) /* SGIs are RAO/WI */
-			flag_assign(q, VGIC_F_EDGE, (*val >> (2 * i + 1)) & 1u);
+		if (wr && base + i >= 16) { /* SGIs are RAO/WI */
+			bool edge = (*val >> (2 * i + 1)) & 1u;
+			bool was = q->flags & VGIC_F_EDGE;
+
+			flag_assign(q, VGIC_F_EDGE, edge);
+			if (base + i >= 32 && edge != was)
+				do_effect(v, VGIC_EFFECT_SET_TRIGGER, base + i, edge);
+		}
 		if (q->flags & VGIC_F_EDGE)
 			r |= 2u << (2 * i);
 	}

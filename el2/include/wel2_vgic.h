@@ -37,7 +37,8 @@ enum vgic_log_kind {
 enum vgic_effect {
 	VGIC_EFFECT_UNMASK_SPI = 1,  /* SPI enabled by the guest (arg unused) */
 	VGIC_EFFECT_MASK_SPI,        /* SPI disabled by the guest (arg unused) */
-	VGIC_EFFECT_SET_TARGET       /* arg = target vCPU index, or -1 if none */
+	VGIC_EFFECT_SET_TARGET,      /* arg = target vCPU index, or -1 if none */
+	VGIC_EFFECT_SET_TRIGGER      /* GICD_ICFGR of an SPI changed: arg = 1 edge, 0 level (M2.x-1: v2m MSIs are edge) */
 };
 
 struct vgic_hooks {
