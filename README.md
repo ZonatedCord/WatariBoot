@@ -86,7 +86,7 @@ Watari Boot is developed by a small team with AI agents doing much of the resear
 
 ## Tokens and costs
 <!-- TOKEN-COUNTER:START -->
-**Total tokens: 838,898,580 · Estimated cost: $332.98** (updated 2026-10-21; marco: 7 sessions, $332.98)
+**Total tokens: 838,898,580 · Estimated cost: $332.98** (updated 2026-10-21; @ZonatedCord: 7 sessions, $332.98)
 
 | Model | Input | Output | Cache written | Cache read | Estimated cost |
 |---|---:|---:|---:|---:|---:|
