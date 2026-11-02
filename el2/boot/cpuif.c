@@ -236,10 +236,12 @@ void cpuif_init_cpu(void)
     c->hcr_cur = ~0ULL;                                  /* force the write */
     hcr_set(c, false);
 
-    /* Virtual timer: guest sees the system counter unscaled (CNTVOFF = 0) and
-     * has EL1 access to the physical counter/timer (CNTHCTL_EL2.EL1PCTEN/PCEN). */
+    /* Virtual timer: guest sees the system counter unscaled (CNTVOFF = 0) and has EL1 access to the physical
+     * counter/timer. CNTHCTL_EL2 changes layout with E2H (Arm ARM D24.10.2): E2H = 0 EL1PCTEN[0] | EL1PCEN[1];
+     * E2H = 1 EL1PCTEN[10] | EL1PTEN[11] (plus the EL0 enables [0], [1], [8], [9], which only matter with TGE = 1
+     * and are set so that the guest's EL0 never traps either). EVNTEN and the rest stay 0. */
     __asm__ volatile("msr cntvoff_el2, xzr");
-    __asm__ volatile("msr cnthctl_el2, %0" : : "r"(3ULL));
+    __asm__ volatile("msr cnthctl_el2, %0" : : "r"(g_e2h ? 0xf03ULL : 3ULL));
     __asm__ volatile("isb");
 }
 
@@ -299,7 +301,14 @@ void cpuif_cpu_down(void)
 static bool vtimer_line(void)
 {
     uint64_t ctl;
-    __asm__ volatile("mrs %0, cntv_ctl_el0" : "=r"(ctl));
+
+    /* With HCR_EL2.E2H = 1 an EL2 access to CNTV_CTL_EL0 is redirected to CNTHV_CTL_EL2 (the hypervisor's own
+     * virtual timer, Arm ARM D8.13.2 Table D8-114); the guest's EL1 virtual timer is the CNTV_CTL_EL02 alias
+     * (op0 3, op1 5, CRn 14, CRm 3, op2 1; the assembler's default architecture does not know the name). */
+    if (g_e2h)
+        __asm__ volatile("mrs %0, S3_5_C14_C3_1" : "=r"(ctl));
+    else
+        __asm__ volatile("mrs %0, cntv_ctl_el0" : "=r"(ctl));
     return (ctl & 5) == 5 && !(ctl & 2);
 }
 
@@ -719,6 +728,18 @@ void cpuif_stats(void)
     put_kv("Watari EL2: stats: underflow maintenance irqs (UIE) = ", t[7]);
     put_kv("Watari EL2: stats: LR evictions (higher priority arrived) = ", t[6]);
     put_kv("Watari EL2: stats: forwarded SPIs = ", t[4]);
+    {
+        /* The EL2 regime must survive a guest that ran: an EL2 access to SCTLR_EL1 with E2H = 1 would be redirected
+         * to SCTLR_EL2 (Arm ARM D8.13.2) and switch the EL2 MMU off. Checked here, after the guest, on this core. */
+        uint64_t sctlr, hcr;
+
+        __asm__ volatile("mrs %0, sctlr_el2" : "=r"(sctlr));
+        __asm__ volatile("mrs %0, hcr_el2" : "=r"(hcr));
+        if ((sctlr & 0x1005) == 0x1005 && (((hcr >> 34) & 1) != 0) == g_e2h)
+            puts_("Watari EL2: stats: EL2 regime intact after the guest (SCTLR_EL2.M/C/I set, HCR_EL2.E2H as built)\n");
+        else
+            put_kv("Watari EL2: stats: ERROR: EL2 MMU/caches off or E2H changed, SCTLR_EL2 = ", sctlr);
+    }
     put_kv("Watari EL2: stats: forwarded LPIs = ", lpi_total());
     put_kv("Watari EL2: stats: LPIs dropped (queue full or beyond IDbits) = ", lpi_dropped_total());
     {

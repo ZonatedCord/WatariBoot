@@ -6,6 +6,8 @@ currently holds the first host-testable piece: the **virtual GICv3 model**
 
 ## What is in here
 
+- `include/wel2_pt.h`, `vgic/pt.c`, `include/wel2_maps.h`, `vgic/maps.c` (#58): granule-parametric (4 KB / 16 KB) page-table builder and the EL2 stage-1 / guest stage-2 maps, host-tested in `tests/test_pt.c`.
+
 - `include/wel2_vgic.h`: public API (`vgic_mmio_read/write`, `vgic_set_irq_level`,
   `vgic_set_pending`, `vgic_next_pending`, `vgic_ack`, `vgic_eoi`, `vgic_route_target`).
 - `vgic/vgic.c`: GICD (CTLR with DS=1, TYPER, IIDR, group/enable/pending/active,
@@ -15,9 +17,10 @@ currently holds the first host-testable piece: the **virtual GICv3 model**
 - `include/wel2_intr_map.h`, `vgic/intr_map.c` (M2.x-3): shared interrupt map hwirq <-> vINTID/GSIV (32 + hwirq, MSI pool 704-735 -> 928-959, default-deny allow-list, trigger per entry).
 - `include/wel2_pirq.h`, `vgic/pirq.c` (M2.x-2): physical source -> vINTID policy (level/edge, re-target on CPU_OFF/CPU_ON) behind `struct pirq_ops`.
 - `include/wel2_pirq_guard.h`, `vgic/pirq_guard.c` (#67, host-only so far): storm limiter decorator over `pirq_ops` (rate budget per window with the caller's timer count, mask + cool-down, log once).
+- `include/wel2_aic.h`, `vgic/pirq_aic.c` (#59, host-only so far): Apple AIC (AICv1, t8103) backend of `struct pirq_ops` behind an MMIO accessor (`struct aic_io`): EVENT decode (hw IRQ / legacy IPI / bad), mask and unmask via MASK_SET/CLR, `TARGET_CPU` single-bit from the vCPU -> core table, SW_SET/SW_CLR, `auto_masks = true`. Register table with verified/hypothesis marks in the header. Not wired into the boot path (QEMU has a GIC): M3a.
 - `include/wel2_v2m.h`, `vgic/v2m.c` (#67, host-only): GICv2m-style MSI frame model (TYPER, SETSPI_NS doorbell -> pending edge SPI, IIDR) for the M3a frame design; not in the boot path.
 - `include/wel2_ram.h`, `vgic/ram_map.c` (#60): guest RAM range from the FDT `/memory` node (2 MB rounding, clamp, which 1 GB entries are full/partial/not RAM), used by the EL2 stage-1 and stage-2 builders.
-- `tests/`: host tests with a tiny harness (`test.h`); `fake_pirq.h` is the fake GIC/AIC backend.
+- `tests/`: host tests with a tiny harness (`test.h`); `fake_pirq.h` is the fake GIC/AIC backend (ops level), `fake_aic.h` a register-level AIC model with knobs for the unverified behaviour (`test_pirq_aic.c`).
 
 ## Behavior notes
 

@@ -12,6 +12,7 @@
 #   ITS=on|off     legacy knob: ITS=off is the same as MSI=off (default on)
 #   NOLAYER=1      control run: no Watari EL2, plain QEMU (no virtualization=on) loads the same EDK2 as -kernel
 #   STOP_ON_RESET=1  stop at the first PSCI SYSTEM_RESET/OFF (a bugcheck restarts Windows: use SHOT_EVERY=6 to catch the blue screen)
+#   WEL2_ARGS="wel2.e2h=1 wel2.gran=16k"   extra boot arguments for the layer (E2H mode, translation granule)
 #   TAG=name       run directory name (default: cpuif mode + timestamp)
 #   LOGDIR=m2x     log directory under $WATARI_DATA/logs (default m2)
 # Output (external disk, never in the repo): $WATARI_DATA/logs/m2/<TAG>/
@@ -35,6 +36,7 @@ MODE="${CPUIF:-hw}"
 ARGS=""
 [ "$MODE" = trap ] && ARGS="wel2.cpuif=trap"
 [ -n "${TRACE:-}" ] && ARGS="$ARGS wel2.trace=$TRACE"
+[ -n "${WEL2_ARGS:-}" ] && ARGS="$ARGS $WEL2_ARGS"
 APPEND=()
 [ -n "$ARGS" ] && APPEND=(-append "$ARGS")
 TAG="${TAG:-${MODE}-$(date +%m%d-%H%M)}"

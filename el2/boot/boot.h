@@ -69,6 +69,18 @@ void big_lock(void);                         /* serialises all EL2 shared state 
 void big_unlock(void);
 void enter_el1(uint64_t entry, uint64_t sp, uint64_t spsr, uint64_t hcr, uint64_t x0)
     __attribute__((noreturn));
+/* Build defaults of the two M1 switches, overridden by the boot arguments wel2.e2h=0|1 and wel2.gran=4k|16k
+ * (stage1.c). 1 / 16 KB is what the real M1 needs (E2H stuck at 1, 16 KB translation granule only). */
+#ifndef WEL2_DEF_E2H
+#define WEL2_DEF_E2H 1
+#endif
+#ifndef WEL2_DEF_GRAN
+#define WEL2_DEF_GRAN 14              /* 12 = 4 KB, 14 = 16 KB */
+#endif
+extern unsigned g_gran;                      /* translation granule shift of the stage-1 and stage-2 maps */
+extern bool g_e2h;                           /* HCR_EL2.E2H the layer runs with */
+extern bool g_e2h_stuck;                     /* wel2.e2h=0 was asked and the bit reads 1 (the M1) */
+extern bool g_gran_fallback;                 /* the requested granule is not implemented, the other is used */
 void stage1_build(uint64_t fdt);             /* stage1.c: boot core, MMU off; fdt = x0 from the loader */
 /* Guest RAM [g_ram_base, g_ram_end) as the FDT /memory node describes it (stage1.c). Without a
  * usable node: the old fixed map, 0x40000000-0x13fffffff (a -m 4G machine). g_ram_from_fdt says which. */
