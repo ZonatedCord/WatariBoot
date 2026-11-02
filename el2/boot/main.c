@@ -201,13 +201,18 @@ static void stage2_init(void)
     if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, WEL2_S2_IPA_BITS) ||
         wel2_s2_build(&s2_pt, &ram, holes, nholes))
         fatal_msg("stage-2 tables: bad geometry or the table pool is too small");
-    g_vtcr = wel2_vtcr(&s2_pt, 2);               /* PS = 0b010: 40-bit */
+    /* VTCR_EL2.PS = min(ID_AA64MMFR0_EL1.PARange, 0b010 = 40 bit): the M1 may implement fewer physical address
+     * bits than the 40-bit IPA space the guest is given (an output address above PARange is an address size fault). */
+    uint64_t mmfr0;
+
+    __asm__ volatile("mrs %0, id_aa64mmfr0_el1" : "=r"(mmfr0));
+    g_vtcr = wel2_vtcr(&s2_pt, (mmfr0 & 0xf) < 2 ? (unsigned)(mmfr0 & 0xf) : 2u);
     put_kv("Watari EL2: stage-2 granule shift = ", g_gran);
     put_kv("Watari EL2:   start level = ", s2_pt.start_level);
     put_kv("Watari EL2:   tables used = ", s2_pt.used);
 }
 
-/* Per core: VTCR_EL2 (Arm ARM D24.2.223) from the builder: RES1 bit31, PS=0b010 (40 bit), TG0 (4 KB: 0,
+/* Per core: VTCR_EL2 (Arm ARM D24.2.223) from the builder: RES1 bit31, PS=min(PARange, 40 bit), TG0 (4 KB: 0,
  * 16 KB: 0b10), SH0=3, ORGN0=IRGN0=1 (WB WA), SL0 per granule and start level, T0SZ=24 (40-bit IPA). */
 void stage2_enable(void)
 {

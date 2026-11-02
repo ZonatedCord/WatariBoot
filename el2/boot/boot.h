@@ -72,10 +72,10 @@ void enter_el1(uint64_t entry, uint64_t sp, uint64_t spsr, uint64_t hcr, uint64_
 /* Build defaults of the two M1 switches, overridden by the boot arguments wel2.e2h=0|1 and wel2.gran=4k|16k
  * (stage1.c). 1 / 16 KB is what the real M1 needs (E2H stuck at 1, 16 KB translation granule only). */
 #ifndef WEL2_DEF_E2H
-#define WEL2_DEF_E2H 0
+#define WEL2_DEF_E2H 1
 #endif
 #ifndef WEL2_DEF_GRAN
-#define WEL2_DEF_GRAN 12              /* 12 = 4 KB, 14 = 16 KB */
+#define WEL2_DEF_GRAN 14              /* 12 = 4 KB, 14 = 16 KB */
 #endif
 extern unsigned g_gran;                      /* translation granule shift of the stage-1 and stage-2 maps */
 extern bool g_e2h;                           /* HCR_EL2.E2H the layer runs with */

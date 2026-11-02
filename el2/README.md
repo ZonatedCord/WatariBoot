@@ -6,6 +6,8 @@ currently holds the first host-testable piece: the **virtual GICv3 model**
 
 ## What is in here
 
+- `include/wel2_pt.h`, `vgic/pt.c`, `include/wel2_maps.h`, `vgic/maps.c` (#58): granule-parametric (4 KB / 16 KB) page-table builder and the EL2 stage-1 / guest stage-2 maps, host-tested in `tests/test_pt.c`.
+
 - `include/wel2_vgic.h`: public API (`vgic_mmio_read/write`, `vgic_set_irq_level`,
   `vgic_set_pending`, `vgic_next_pending`, `vgic_ack`, `vgic_eoi`, `vgic_route_target`).
 - `vgic/vgic.c`: GICD (CTLR with DS=1, TYPER, IIDR, group/enable/pending/active,
