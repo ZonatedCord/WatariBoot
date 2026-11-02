@@ -108,6 +108,8 @@ static void t_init_state(void)
 	CHECK(A.ops.auto_masks);
 	CHECK(A.ops.strict_level);
 	CHECK(A.ops.trigger_of != NULL);
+	CHECK_EQ(pirq_aic_init_cpu(&A, 0), 0);
+	CHECK_EQ(FA.ipi_mask[0], AIC_IPI_OTHER | AIC_IPI_SELF);
 
 	/* bad arguments and an implausible INFO leave the block alone */
 	io = fa_io(&FA);
@@ -252,6 +254,8 @@ static void t_edge_unmask_at_injection(void)
 	CHECK(A.st.trigger_noop > 0);                              /* pirq_init programmed the table triggers */
 }
 
+/* Knowledge test, pending E-HW0: it documents the two possible chip behaviours, it does not
+ * verify the chip. */
 static void t_edge_pulse_while_masked(void)
 {
 	struct aic_event ev;
@@ -455,9 +459,10 @@ static void t_odd_events(void)
 	CHECK_EQ(P.st.arrivals + P.st.denied, 0);
 }
 
-/* A hardware FIQ (guest timer, PMU, fast IPI) has no AIC register at all: nothing the backend
- * could be asked for. The design point is that its INTIDs are not SPIs. */
-static void t_timer_is_not_an_spi(void)
+/* This tests the interrupt map only (FIQ numbers 0..5 and PPIs 16..31 have no exposed source
+ * or vINTID). It does not test FIQ separation: a hardware FIQ has no AIC register, so there is
+ * nothing in this backend to exercise; that separation is a boot-path property (M3a). */
+static void t_fiq_numbers_and_ppis_not_in_intr_map(void)
 {
 	setup_aic(false, false);
 	for (uint32_t t = 0; t < 6; t++)                           /* FIQ numbers 0..5 of the binding */
@@ -492,6 +497,54 @@ static void t_sw_set_clr(void)
 	CHECK_EQ(FA.n_unknown_wr, 0);
 }
 
+/* DIE is [31:24], TYPE [23:16]: a type-1 event on die 1 is not an IRQ of ours, and a type
+ * value with bits above 8 must not alias into the die field. */
+static void t_event_die_field(void)
+{
+	struct aic_event ev;
+
+	setup_aic(false, false);
+	FA.has_forced = true;
+	FA.forced = (1u << 24) | (AIC_EVENT_TYPE_HW << 16) | ANS_PHYS;
+	ev = pirq_aic_poll(&A);
+	CHECK_EQ(ev.kind, AIC_EV_BAD);
+	CHECK_EQ(ev.die, 1);
+	CHECK_EQ(ev.num, ANS_PHYS);
+	CHECK_EQ(A.st.bad, 1);
+	FA.has_forced = true;
+	FA.forced = (AIC_EVENT_TYPE_HW << 16) | ANS_PHYS;          /* die 0 */
+	ev = pirq_aic_poll(&A);
+	CHECK_EQ(ev.kind, AIC_EV_IRQ);
+	CHECK_EQ(ev.die, 0);
+	CHECK_EQ(AIC_EVENT_TYPE(0x01040001u), 4);
+	CHECK_EQ(AIC_EVENT_DIE(0x01040001u), 1);
+}
+
+static void t_init_cpu_ipi_per_core(void)
+{
+	setup_aic(false, false);
+	FA.ipi_mask[1] = 0;                                        /* core 1 left with IPIs open */
+	FA.ipi_pend[1] = AIC_IPI_OTHER;
+	FA.cpu = 1;
+	CHECK_EQ(pirq_aic_init_cpu(&A, 1), 0);
+	CHECK_EQ(FA.ipi_mask[1], AIC_IPI_OTHER | AIC_IPI_SELF);
+	CHECK_EQ(FA.ipi_pend[1], 0);
+	CHECK(!fa_irq_out(&FA, 1));
+	CHECK_EQ(pirq_aic_init_cpu(&A, 4), -1);                    /* no such vCPU */
+}
+
+static void t_init_cpu_whoami(void)
+{
+	setup_aic(false, false);
+	FA.cpu = 4;                                                /* vCPU 2 runs on core 4 */
+	CHECK_EQ(pirq_aic_init_cpu(&A, 2), 0);
+	CHECK_EQ(A.st.whoami_mismatch, 0);
+	FA.cpu = 2;                                                /* P0 is not core 2 here */
+	CHECK_EQ(pirq_aic_init_cpu(&A, 2), -1);
+	CHECK_EQ(A.st.whoami_mismatch, 1);
+	CHECK_EQ(FA.ipi_mask[2], AIC_IPI_OTHER | AIC_IPI_SELF);    /* still quieted */
+}
+
 int main(void)
 {
 	RUN(t_init_state);
@@ -507,7 +560,10 @@ int main(void)
 	RUN(t_guard_storm);
 	RUN(t_ipi_contained);
 	RUN(t_odd_events);
-	RUN(t_timer_is_not_an_spi);
+	RUN(t_fiq_numbers_and_ppis_not_in_intr_map);
+	RUN(t_event_die_field);
+	RUN(t_init_cpu_ipi_per_core);
+	RUN(t_init_cpu_whoami);
 	RUN(t_sw_set_clr);
 	TESTS_DONE();
 }

@@ -118,8 +118,6 @@ int pirq_aic_init(struct pirq_aic *a, const struct aic_io *io, const struct intr
 	}
 	for (uint32_t i = 0; i < a->nr_irq; i++)
 		wr(a, AIC_TARGET_CPU(i), 1u << a->cpu_of_vcpu[0]);
-	wr(a, AIC_IPI_ACK, AIC_IPI_OTHER | AIC_IPI_SELF);
-	wr(a, AIC_IPI_MASK_SET, AIC_IPI_OTHER | AIC_IPI_SELF);
 
 	a->ops = (struct pirq_ops){
 		.name = "pirq-aic-t8103",
@@ -137,6 +135,22 @@ int pirq_aic_init(struct pirq_aic *a, const struct aic_io *io, const struct intr
 	return 0;
 }
 
+int pirq_aic_init_cpu(struct pirq_aic *a, unsigned vcpu)
+{
+	int rc = 0;
+
+	if (vcpu >= a->nr_vcpus)
+		return -1;
+	/* Quiet this core's IPIs whatever WHOAMI says: it is the calling core's own view. */
+	wr(a, AIC_IPI_ACK, AIC_IPI_OTHER | AIC_IPI_SELF);
+	wr(a, AIC_IPI_MASK_SET, AIC_IPI_OTHER | AIC_IPI_SELF);
+	if (rd(a, AIC_WHOAMI) != a->cpu_of_vcpu[vcpu]) {
+		a->st.whoami_mismatch++;
+		rc = -1;
+	}
+	return rc;
+}
+
 const struct pirq_ops *pirq_aic_ops(struct pirq_aic *a)
 {
 	return &a->ops;
@@ -144,7 +158,7 @@ const struct pirq_ops *pirq_aic_ops(struct pirq_aic *a)
 
 struct aic_event pirq_aic_poll(struct pirq_aic *a)
 {
-	struct aic_event ev = { AIC_EV_NONE, 0, 0 };
+	struct aic_event ev = { AIC_EV_NONE, 0, 0, 0 };
 	uint32_t raw = rd(a, AIC_EVENT);
 
 	if (raw == 0) {
@@ -153,8 +167,14 @@ struct aic_event pirq_aic_poll(struct pirq_aic *a)
 	}
 	ev.raw = raw;
 	ev.num = AIC_EVENT_NUM(raw);
+	ev.die = AIC_EVENT_DIE(raw);
 	a->st.events++;
 
+	if (ev.die != 0) {                      /* single die on the t8103: not ours to interpret */
+		ev.kind = AIC_EV_BAD;
+		a->st.bad++;
+		return ev;
+	}
 	switch (AIC_EVENT_TYPE(raw)) {
 	case AIC_EVENT_TYPE_HW:
 		if (irq_ok(a, ev.num)) {

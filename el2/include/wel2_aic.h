@@ -11,11 +11,15 @@
  * Linux DT binding apple,aic.yaml, our notes re/f0-m1-fiq-irq.md and re/f0-qemu-aic-models.md);
  * no driver code is copied. Status marks are per row:
  *
- *   0x0004 INFO         NR_IRQ in [15:0]                      [verified: re/f0-qemu-aic-models 5;
- *                                                              Asahi doc lists it as "NR_IRQ?"]
- *   0x2000 WHOAMI       index of the reading core             [verified: re/f0-m1-fiq-irq 4.1]
- *   0x2004 EVENT        read = type[31:16] | number[15:0], 0 = nothing pending; the delivered
- *                       source is masked by the read          [verified: Asahi doc "HW irq flow"]
+ *   0x0004 INFO         NR_IRQ in [15:0]                      [offset: Asahi doc, which marks it
+ *                                                              "NR_IRQ?"; field position: Linux
+ *                                                              driver register definitions]
+ *   0x2000 WHOAMI       index of the reading core             [verified: Linux driver register
+ *                                                              definitions; used by its CPU check]
+ *   0x2004 EVENT        read = die[31:24] | type[23:16] | number[15:0], 0 = nothing pending;
+ *                       the delivered source is masked by the read
+ *                       [verified: Asahi doc "HW irq flow" for the masking; field layout and
+ *                        the die field: Linux driver register definitions, hardware facts]
  *   0x2008 IPI_SEND     legacy IPI: bit n = "other" IPI to core n, bit 31 = "self"
  *   0x200c IPI_ACK      bit 0 other, bit 31 self              [verified: Asahi doc "IPI flow"]
  *   0x2024 IPI_MASK_SET / 0x2028 IPI_MASK_CLR                 [verified: Asahi doc]
@@ -23,11 +27,15 @@
  *                                                             [verified: Asahi doc "IRQ_TGT"]
  *   0x4000 SW_SET / 0x4080 SW_CLR   one bit per IRQ, ORed with the hardware line
  *                                                             [verified: Asahi doc "SW_GEN_*"]
- *   0x4100 MASK_SET / 0x4180 MASK_CLR  one bit per IRQ; write 1 = set/clear, SET reads the state
+ *   0x4100 MASK_SET / 0x4180 MASK_CLR  one bit per IRQ; write 1 = set/clear
  *                                                             [verified: Asahi doc "IRQ_MASK_*"]
+ *                       that a MASK_SET read returns the current mask state: [hypothesis]
+ *                       (Asahi doc: "reads current state"), never relied on by this code
  *   0x4200 HW_IRQ_MON   current hardware line state           [verified offset, meaning is a
  *                                                              "?" in the Asahi doc: hypothesis]
- *   EVENT type 1 = hardware IRQ, 4 = legacy IPI (number 1 other, 2 self)   [verified: re notes]
+ *   EVENT type 1 = hardware IRQ, 4 = legacy IPI (number 1 other, 2 self)
+ *                                  [verified: Linux driver defines, as hardware facts]
+ *   IPI_ACK / IPI_MASK_SET / IPI_MASK_CLR are per-core views: run pirq_aic_init_cpu() on every core.
  *
  * Not verified (E-HW0, M3a): reset value of MASK/TARGET_CPU, whether the EVENT read clears a
  * SW_SET bit, whether an edge pulse is latched while the source is masked, order of IPI vs IRQ
@@ -61,7 +69,8 @@
 #define AIC_MASK_CLR(n)     (0x4180u + 4u * ((n) / 32))
 #define AIC_HW_IRQ_MON(n)   (0x4200u + 4u * ((n) / 32))
 
-#define AIC_EVENT_TYPE(e)   (((e) >> 16) & 0xFFFFu)
+#define AIC_EVENT_TYPE(e)   (((e) >> 16) & 0xFFu)
+#define AIC_EVENT_DIE(e)    (((e) >> 24) & 0xFFu)
 #define AIC_EVENT_NUM(e)    ((e) & 0xFFFFu)
 #define AIC_EVENT_TYPE_HW   1u
 #define AIC_EVENT_TYPE_IPI  4u
@@ -71,7 +80,7 @@
 #define AIC_IPI_OTHER       (1u << 0)
 #define AIC_IPI_SELF        (1u << 31)
 
-#define AIC_MAX_IRQS        1024u          /* tracked sources (t8103 has 896 wired + MSI pool) */
+#define AIC_MAX_IRQS        1024u          /* tracked sources (t8103: 896 wired + pool is [hypothesis], design number) */
 #define AIC_MAX_CPUS        8u             /* t8103: E0-E3, P0-P3 */
 
 /* The only way this module touches hardware. off is relative to the AIC base. */
@@ -92,6 +101,7 @@ struct aic_event {
 	enum aic_ev_kind kind;
 	uint32_t raw;          /* the EVENT value */
 	uint32_t num;          /* IRQ number (AIC_EV_IRQ), IPI number (AIC_EV_IPI) */
+	uint32_t die;          /* die field of the event (0 on the t8103; non-zero is AIC_EV_BAD) */
 };
 
 struct pirq_aic_stats {
@@ -101,6 +111,7 @@ struct pirq_aic_stats {
 	uint32_t bad;          /* unknown type or number out of range */
 	uint32_t trigger_noop; /* set_trigger calls (the AIC has no trigger register) */
 	uint32_t bad_vcpu;     /* set_target with a vCPU that has no core */
+	uint32_t whoami_mismatch; /* pirq_aic_init_cpu: WHOAMI differs from the expected core */
 };
 
 struct pirq_aic {
@@ -114,10 +125,17 @@ struct pirq_aic {
 };
 
 /* Reads INFO, masks every source, clears every software bit, points every TARGET_CPU at the
- * core of vCPU 0, masks and acks the legacy IPIs. cpu_of_vcpu[] has nr_vcpus entries (a core
- * index < AIC_MAX_CPUS each). Returns 0, or -1 on a bad argument or an implausible INFO. */
+ * core of vCPU 0. cpu_of_vcpu[] has nr_vcpus entries (a core index < AIC_MAX_CPUS each).
+ * Returns 0, or -1 on a bad argument or an implausible INFO. Per-core state (the IPI views)
+ * is NOT touched here: call pirq_aic_init_cpu() on every core. */
 int pirq_aic_init(struct pirq_aic *a, const struct aic_io *io, const struct intr_map *map,
 		  const uint8_t *cpu_of_vcpu, unsigned nr_vcpus);
+/* Per-core init, run ON the core that runs vCPU `vcpu`: acks and masks this core's legacy IPIs
+ * (IPI_ACK / IPI_MASK_* are per-core views), and checks WHOAMI against cpu_of_vcpu[vcpu]
+ * (design: E0-3 = 0-3, P0-3 = 4-7, [hypothesis] until #55). Returns 0, or -1 on a mismatch
+ * (counted in st.whoami_mismatch; the TARGET_CPU bits derived from the table would then point
+ * at the wrong core, so the caller must not go on) or a bad vCPU. */
+int pirq_aic_init_cpu(struct pirq_aic *a, unsigned vcpu);
 /* The ops table for pirq_init() / pirq_guard_init(); valid as long as a is. */
 const struct pirq_ops *pirq_aic_ops(struct pirq_aic *a);
 
