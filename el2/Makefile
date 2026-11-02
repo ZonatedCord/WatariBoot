@@ -5,8 +5,8 @@ CC      ?= clang
 WARN    := -std=c11 -Wall -Wextra -Werror
 INC     := -Iinclude
 BUILD   := build
-LIBSRC  := vgic/vgic.c vgic/vcif.c vgic/intr_map.c vgic/pirq.c vgic/pirq_guard.c vgic/v2m.c vgic/ram_map.c
-TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif intr_map ram_map pirq_guard v2m pirq_eoi
+LIBSRC  := vgic/vgic.c vgic/vcif.c vgic/intr_map.c vgic/pirq.c vgic/pirq_guard.c vgic/v2m.c vgic/ram_map.c vgic/pt.c vgic/maps.c
+TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif intr_map ram_map pirq_guard v2m pirq_eoi pt
 
 .PHONY: test clean
 test: $(addprefix $(BUILD)/test_,$(TESTS))
@@ -34,7 +34,13 @@ $(BUILD)/v2m.o: vgic/v2m.c include/wel2_v2m.h include/wel2_vgic.h | $(BUILD)
 $(BUILD)/ram_map.o: vgic/ram_map.c include/wel2_ram.h | $(BUILD)
 	$(CC) $(WARN) -ffreestanding -O2 $(INC) -c $< -o $@
 
-LIBOBJ := $(BUILD)/vgic.o $(BUILD)/vcif.o $(BUILD)/intr_map.o $(BUILD)/pirq.o $(BUILD)/pirq_guard.o $(BUILD)/v2m.o $(BUILD)/ram_map.o
+$(BUILD)/pt.o: vgic/pt.c include/wel2_pt.h | $(BUILD)
+	$(CC) $(WARN) -ffreestanding -O2 $(INC) -c $< -o $@
+
+$(BUILD)/maps.o: vgic/maps.c include/wel2_maps.h include/wel2_pt.h include/wel2_ram.h | $(BUILD)
+	$(CC) $(WARN) -ffreestanding -O2 $(INC) -c $< -o $@
+
+LIBOBJ := $(BUILD)/vgic.o $(BUILD)/vcif.o $(BUILD)/intr_map.o $(BUILD)/pirq.o $(BUILD)/pirq_guard.o $(BUILD)/v2m.o $(BUILD)/ram_map.o $(BUILD)/pt.o $(BUILD)/maps.o
 
 $(BUILD)/test_%: tests/test_%.c tests/test.h tests/fake_pirq.h $(LIBOBJ) | $(BUILD)
 	$(CC) $(WARN) -O1 -g $(INC) -Itests $< $(LIBOBJ) -o $@
