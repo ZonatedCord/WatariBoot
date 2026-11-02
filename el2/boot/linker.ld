@@ -7,10 +7,10 @@ SECTIONS
     __image_start = .;
     .text.boot : { KEEP(*(.text.boot)) }
     .text : { *(.text .text.*) }
-    . = ALIGN(4096);               /* page permissions of the EL2 stage-1 map (stage1.c) */
+    . = ALIGN(16384);              /* page permissions of the EL2 stage-1 map (stage1.c): 16 KB pages on the M1 */
     __text_end = .;
     .rodata : { *(.rodata .rodata.*) }
-    . = ALIGN(4096);
+    . = ALIGN(16384);
     __rodata_end = .;
     .data : { *(.data .data.*) }
     . = ALIGN(16);
@@ -18,7 +18,7 @@ SECTIONS
     .bss : { *(.bss .bss.*) *(COMMON) }
     . = ALIGN(16);
     __bss_end = .;
-    . = ALIGN(4096);
+    . = ALIGN(16384);
     __image_end = .;
     __image_size = __image_end - __image_start;
     __el2_stacks = .;              /* 8 x 16 KB EL2 stacks, core i uses slot i */

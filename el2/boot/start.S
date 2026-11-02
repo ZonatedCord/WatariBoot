@@ -80,14 +80,21 @@ secondary_entry:
     bl      el2_secondary_main      // never returns
     b       park
 
-// s1_enable: MAIR/TCR/TTBR0_EL2 from g_s1 (stage1.c), invalidate TLB + I-cache, then
-// SCTLR_EL2.M/C/I = 1 (A, WXN, EE cleared). Registers only (x0-x4), returns through x30.
+// s1_enable: HCR_EL2.E2H, then MAIR/TCR/TTBR0_EL2 from g_s1 (stage1.c), invalidate TLB + I-cache, then
+// SCTLR_EL2.M/C/I = 1 (A, WXN, EE cleared). Registers only (x0-x5), returns through x30.
+// E2H comes first and per core: HCR_EL2 is not shared, and TCR_EL2/SCTLR_EL2 change layout with it
+// (Arm ARM D8.13; written with the MMU off, as a change of the translation regime needs).
     .text
     .global s1_enable
 s1_enable:
     ldr     x0, =g_s1
     ldp     x1, x2, [x0]            // mair, tcr
     ldr     x3, [x0, #16]           // ttbr
+    ldr     x5, [x0, #24]           // e2h (the value that read back on the boot core)
+    mrs     x4, hcr_el2
+    bfi     x4, x5, #34, #1         // HCR_EL2.E2H
+    msr     hcr_el2, x4
+    isb
     msr     mair_el2, x1
     msr     tcr_el2, x2
     msr     ttbr0_el2, x3
@@ -116,10 +123,15 @@ enter_el1:
     msr     elr_el2, x0
     msr     sp_el1, x1
     msr     spsr_el2, x2
-    // SCTLR_EL1: MMU/caches off, RES1 bits set (PSCI 6.4.3.4)
+    // SCTLR_EL1: MMU/caches off, RES1 bits set (PSCI 6.4.3.4). With HCR_EL2.E2H = 1 (x3 bit 34) an EL2 access to
+    // SCTLR_EL1 is redirected to SCTLR_EL2 (Arm ARM D8.13.2): the guest's register is SCTLR_EL12 there
+    // (op0 3, op1 5, CRn 1, CRm 0, op2 0; the assembler's default architecture does not know the name).
     ldr     x5, =0x30d00800
+    tbnz    x3, #34, 1f
     msr     sctlr_el1, x5
-    isb
+    b       2f
+1:  msr     S3_5_C1_C0_0, x5        // SCTLR_EL12
+2:  isb
     mov     x0, x4                  // PSCI 6.4.3.7: context_id in X0; boot: FDT
     mov     x1, xzr                 // Linux boot protocol: x1..x3 = 0
     mov     x2, xzr

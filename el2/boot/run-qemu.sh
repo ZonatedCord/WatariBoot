@@ -7,6 +7,8 @@ set -u
 # (boot argument wel2.cpuif=trap, see cpuif.c); the default is HW list registers.
 APPEND=()
 [ "${CPUIF:-hw}" = trap ] && APPEND=(-append "wel2.cpuif=trap")
+# WEL2_ARGS: extra boot arguments for the layer, e.g. "wel2.e2h=1 wel2.gran=16k" (see README, E2H and granule)
+[ -n "${WEL2_ARGS:-}" ] && APPEND=(-append "${APPEND[1]:-} $WEL2_ARGS")
 cd "$(dirname "$0")"
 make -s || { echo "FAIL: build"; exit 2; }
 

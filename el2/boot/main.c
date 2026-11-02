@@ -9,6 +9,7 @@
 #include "wel2_vgic.h"
 #include "boot.h"
 #include "fdt.h"
+#include "wel2_maps.h"
 
 #define HCR_VM   (1ULL << 0)
 #define HCR_FMO  (1ULL << 3)
@@ -16,6 +17,7 @@
 #define HCR_AMO  (1ULL << 5)
 #define HCR_TSC  (1ULL << 19)   /* trap EL1 SMC to EL2 (EC 0x17) */
 #define HCR_RW   (1ULL << 31)
+#define HCR_E2H  (1ULL << 34)   /* VHE: EL2 hosts (Arm ARM D8.13); TGE stays 0, the guest runs at EL1 */
 
 #define SPSR_EL1H_MASKED 0x3c5ULL   /* M=EL1h, DAIF all masked */
 
@@ -152,133 +154,65 @@ static void handle_smc(struct frame *f)
     f->x[1] = f->x[2] = f->x[3] = 0;
 }
 
-/* ---- Stage-2 translation (identity map, 4 KB granule) ------------------------
- * Choice: 4 KB granule for the spike (Arm ARM D8, VMSAv8-64 stage 2). Apple
- * cores implement only 16 KB, so the hardware port must redo the tables with
- * TG0=16 KB; the map logic (identity, device attributes, GIC holes) is
- * granule independent. [hypothesis for M1 HW]
+/* ---- Stage-2 translation (identity map, 4 KB or 16 KB granule) ---------------
+ * The tables are built by the granule-parametric builder (wel2_pt.h, wel2_maps.h: host-tested in
+ * tests/test_pt.c) with the granule stage1.c chose (g_gran, boot argument wel2.gran=4k|16k, #58). Apple cores
+ * implement only 16 KB, so 16 KB is the M1 case; the map logic (identity, device attributes, GIC holes) does
+ * not depend on the granule.
  *
- * IPA space 40 bits (T0SZ=24), start level 0 (SL0=2): 2 entries of 512 GB (M1-4: EDK2
- * touches the PCIe high ECAM at 0x4010000000 and may use the high MMIO window at
- * 0x8000000000). Level 1 tables hold 1 GB entries:
- *   0x00000000-0x3fffffff : level 2 table of 2 MB device blocks (MMIO), except
- *                           the 2 MB block at 0x08000000, a level-3 table of
- *                           4 KB device pages with the GICD (64 KB) and the
- *                           first 8 GICR frames (8 x 128 KB) UNMAPPED, so the
- *                           guest faults to EL2 there.
+ * IPA space 40 bits (T0SZ=24; M1-4: EDK2 touches the PCIe high ECAM at 0x4010000000 and may use the high MMIO
+ * window at 0x8000000000). 4 KB: start level 0 (SL0=2, 2 entries of 512 GB), 1 GB / 2 MB blocks. 16 KB: start
+ * level 1 (SL0=2, 16 entries of 64 GB; no level-1 blocks without FEAT_LPA2), 32 MB blocks at level 2, 16 KB
+ * pages at level 3 (Arm ARM D8.2.9, Table D8-27/D8-31). Contents:
+ *   everything             : Device-nGnRnE blocks (MMIO, PCIe windows)
  *   RAM (g_ram_base..g_ram_end, from the FDT /memory node, #60; default 0x40000000-0x13fffffff):
- *                           1 GB Normal WB blocks where the whole GB is RAM; a level-2 table of
- *                           2 MB blocks for a GB that is only partly RAM (Normal where RAM exists,
- *                           device blocks around it, like everywhere else outside RAM).
- *   everything else       : 1 GB device blocks (PCIe high windows on virt).
- * Chain build (M1-4): the first GB is split into 2 MB blocks; in the first block
- * (the layer's carve-out) 4 KB pages hide EL2 (image + stacks).
- * Note: EL2's own image sits in the RAM block, i.e. it is visible to the
- * guest. Isolating EL2 memory is a later hardening step.
+ *                            Normal WB blocks, the largest the granule and the alignment allow (the RAM helper
+ *                            rounds to 2 MB, so a RAM end that is not 32 MB aligned costs 16 KB pages)
+ *   GICD (64 KB) and the first 8 GICR frames (8 x 128 KB): UNMAPPED, so the guest faults to EL2 there; all are
+ *                            multiples of 16 KB, so the holes are exact for both granules (the ITS and GICv2m
+ *                            frames next to them stay mapped as device).
+ * Chain build (M1-4): the layer (image + stacks, from __image_start to the end of the 2 MB carve-out) is also
+ * unmapped: a guest access takes a stage-2 translation fault and EL2 dumps it (F-14). The FDT hand-off buffer
+ * below __image_start stays mapped. __image_start is 16 KB aligned (text_offset 0x80000).
+ * Note: without the chain build EL2's own image sits in the RAM block, i.e. it is visible to the guest.
  * M1-3: all cores share these tables (one VTTBR value, VMID 0).
  */
-#define S2_VALID   (1ULL << 0)
-#define S2_TABLE   (1ULL << 1)         /* table (levels 0-2) / page (level 3) */
-#define S2_AF      (1ULL << 10)
-#define S2_SH_ISH  (3ULL << 8)
-#define S2_S2AP_RW (3ULL << 6)
-#define S2_XN      (1ULL << 54)        /* XN[1]=1: execute-never */
-#define S2_ATTR_DEV    (0x0ULL << 2)   /* MemAttr 0b0000: Device-nGnRnE */
-#define S2_ATTR_NORMAL (0xfULL << 2)   /* MemAttr 0b1111: Normal, Inner+Outer WB */
-
-#define S2_BLOCK_DEV    (S2_VALID | S2_AF | S2_S2AP_RW | S2_ATTR_DEV | S2_XN)
-#define S2_BLOCK_NORMAL (S2_VALID | S2_AF | S2_S2AP_RW | S2_ATTR_NORMAL | S2_SH_ISH)
-
-static uint64_t s2_l0[512] __attribute__((aligned(4096)));   /* 2 used: 0-512 GB, 512 GB-1 TB */
-static uint64_t s2_l1[512] __attribute__((aligned(4096)));
-static uint64_t s2_l1hi[512] __attribute__((aligned(4096)));
-static uint64_t s2_l2[512] __attribute__((aligned(4096)));
-static uint64_t s2_l3[512] __attribute__((aligned(4096)));
-static uint64_t s2_l2ram[512] __attribute__((aligned(4096)));    /* the RAM base GB in 2 MB blocks */
-static uint64_t s2_l2tail[512] __attribute__((aligned(4096)));   /* the last GB when partly RAM */
-#ifdef WEL2_CHAIN
-static uint64_t s2_l3ram[512] __attribute__((aligned(4096)));
-#endif
-
-/* 2 MB blocks of one GB: Normal where RAM exists, device elsewhere. */
-static void s2_fill_l2(uint64_t *l2, uint64_t gb_base, const struct wel2_ram *ram)
-{
-    for (unsigned i = 0; i < 512; i++) {
-        uint64_t pa = gb_base + ((uint64_t)i << 21);
-
-        l2[i] = pa | (wel2_ram_has_block(ram, pa) ? S2_BLOCK_NORMAL : S2_BLOCK_DEV);
-    }
-}
+static uint8_t s2_pool[WEL2_S2_POOL_BYTES] __attribute__((aligned(16384)));
+static struct wel2_pt s2_pt;
+static uint64_t g_vtcr;
 
 static void stage2_init(void)
 {
-    /* level 3 for 0x08000000-0x081fffff: 512 x 4 KB device pages */
-    for (unsigned i = 0; i < 512; i++)
-        s2_l3[i] = (GICD_PHYS + ((uint64_t)i << 12)) | S2_BLOCK_DEV | S2_TABLE;
-    unsigned first = 0, n = GICD_SIZE >> 12;                       /* GICD */
-    for (unsigned i = first; i < first + n; i++)
-        s2_l3[i] = 0;
-    first = (GICR_PHYS - GICD_PHYS) >> 12;                         /* GICR x8 */
-    n = (8 * VGIC_GICR_FRAME_SIZE) >> 12;
-    for (unsigned i = first; i < first + n; i++)
-        s2_l3[i] = 0;
-
-    for (unsigned i = 0; i < 512; i++)
-        s2_l2[i] = ((uint64_t)i << 21) | S2_BLOCK_DEV;
-    s2_l2[GICD_PHYS >> 21] = (uint64_t)(uintptr_t)s2_l3 | S2_VALID | S2_TABLE;
-
     struct wel2_ram ram = { g_ram_base, g_ram_end };
-    unsigned gb0 = (unsigned)(GUEST_RAM_BASE >> 30);
-#ifdef WEL2_CHAIN
-    const bool split_first = true;
-#else
-    const bool split_first = false;
-#endif
+    struct wel2_range holes[3] = {
+        { GICD_PHYS, GICD_SIZE },
+        { GICR_PHYS, 8ULL * VGIC_GICR_FRAME_SIZE },
+        { 0, 0 },
+    };
+    unsigned nholes = 2;
 
-    s2_l1[0] = (uint64_t)(uintptr_t)s2_l2 | S2_VALID | S2_TABLE;
-    for (unsigned gb = 1; gb < 512; gb++) {
-        enum wel2_ram_cover cv = wel2_ram_cover(&ram, gb);
-
-        if (gb == gb0 && (split_first || cv != WEL2_RAM_FULL)) {
-            /* RAM base GB: 2 MB blocks (the chain build also splits the first 2 MB, below) */
-            s2_fill_l2(s2_l2ram, (uint64_t)gb << 30, &ram);
-            s2_l1[gb] = (uint64_t)(uintptr_t)s2_l2ram | S2_VALID | S2_TABLE;
-        } else if (cv == WEL2_RAM_FULL) {
-            s2_l1[gb] = ((uint64_t)gb << 30) | S2_BLOCK_NORMAL;
-        } else if (cv == WEL2_RAM_PARTIAL) {
-            s2_fill_l2(s2_l2tail, (uint64_t)gb << 30, &ram);
-            s2_l1[gb] = (uint64_t)(uintptr_t)s2_l2tail | S2_VALID | S2_TABLE;
-        } else {
-            s2_l1[gb] = ((uint64_t)gb << 30) | S2_BLOCK_DEV;
-        }
-    }
 #ifdef WEL2_CHAIN
-    /* M1-4: the layer (image + stacks, from __image_start to the end of the carve-out)
-     * is NOT mapped: a guest access takes a stage-2 translation fault and EL2 dumps it
-     * (F-14). The first 2 MB are 4 KB pages, mapped below __image_start (FDT hand-off
-     * buffer) and unmapped above; the rest of the first GB is 2 MB Normal WB blocks. */
-    uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~0xfffULL;
-    for (unsigned i = 0; i < 512; i++) {
-        uint64_t pa = GUEST_RAM_BASE + ((uint64_t)i << 12);
-        s2_l3ram[i] = (pa >= hide_lo && pa < GUEST_RAM_BASE + WEL2_CARVE_SIZE)
-                          ? 0 : (pa | S2_BLOCK_NORMAL | S2_TABLE);
-    }
-    s2_l2ram[0] = (uint64_t)(uintptr_t)s2_l3ram | S2_VALID | S2_TABLE;
+    uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
+
+    holes[nholes].base = hide_lo;
+    holes[nholes].size = GUEST_RAM_BASE + WEL2_CARVE_SIZE - hide_lo;
+    nholes++;
 #endif
-    for (unsigned i = 0; i < 512; i++)
-        s2_l1hi[i] = ((512ULL << 30) + ((uint64_t)i << 30)) | S2_BLOCK_DEV;
-    s2_l0[0] = (uint64_t)(uintptr_t)s2_l1 | S2_VALID | S2_TABLE;
-    s2_l0[1] = (uint64_t)(uintptr_t)s2_l1hi | S2_VALID | S2_TABLE;
+    if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, WEL2_S2_IPA_BITS) ||
+        wel2_s2_build(&s2_pt, &ram, holes, nholes))
+        fatal_msg("stage-2 tables: bad geometry or the table pool is too small");
+    g_vtcr = wel2_vtcr(&s2_pt, 2);               /* PS = 0b010: 40-bit */
+    put_kv("Watari EL2: stage-2 granule shift = ", g_gran);
+    put_kv("Watari EL2:   start level = ", s2_pt.start_level);
+    put_kv("Watari EL2:   tables used = ", s2_pt.used);
 }
 
-/* Per core: VTCR_EL2 (Arm ARM D24.2.223): RES1 bit31, PS=0b010 (40 bit), TG0=0
- * (4 KB), SH0=3, ORGN0=IRGN0=1 (WB WA), SL0=2 (start level 0), T0SZ=24 (40-bit IPA). */
+/* Per core: VTCR_EL2 (Arm ARM D24.2.223) from the builder: RES1 bit31, PS=0b010 (40 bit), TG0 (4 KB: 0,
+ * 16 KB: 0b10), SH0=3, ORGN0=IRGN0=1 (WB WA), SL0 per granule and start level, T0SZ=24 (40-bit IPA). */
 void stage2_enable(void)
 {
-    uint64_t vtcr = (1ULL << 31) | (2ULL << 16) | (3ULL << 12) | (1ULL << 10) |
-                    (1ULL << 8) | (2ULL << 6) | 24ULL;
-    __asm__ volatile("msr vtcr_el2, %0" : : "r"(vtcr));
-    __asm__ volatile("msr vttbr_el2, %0" : : "r"((uint64_t)(uintptr_t)s2_l0));
+    __asm__ volatile("msr vtcr_el2, %0" : : "r"(g_vtcr));
+    __asm__ volatile("msr vttbr_el2, %0" : : "r"(wel2_pt_root_addr(&s2_pt)));
     /* Tables were written with the MMU off; on real HW add cache maintenance
      * if the stage-2 walker is cacheable. */
     __asm__ volatile("dsb ishst; tlbi vmalls12e1is; dsb ish; isb" : : : "memory");
@@ -603,6 +537,27 @@ static void parse_bootargs(uint64_t fdt)
     }
 }
 
+/* Per-core EL2 regime registers that change layout with HCR_EL2.E2H (Arm ARM D8.13, D24.2.37).
+ * CPTR_EL2 with E2H = 1 uses the CPACR_EL1 layout: FPEN[21:20] = 0b11 (no FP/SIMD trap of EL1 and EL0; the
+ * reset value is UNKNOWN and 0 would trap the guest's first FP instruction), ZEN[17:16] / SMEN[25:24] = 0b11
+ * only where SVE / SME exist (the fields are RES0 otherwise); TCPAC, TAM, TTA = 0. With E2H = 0 the register is
+ * left alone, as it always was (QEMU resets it to the no-trap value). */
+static void regime_init_cpu(void)
+{
+    uint64_t pfr0, pfr1, cptr;
+
+    if (!g_e2h)
+        return;
+    __asm__ volatile("mrs %0, id_aa64pfr0_el1" : "=r"(pfr0));
+    __asm__ volatile("mrs %0, id_aa64pfr1_el1" : "=r"(pfr1));
+    cptr = 3ULL << 20;
+    if ((pfr0 >> 32) & 0xf)                      /* SVE */
+        cptr |= 3ULL << 16;
+    if ((pfr1 >> 24) & 0xf)                      /* SME */
+        cptr |= 3ULL << 24;
+    __asm__ volatile("msr cptr_el2, %0; isb" : : "r"(cptr));
+}
+
 /* #53: the stage-1 map is already on (start.S). Report the regime so the log proves it, and refuse to
  * continue without it (the locks and the unaligned-capable code depend on Normal memory). */
 static void stage1_report(void)
@@ -614,9 +569,16 @@ static void stage1_report(void)
     __asm__ volatile("mrs %0, hcr_el2" : "=r"(hcr));
     if ((sctlr & 0x1005) != 0x1005)
         fatal_msg("EL2 stage-1 MMU/caches are not on (SCTLR_EL2.M/C/I)");
-    put_kv("Watari EL2: stage-1 on (identity, 4 KB, 39-bit), SCTLR_EL2 = ", sctlr);
+    put_kv(g_gran == WEL2_GRAN_16K ? "Watari EL2: stage-1 on (identity, 16 KB, 36-bit), SCTLR_EL2 = "
+                                   : "Watari EL2: stage-1 on (identity, 4 KB, 39-bit), SCTLR_EL2 = ", sctlr);
     put_kv("Watari EL2:   TCR_EL2 = ", tcr);
     put_kv("Watari EL2:   HCR_EL2.E2H = ", (hcr >> 34) & 1);
+    if (((hcr >> 34) & 1) != (g_e2h ? 1u : 0u))
+        fatal_msg("HCR_EL2.E2H on this core differs from the value the stage-1 map was built for");
+    if (g_e2h_stuck)
+        puts_("Watari EL2:   E2H = 0 was requested but the bit is stuck at 1 (the M1 case): running with E2H = 1\n");
+    if (g_gran_fallback)
+        puts_("Watari EL2:   the requested translation granule is not implemented: using the other one\n");
     put_kv(g_ram_from_fdt ? "Watari EL2: RAM from the FDT /memory node, base " : "Watari EL2: no usable FDT /memory node: default RAM, base ", g_ram_base);
     put_kv("Watari EL2:   RAM end = ", g_ram_end);
 }
@@ -634,6 +596,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     put_kv("Watari EL2: VBAR_EL2  = ", vbar);
 
     /* Cores = redistributor frames (GICR_TYPER walk); vCPU i = core i. */
+    regime_init_cpu();
     g_ncpu = gic_phys_discover();
     bind_this_cpu();
     put_kv("Watari EL2: cores (redistributors) = ", g_ncpu);
@@ -642,9 +605,10 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     g_pcpu[this_cpu()].state = CPU_ST_ON;      /* the cold-boot core is ON */
 
     /* HCR_EL2: RW=1 (EL1 is AArch64), IMO/FMO/AMO=1 (physical IRQ/FIQ/SError
-     * routed to EL2, as designed). E2H=0 so far; VM=1 since M1-1 (stage-2 with the
-     * GIC windows unmapped). M1-4 chain build: TSC=1 (EL1 SMC trapped). VHE later. */
-    g_hcr = HCR_RW | HCR_IMO | HCR_FMO | HCR_AMO | HCR_VM;
+     * routed to EL2, as designed). E2H as stage1.c left it on this core (1 on the M1; the guest then runs
+     * with TGE=0 at EL1, its exceptions and the HVC/SMC/IRQ paths are the same); VM=1 since M1-1 (stage-2
+     * with the GIC windows unmapped). M1-4 chain build: TSC=1 (EL1 SMC trapped). */
+    g_hcr = HCR_RW | HCR_IMO | HCR_FMO | HCR_AMO | HCR_VM | (g_e2h ? HCR_E2H : 0);
 #ifdef WEL2_CHAIN
     g_hcr |= HCR_TSC;
 #endif
@@ -683,6 +647,7 @@ void __attribute__((noreturn)) el2_secondary_main(void)
         if ((sctlr & 0x1005) != 0x1005)
             fatal_msg("secondary core: EL2 stage-1 MMU/caches are not on");
     }
+    regime_init_cpu();
     stage2_enable();
     set_virtual_ids();
     gic_phys_init_cpu();

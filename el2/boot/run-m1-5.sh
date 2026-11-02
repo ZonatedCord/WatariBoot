@@ -12,6 +12,7 @@ set -u
 APPEND_STR=""
 [ "${CPUIF:-hw}" = trap ] && APPEND_STR="wel2.cpuif=trap"
 [ "${NOEOI:-0}" = 1 ] && APPEND_STR="$APPEND_STR wel2.test=noeoi"
+[ -n "${WEL2_ARGS:-}" ] && APPEND_STR="$APPEND_STR $WEL2_ARGS"   # e.g. "wel2.e2h=1 wel2.gran=16k"
 APPEND=()
 [ -n "$APPEND_STR" ] && APPEND=(-append "$APPEND_STR")
 cd "$(dirname "$0")"

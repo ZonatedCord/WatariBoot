@@ -9,6 +9,8 @@ set -u
 # default since M2 exposes LPIs when the physical GIC has them (QEMU virt has an ITS by default).
 APPEND=(-append "wel2.lpi=off")
 [ "${CPUIF:-hw}" = trap ] && APPEND=(-append "wel2.lpi=off wel2.cpuif=trap")
+# WEL2_ARGS: extra boot arguments for the layer, e.g. "wel2.e2h=1 wel2.gran=16k" (see README, E2H and granule)
+[ -n "${WEL2_ARGS:-}" ] && APPEND=(-append "${APPEND[1]:-} $WEL2_ARGS")
 cd "$(dirname "$0")"
 make -s || { echo "FAIL: build"; exit 2; }
 
@@ -39,6 +41,7 @@ rc=0
 expect() {
     grep -qF -- "$1" build/uart.txt || { echo "MISSING: $1"; rc=1; }
 }
+expect "Watari EL2: stats: EL2 regime intact after the guest (SCTLR_EL2.M/C/I set, HCR_EL2.E2H as built)"
 expect "Watari EL2: stage-2 on (identity, GICD/GICR unmapped), vGIC ready"
 expect "Watari EL1: PSCI_VERSION returned 1.1"
 expect "Watari EL1: GICD_TYPER = 0x000000000148001d"
