@@ -36,7 +36,9 @@ static void t_geometry(void)
 	CHECK_EQ(pt.start_level, 2); CHECK_EQ(pt.root_entries, 2048);     /* 64 GB in one table */
 	CHECK_EQ(wel2_pt_init(&pt, pool_small, sizeof(pool_small), WEL2_GRAN_16K, 47), 0);
 	CHECK_EQ(pt.start_level, 1); CHECK_EQ(pt.root_entries, 2048);
-	CHECK_EQ(wel2_pt_init(&pt, pool_small, sizeof(pool_small), WEL2_GRAN_16K, 48), -1);   /* level 0 needs LPA2 */
+	CHECK_EQ(wel2_pt_init(&pt, pool_small, sizeof(pool_small), WEL2_GRAN_16K, 48), 0);    /* stage 1, DS = 0: level 0 */
+	CHECK_EQ(pt.start_level, 0); CHECK_EQ(pt.root_entries, 2);
+	CHECK_EQ(wel2_pt_init(&pt, pool_small, sizeof(pool_small), WEL2_GRAN_16K, 49), -1);
 	CHECK_EQ(wel2_pt_init(&pt, pool_small + 4096, sizeof(pool_small) - 4096, WEL2_GRAN_16K, 36), -1);   /* misaligned */
 	CHECK_EQ(wel2_pt_init(&pt, pool_small + 4096, sizeof(pool_small) - 4096, WEL2_GRAN_4K, 39), 0);
 	CHECK_EQ(wel2_pt_init(&pt, pool_small, 8192, WEL2_GRAN_16K, 36), -1);   /* smaller than one table */
@@ -238,8 +240,9 @@ static void t_s1_map(void)
 			CHECK(wel2_pt_walk(&pt, 0x09000000ULL, &pa, &at, &lv));    /* UART: device, XN */
 			CHECK_EQ(pa, 0x09000000ULL); CHECK_EQ(at, (1ULL << 10) | ap1 | xn);
 			CHECK_EQ(attrs_of(&pt, BASE), nrm | xn);                    /* FDT buffer: RW XN */
-			CHECK_EQ(attrs_of(&pt, l.text_lo), nrm | (1ULL << 7));      /* code: RO, executable */
-			CHECK_EQ(attrs_of(&pt, l.text_hi - 1), nrm | (1ULL << 7));
+			uint64_t uxn = e2h ? (1ULL << 54) : 0;                          /* EL2&0: UXN on code (EL0 never runs it) */
+			CHECK_EQ(attrs_of(&pt, l.text_lo), nrm | (1ULL << 7) | uxn);      /* code: RO, executable at EL2 */
+			CHECK_EQ(attrs_of(&pt, l.text_hi - 1), nrm | (1ULL << 7) | uxn);
 			CHECK_EQ(attrs_of(&pt, l.text_hi), nrm | (1ULL << 7) | xn); /* rodata: RO XN */
 			CHECK_EQ(attrs_of(&pt, l.ro_hi), nrm | xn);                 /* data, bss, stacks */
 			CHECK_EQ(attrs_of(&pt, 0x13fffffffULL), nrm | xn);

@@ -12,7 +12,7 @@ What it does (all **verified** by `run-qemu.sh`):
 Not yet (later milestones): `TID3`. (`TSC=1`, vGIC-to-physical-GIC effects, SMP, `E2H=1` and the 16 KB granule came later, see below.)
 
 ## M1-1: stage-2 + virtual GIC (issue #50, first step)
-- `HCR_EL2.VM=1`; identity stage-2 map, **4 KB granule** (the first spike; the granule is now selectable and 16 KB is the default, see "E2H = 1 and the 16 KB granule"), 32-bit IPA, start level 1. RAM `0x40000000-0x7fffffff` Normal WB; the rest Device-nGnRnE (execute-never).
+- `HCR_EL2.VM=1`; identity stage-2 map, **4 KB granule** (the first spike; the granule is now selectable and 16 KB is the default, see "E2H = 1 and the 16 KB granule"), (M1-1 first step: 32-bit IPA, start level 1, RAM `0x40000000-0x7fffffff`; today 40-bit IPA over the whole RAM from the FDT, see below) Normal WB RAM, the rest Device-nGnRnE (execute-never).
 - The physical GICD (`0x08000000`, 64 KB) and the first 8 GICR frames (`0x080A0000`, 8 x 128 KB) are **unmapped**: guest accesses take a stage-2 translation fault to EL2.
 - EL2 data-abort handler (`EC=0x24`): decodes ISV/SAS/SSE/SRT/SF/WnR, rebuilds the IPA from `HPFAR_EL2`+`FAR_EL2`, calls `vgic_mmio_read/write` (`../vgic/vgic.c` is linked into the image), writes the register back for loads and advances `ELR_EL2` by 4. ISV=0, non-translation faults or addresses outside the GIC windows print ESR/FAR/HPFAR/IPA and halt (F-14).
 - The physical GIC is left untouched in this step; the vGIC `effect` hook only logs.
@@ -180,7 +180,7 @@ The assembler's default architecture does not know `SCTLR_EL12` / `CNTV_CTL_EL02
 - E2H stuck at 1: the `wel2.e2h=0` path will log "stuck" and continue with 1. QEMU cannot show a stuck bit.
 - `CPTR_EL2`/`CNTHCTL_EL2` reset values and any IMPLEMENTATION DEFINED traps the Apple cores add; whether Apple's `PARange` is below 40 bits (the code uses `min(PARange, 40)` for `TCR_EL2.PS/IPS` and `VTCR_EL2.PS`, the IPA space stays 40 bits).
 - **MMIO windows emulated by trapping must be 16 KB aligned and sized.** The GICD/GICR holes already are. The GICv2m frame of the M3a design (`el2/vgic/v2m.c`, doorbell at `0xFFFFF000`, 4 KB) is **not**: with a 16 KB stage 2 the hole would be the page `0xFFFFC000-0xFFFFFFFF`, so the layer would also have to emulate or pass through the three neighbouring 4 KB frames, or the frame must move to a 16 KB aligned address (and the MADT of the Windows ACPI tables must say so). To decide before M3a.
-- Cache maintenance for the page tables (EL2 stage 1 and stage 2) and TLB/I-cache handling when the real M1 starts cores: not exercised by TCG.
+- Cache maintenance: the boot core now invalidates `.bss`/stacks by VA after zeroing them with the MMU off (`DC IVAC`, `start.S`) and cleans+invalidates the stage-1 table pool and the globals the other cores read (`DC CIVAC`, end of `stage1_build`), Arm ARM D7.5; TCG has no stale lines, so this is [hypothesis] until the M1. The stage-2 pool is written with the MMU on and is coherent with the walker (WB, inner-shareable).
 - Secondary cores run `s1_enable` with the E2H value of the boot core (`g_s1.e2h`); on the M1 the bit is already 1 on every core, nothing to do.
 
 ## M2 run log: Windows 11 ARM64 on top of Watari EL2 (`run-m2.sh`)

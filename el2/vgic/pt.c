@@ -51,8 +51,8 @@ int wel2_pt_init(struct wel2_pt *pt, void *pool, uint64_t pool_bytes, unsigned g
 	if (va_bits <= gshift || va_bits > 48)
 		return -1;
 	levels = (va_bits - gshift + b - 1) / b;
-	if (levels > 4 || (gshift == WEL2_GRAN_16K && levels > 3))
-		return -1;                              /* 16 KB: a level-0 root needs 52-bit addressing */
+	if (levels > 4)
+		return -1;
 	pt->gshift = gshift;
 	pt->va_bits = va_bits;
 	pt->start_level = 4 - levels;

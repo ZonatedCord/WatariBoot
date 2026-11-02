@@ -40,9 +40,11 @@ struct wel2_pt {
 #define WEL2_PTE_TABLE  2ULL        /* table at level 0-2, page at level 3 */
 #define WEL2_PTE_OA_MASK(g)  (((1ULL << 48) - 1) & ~((1ULL << (g)) - 1))
 
-/* Pool: pool_bytes / (1 << gshift) tables, the pool aligned to the table size. va_bits 15..48 (16 KB: the
- * root at level 1 or 2, the level-0 case needs 52-bit addressing and is refused). Returns 0, or -1 for a bad
- * geometry or alignment. The root table is taken from the pool (zeroed). */
+/* Pool: pool_bytes / (1 << gshift) tables, the pool aligned to the table size. va_bits 15..48. With 16 KB a
+ * 48-bit space has a level-0 root of 2 entries: valid for stage 1 with TCR_ELx.DS = 0 (Tables D8-26, D8-28,
+ * T0SZ 16), but NOT for stage 2, where a level-0 start needs VTCR_EL2.DS = 1 (Table D8-30): a stage-2 caller
+ * must use at most 47 bits. Returns 0, or -1 for a bad geometry or alignment. The root table is taken from the
+ * pool (zeroed). */
 int wel2_pt_init(struct wel2_pt *pt, void *pool, uint64_t pool_bytes, unsigned gshift, unsigned va_bits);
 
 /* Map [va, va+size) to [pa, ...) with the leaf attributes `attrs`. va, pa, size must be multiples of the

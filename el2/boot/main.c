@@ -218,8 +218,9 @@ void stage2_enable(void)
 {
     __asm__ volatile("msr vtcr_el2, %0" : : "r"(g_vtcr));
     __asm__ volatile("msr vttbr_el2, %0" : : "r"(wel2_pt_root_addr(&s2_pt)));
-    /* Tables were written with the MMU off; on real HW add cache maintenance
-     * if the stage-2 walker is cacheable. */
+    /* The tables were written by this core with the stage-1 MMU on (Normal WB inner-shareable), and the walk
+     * attributes of VTCR_EL2 are WB, inner-shareable: coherent with the walker, so DSB ISHST before the TLBI is
+     * enough. A walker that is not coherent would need DC CVAC over the pool here [hypothesis for the M1]. */
     __asm__ volatile("dsb ishst; tlbi vmalls12e1is; dsb ish; isb" : : : "memory");
 }
 

@@ -68,6 +68,33 @@ struct s1_regs g_s1;
 static uint8_t s1_pool[WEL2_S1_POOL_BYTES] __attribute__((aligned(16384)));
 static struct wel2_pt s1_pt;
 
+/* Message with the MMU off: putc_ only. puts_ takes a spin lock (exclusives), which need Normal memory. */
+static void s1_msg(const char *s)
+{
+    while (*s) {
+        if (*s == '\n')
+            putc_('\r');
+        putc_(*s++);
+    }
+}
+
+/* Clean and invalidate [p, p+n) to the point of coherency by VA (DC CIVAC, Arm ARM D7.5): what this core wrote
+ * with the MMU off must reach memory, where the secondaries (MMU and caches off) read it, and no stale line of it
+ * may remain here once the MMU makes the memory cacheable. DSB SY completes it. [hypothesis for the M1: QEMU TCG
+ * cannot show the need] */
+static void clean_inval(const void *p, unsigned long n)
+{
+    uint64_t ctr, line, a, end;
+
+    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+    line = 4ULL << ((ctr >> 16) & 0xf);
+    a = (uint64_t)(uintptr_t)p & ~(line - 1);
+    end = (uint64_t)(uintptr_t)p + n;
+    for (; a < end; a += line)
+        __asm__ volatile("dc civac, %0" : : "r"(a) : "memory");
+    __asm__ volatile("dsb sy" ::: "memory");
+}
+
 /* Option "key" (e.g. "wel2.e2h=1") present as a whole word in the boot arguments? */
 static bool has_arg(const char *args, const char *key)
 {
@@ -124,6 +151,8 @@ void stage1_build(uint64_t fdt)
     __asm__ volatile("mrs %0, hcr_el2" : "=r"(hcr));
     g_e2h = (hcr & HCR_E2H_BIT) != 0;
     g_e2h_stuck = g_e2h && !want_e2h;
+    if (want_e2h && !g_e2h)
+        s1_msg("Watari EL2: WARNING: E2H=1 requested but HCR_EL2.E2H reads 0 (no FEAT_VHE?): running with E2H=0\n");
 
     __asm__ volatile("mrs %0, id_aa64mmfr0_el1" : "=r"(mmfr0));
     g_gran = want_gran;
@@ -151,10 +180,11 @@ void stage1_build(uint64_t fdt)
         (uint64_t)(uintptr_t)__image_start, (uint64_t)(uintptr_t)__text_end, (uint64_t)(uintptr_t)__rodata_end,
     };
 
-    /* Pool exhaustion or a bad layout cannot be reported with the MMU off: the host tests (test_pt.c) size the
-     * pool for the QEMU maps; a failure here parks the core. */
+    /* Pool exhaustion or a bad layout: the host tests (test_pt.c) size the pool for the QEMU maps; a failure
+     * here prints a line on the UART (no lock, MMU off) and parks the core. */
     if (wel2_pt_init(&s1_pt, s1_pool, sizeof(s1_pool), g_gran, va_bits) ||
         wel2_s1_build(&s1_pt, &ram, &layout, g_e2h)) {
+        s1_msg("Watari EL2: FATAL: stage-1 tables: bad geometry/layout or the table pool is too small, halted\n");
         for (;;)
             __asm__ volatile("wfe");
     }
@@ -166,5 +196,17 @@ void stage1_build(uint64_t fdt)
     g_s1.tcr = wel2_tcr_el2(&s1_pt, g_e2h, (unsigned)ps);
     g_s1.ttbr = wel2_pt_root_addr(&s1_pt);
     g_s1.e2h = g_e2h;
+    /* Everything written with the MMU off: the used part of the table pool and the globals the other cores read
+     * (g_s1 is read by s1_enable with the MMU off; g_ram_*, g_gran, g_e2h by everyone after the MMU is on). */
+    clean_inval(s1_pool, (unsigned long)s1_pt.used << g_gran);
+    clean_inval(&g_s1, sizeof(g_s1));
+    clean_inval(&g_ram_base, sizeof(g_ram_base));
+    clean_inval(&g_ram_end, sizeof(g_ram_end));
+    clean_inval(&g_ram_from_fdt, sizeof(g_ram_from_fdt));
+    clean_inval(&g_gran, sizeof(g_gran));
+    clean_inval(&g_e2h, sizeof(g_e2h));
+    clean_inval(&g_e2h_stuck, sizeof(g_e2h_stuck));
+    clean_inval(&g_gran_fallback, sizeof(g_gran_fallback));
+    clean_inval(&s1_pt, sizeof(s1_pt));
     __asm__ volatile("dsb sy" ::: "memory");
 }

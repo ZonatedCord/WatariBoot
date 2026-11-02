@@ -39,6 +39,26 @@ reset:
     str     xzr, [x1], #8
     b       1b
 2:
+    // Cache maintenance for what the MMU-off stores above (and the stack use that follows) wrote: with the MMU
+    // off the accesses go to memory, but stale lines of the same addresses (left by the firmware / a previous
+    // run) may sit in the data cache and would be hit once the stage-1 map makes the memory cacheable.
+    // DC IVAC by VA over .bss and the stacks (Arm ARM D7.5 cache maintenance; instruction ordering by DSB, D7.5.9),
+    // line size from CTR_EL0.DminLine. Nothing dirty is lost: everything here was just zeroed in memory.
+    // [hypothesis for the M1: QEMU TCG has no stale lines, so it cannot show the need]
+    mrs     x2, ctr_el0
+    ubfx    x2, x2, #16, #4
+    mov     x3, #4
+    lsl     x3, x3, x2              // data cache line size in bytes
+    ldr     x1, =__bss_start
+    ldr     x4, =__el2_stacks
+    add     x4, x4, #0x20000        // 8 stacks of 16 KB
+    sub     x5, x3, #1
+    bic     x1, x1, x5
+3:  dc      ivac, x1
+    add     x1, x1, x3
+    cmp     x1, x4
+    b.lo    3b
+    dsb     sy
     ldr     x1, =el2_vectors
     msr     vbar_el2, x1
     isb

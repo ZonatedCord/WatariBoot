@@ -47,7 +47,7 @@ int wel2_s1_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct w
 
 	if (map_clamped(pt, 0, ram->base, dev) || map_clamped(pt, ram->base, ram->end, nrm | xn))
 		return -1;
-	if (l->text_hi > l->text_lo && map_clamped(pt, l->text_lo, l->text_hi, nrm | S1_AP_RO))
+	if (l->text_hi > l->text_lo && map_clamped(pt, l->text_lo, l->text_hi, nrm | S1_AP_RO | (e2h ? S1_XN : 0)))
 		return -1;
 	if (l->ro_hi > l->text_hi && map_clamped(pt, l->text_hi, l->ro_hi, nrm | S1_AP_RO | xn))
 		return -1;
