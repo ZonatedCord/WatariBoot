@@ -1,0 +1,398 @@
+Subject: [PATCH 1/2] hw/intc: add the watari-aic device
+
+SPDX-License-Identifier: GPL-2.0-or-later
+---
+--- /dev/null
++++ b/include/hw/intc/watari_aic.h
+@@ -0,0 +1,62 @@
++/*
++ * Watari AIC: a minimal model of the Apple Interrupt Controller, version 1 register layout
++ * (Apple M1, t8103), written for the Watari Boot project (issue #42) from public
++ * documentation only: the Asahi Linux "Apple Interrupt Controller" notes and the Linux DT
++ * binding apple,aic. It is a test bench for the Watari EL2 layer, not a faithful copy of the
++ * silicon: see the list of simplifications at the top of hw/intc/watari_aic.c.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#ifndef HW_INTC_WATARI_AIC_H
++#define HW_INTC_WATARI_AIC_H
++
++#include "hw/core/sysbus.h"
++#include "qom/object.h"
++
++#define TYPE_WATARI_AIC "watari-aic"
++OBJECT_DECLARE_SIMPLE_TYPE(WatariAICState, WATARI_AIC)
++
++#define WATARI_AIC_MAX_IRQ    1024
++#define WATARI_AIC_MAX_CPUS   8
++#define WATARI_AIC_MMIO_SIZE  0x8000
++
++/* Register offsets (t8103 layout, see wel2_aic.h in the Watari Boot repository) */
++#define WATARI_AIC_REV        0x0000
++#define WATARI_AIC_INFO       0x0004
++#define WATARI_AIC_WHOAMI     0x2000
++#define WATARI_AIC_EVENT      0x2004
++#define WATARI_AIC_IPI_SEND   0x2008
++#define WATARI_AIC_IPI_ACK    0x200c
++#define WATARI_AIC_IPI_MASK_SET 0x2024
++#define WATARI_AIC_IPI_MASK_CLR 0x2028
++#define WATARI_AIC_TARGET_CPU 0x3000   /* + 4 * irq */
++#define WATARI_AIC_SW_SET     0x4000   /* + 4 * (irq / 32) */
++#define WATARI_AIC_SW_CLR     0x4080
++#define WATARI_AIC_MASK_SET   0x4100
++#define WATARI_AIC_MASK_CLR   0x4180
++#define WATARI_AIC_HW_STATE   0x4200
++
++#define WATARI_AIC_EVENT_TYPE_HW  1
++#define WATARI_AIC_EVENT_TYPE_IPI 4
++#define WATARI_AIC_IPI_OTHER      (1u << 0)
++#define WATARI_AIC_IPI_SELF       (1u << 31)
++
++struct WatariAICState {
++    SysBusDevice parent_obj;
++
++    MemoryRegion iomem;
++    qemu_irq cpu_irq[WATARI_AIC_MAX_CPUS];      /* one output per core */
++    bool cpu_level[WATARI_AIC_MAX_CPUS];        /* last level driven on cpu_irq */
++
++    uint32_t num_irq;                           /* property, multiple of 32 */
++    uint32_t num_cpu;                           /* property */
++
++    uint32_t hw[WATARI_AIC_MAX_IRQ / 32];       /* level of the input lines */
++    uint32_t sw[WATARI_AIC_MAX_IRQ / 32];       /* SW_SET / SW_CLR bits */
++    uint32_t mask[WATARI_AIC_MAX_IRQ / 32];     /* 1 = masked */
++    uint32_t target[WATARI_AIC_MAX_IRQ];        /* bit n = deliver to core n */
++    uint32_t ipi_pending[WATARI_AIC_MAX_CPUS];  /* bit 0 other, bit 31 self */
++    uint32_t ipi_mask[WATARI_AIC_MAX_CPUS];
++};
++
++#endif
+--- /dev/null
++++ b/hw/intc/watari_aic.c
+@@ -0,0 +1,316 @@
++/*
++ * Watari AIC: a minimal Apple Interrupt Controller (AICv1 layout, t8103) for QEMU.
++ *
++ * Written for the Watari Boot project (issue #42) from public documentation only: the Asahi
++ * Linux "Apple Interrupt Controller" notes (hw/soc/aic.md), the Linux DT binding apple,aic
++ * and the register table in el2/include/wel2_aic.h of the Watari Boot repository. No code of
++ * other AIC models (Inferno, qemu-t8030, qemu-sptm) or of the Linux driver was used.
++ *
++ * What it models:
++ *   - num-irq level inputs (qdev gpio in), each masked / unmasked (MASK_SET / MASK_CLR), ORed
++ *     with a software bit (SW_SET / SW_CLR), routed by a per-source core bitmap (TARGET_CPU);
++ *   - one output per core (sysbus irq), high while that core has a deliverable event;
++ *   - EVENT: the reading core gets the lowest-numbered deliverable source as
++ *     (type 1 << 16 | number), the source is masked by the read ("auto-mask", Asahi doc "HW irq
++ *     flow"), 0 when nothing is pending; a legacy IPI comes as (type 4 << 16 | 1 other / 2 self);
++ *   - legacy IPIs: IPI_SEND, IPI_ACK, IPI_MASK_SET / IPI_MASK_CLR (per-core views);
++ *   - WHOAMI (the index of the reading core), INFO (number of inputs), HW_STATE (input levels).
++ *
++ * Simplifications (everything here is a test bench, not a copy of the silicon):
++ *   - the reading core is QEMU's current_cpu->cpu_index (0 for an access that is not made by a
++ *     CPU, e.g. from the monitor); AIC core index = QEMU cpu index;
++ *   - inputs are levels: a pulse that ends before the source is unmasked is lost (the real
++ *     edge-latch behaviour is not known, [hypothesis] in wel2_aic.h);
++ *   - reset: every source masked, every TARGET_CPU = core 0, no software bit, IPIs masked;
++ *   - an EVENT read does not clear a software bit (SW_CLR does);
++ *   - no fast IPI, no timer / PMU FIQ routing (those are not AIC events on the t8103), no die
++ *     field, no extended registers.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++#include "migration/vmstate.h"
++#include "hw/core/cpu.h"
++#include "hw/core/irq.h"
++#include "hw/core/qdev-properties.h"
++#include "hw/intc/watari_aic.h"
++
++#define BIT_OF(irq)   (1u << ((irq) % 32))
++#define WORD_OF(irq)  ((irq) / 32)
++
++static unsigned aic_this_cpu(WatariAICState *s)
++{
++    unsigned c = current_cpu ? current_cpu->cpu_index : 0;
++
++    return c < s->num_cpu ? c : 0;
++}
++
++/* Lowest source that is deliverable to core c, or -1. */
++static int aic_find_irq(WatariAICState *s, unsigned c)
++{
++    for (unsigned w = 0; w < s->num_irq / 32; w++) {
++        uint32_t live = (s->hw[w] | s->sw[w]) & ~s->mask[w];
++
++        while (live) {
++            unsigned b = ctz32(live);
++            unsigned irq = w * 32 + b;
++
++            if (s->target[irq] & (1u << c)) {
++                return irq;
++            }
++            live &= live - 1;
++        }
++    }
++    return -1;
++}
++
++static bool aic_core_pending(WatariAICState *s, unsigned c)
++{
++    return (s->ipi_pending[c] & ~s->ipi_mask[c]) || aic_find_irq(s, c) >= 0;
++}
++
++static void aic_update(WatariAICState *s)
++{
++    for (unsigned c = 0; c < s->num_cpu; c++) {
++        bool level = aic_core_pending(s, c);
++
++        if (level != s->cpu_level[c]) {
++            s->cpu_level[c] = level;
++            qemu_set_irq(s->cpu_irq[c], level);
++        }
++    }
++}
++
++static void aic_set_irq(void *opaque, int irq, int level)
++{
++    WatariAICState *s = opaque;
++
++    if (level) {
++        s->hw[WORD_OF(irq)] |= BIT_OF(irq);
++    } else {
++        s->hw[WORD_OF(irq)] &= ~BIT_OF(irq);
++    }
++    aic_update(s);
++}
++
++static uint32_t aic_event_read(WatariAICState *s, unsigned c)
++{
++    uint32_t ipi = s->ipi_pending[c] & ~s->ipi_mask[c];
++    int irq = aic_find_irq(s, c);
++    uint32_t ev = 0;
++
++    if (irq >= 0) {
++        s->mask[WORD_OF(irq)] |= BIT_OF(irq);     /* the delivered source is masked */
++        ev = (WATARI_AIC_EVENT_TYPE_HW << 16) | irq;
++    } else if (ipi & WATARI_AIC_IPI_SELF) {
++        s->ipi_mask[c] |= WATARI_AIC_IPI_SELF;
++        ev = (WATARI_AIC_EVENT_TYPE_IPI << 16) | 2;
++    } else if (ipi & WATARI_AIC_IPI_OTHER) {
++        s->ipi_mask[c] |= WATARI_AIC_IPI_OTHER;
++        ev = (WATARI_AIC_EVENT_TYPE_IPI << 16) | 1;
++    }
++    aic_update(s);
++    return ev;
++}
++
++static uint64_t aic_read(void *opaque, hwaddr off, unsigned size)
++{
++    WatariAICState *s = opaque;
++    unsigned c = aic_this_cpu(s);
++
++    switch (off) {
++    case WATARI_AIC_REV:
++        return 1;
++    case WATARI_AIC_INFO:
++        return s->num_irq;                         /* NR_IRQ in [15:0] */
++    case WATARI_AIC_WHOAMI:
++        return c;
++    case WATARI_AIC_EVENT:
++        return aic_event_read(s, c);
++    case WATARI_AIC_IPI_MASK_SET:
++    case WATARI_AIC_IPI_MASK_CLR:
++        return s->ipi_mask[c];
++    case WATARI_AIC_IPI_ACK:
++        return s->ipi_pending[c];
++    default:
++        break;
++    }
++
++    if (off >= WATARI_AIC_TARGET_CPU &&
++        off < WATARI_AIC_TARGET_CPU + 4 * s->num_irq) {
++        return s->target[(off - WATARI_AIC_TARGET_CPU) / 4];
++    }
++    if (off >= WATARI_AIC_SW_SET && off < WATARI_AIC_SW_SET + s->num_irq / 8) {
++        return s->sw[(off - WATARI_AIC_SW_SET) / 4];
++    }
++    if (off >= WATARI_AIC_SW_CLR && off < WATARI_AIC_SW_CLR + s->num_irq / 8) {
++        return s->sw[(off - WATARI_AIC_SW_CLR) / 4];
++    }
++    if (off >= WATARI_AIC_MASK_SET && off < WATARI_AIC_MASK_SET + s->num_irq / 8) {
++        return s->mask[(off - WATARI_AIC_MASK_SET) / 4];
++    }
++    if (off >= WATARI_AIC_MASK_CLR && off < WATARI_AIC_MASK_CLR + s->num_irq / 8) {
++        return s->mask[(off - WATARI_AIC_MASK_CLR) / 4];
++    }
++    if (off >= WATARI_AIC_HW_STATE && off < WATARI_AIC_HW_STATE + s->num_irq / 8) {
++        return s->hw[(off - WATARI_AIC_HW_STATE) / 4];
++    }
++    qemu_log_mask(LOG_UNIMP, "watari-aic: read of unknown register 0x%" HWADDR_PRIx "\n", off);
++    return 0;
++}
++
++static void aic_write(void *opaque, hwaddr off, uint64_t val, unsigned size)
++{
++    WatariAICState *s = opaque;
++    unsigned c = aic_this_cpu(s);
++    uint32_t v = val;
++
++    switch (off) {
++    case WATARI_AIC_IPI_SEND:
++        for (unsigned t = 0; t < s->num_cpu; t++) {
++            if (v & (1u << t)) {
++                s->ipi_pending[t] |= WATARI_AIC_IPI_OTHER;
++            }
++        }
++        if (v & WATARI_AIC_IPI_SELF) {
++            s->ipi_pending[c] |= WATARI_AIC_IPI_SELF;
++        }
++        break;
++    case WATARI_AIC_IPI_ACK:
++        s->ipi_pending[c] &= ~v;
++        break;
++    case WATARI_AIC_IPI_MASK_SET:
++        s->ipi_mask[c] |= v;
++        break;
++    case WATARI_AIC_IPI_MASK_CLR:
++        s->ipi_mask[c] &= ~v;
++        break;
++    default:
++        if (off >= WATARI_AIC_TARGET_CPU &&
++            off < WATARI_AIC_TARGET_CPU + 4 * s->num_irq) {
++            s->target[(off - WATARI_AIC_TARGET_CPU) / 4] =
++                v & MAKE_64BIT_MASK(0, s->num_cpu);
++        } else if (off >= WATARI_AIC_SW_SET &&
++                   off < WATARI_AIC_SW_SET + s->num_irq / 8) {
++            s->sw[(off - WATARI_AIC_SW_SET) / 4] |= v;
++        } else if (off >= WATARI_AIC_SW_CLR &&
++                   off < WATARI_AIC_SW_CLR + s->num_irq / 8) {
++            s->sw[(off - WATARI_AIC_SW_CLR) / 4] &= ~v;
++        } else if (off >= WATARI_AIC_MASK_SET &&
++                   off < WATARI_AIC_MASK_SET + s->num_irq / 8) {
++            s->mask[(off - WATARI_AIC_MASK_SET) / 4] |= v;
++        } else if (off >= WATARI_AIC_MASK_CLR &&
++                   off < WATARI_AIC_MASK_CLR + s->num_irq / 8) {
++            s->mask[(off - WATARI_AIC_MASK_CLR) / 4] &= ~v;
++        } else {
++            qemu_log_mask(LOG_UNIMP,
++                          "watari-aic: write of unknown register 0x%" HWADDR_PRIx
++                          " = 0x%x\n", off, v);
++        }
++        break;
++    }
++    aic_update(s);
++}
++
++static const MemoryRegionOps aic_ops = {
++    .read = aic_read,
++    .write = aic_write,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++    },
++};
++
++static void aic_reset(DeviceState *dev)
++{
++    WatariAICState *s = WATARI_AIC(dev);
++
++    memset(s->sw, 0, sizeof(s->sw));
++    memset(s->ipi_pending, 0, sizeof(s->ipi_pending));
++    for (unsigned i = 0; i < WATARI_AIC_MAX_IRQ / 32; i++) {
++        s->mask[i] = 0xffffffffu;
++    }
++    for (unsigned i = 0; i < WATARI_AIC_MAX_IRQ; i++) {
++        s->target[i] = 1;
++    }
++    for (unsigned c = 0; c < WATARI_AIC_MAX_CPUS; c++) {
++        s->ipi_mask[c] = WATARI_AIC_IPI_OTHER | WATARI_AIC_IPI_SELF;
++    }
++    aic_update(s);
++}
++
++static void aic_realize(DeviceState *dev, Error **errp)
++{
++    WatariAICState *s = WATARI_AIC(dev);
++    SysBusDevice *sbd = SYS_BUS_DEVICE(dev);
++
++    if (s->num_irq < 32 || s->num_irq > WATARI_AIC_MAX_IRQ || s->num_irq % 32) {
++        error_setg(errp, "watari-aic: num-irq must be a multiple of 32 in 32..%d",
++                   WATARI_AIC_MAX_IRQ);
++        return;
++    }
++    if (s->num_cpu < 1 || s->num_cpu > WATARI_AIC_MAX_CPUS) {
++        error_setg(errp, "watari-aic: num-cpu must be in 1..%d",
++                   WATARI_AIC_MAX_CPUS);
++        return;
++    }
++
++    memory_region_init_io(&s->iomem, OBJECT(dev), &aic_ops, s, "watari-aic",
++                          WATARI_AIC_MMIO_SIZE);
++    sysbus_init_mmio(sbd, &s->iomem);
++    qdev_init_gpio_in(dev, aic_set_irq, s->num_irq);
++    for (unsigned c = 0; c < s->num_cpu; c++) {
++        sysbus_init_irq(sbd, &s->cpu_irq[c]);
++    }
++}
++
++static const Property aic_properties[] = {
++    DEFINE_PROP_UINT32("num-irq", WatariAICState, num_irq, 128),
++    DEFINE_PROP_UINT32("num-cpu", WatariAICState, num_cpu, 1),
++};
++
++static const VMStateDescription vmstate_aic = {
++    .name = "watari-aic",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(hw, WatariAICState, WATARI_AIC_MAX_IRQ / 32),
++        VMSTATE_UINT32_ARRAY(sw, WatariAICState, WATARI_AIC_MAX_IRQ / 32),
++        VMSTATE_UINT32_ARRAY(mask, WatariAICState, WATARI_AIC_MAX_IRQ / 32),
++        VMSTATE_UINT32_ARRAY(target, WatariAICState, WATARI_AIC_MAX_IRQ),
++        VMSTATE_UINT32_ARRAY(ipi_pending, WatariAICState, WATARI_AIC_MAX_CPUS),
++        VMSTATE_UINT32_ARRAY(ipi_mask, WatariAICState, WATARI_AIC_MAX_CPUS),
++        VMSTATE_BOOL_ARRAY(cpu_level, WatariAICState, WATARI_AIC_MAX_CPUS),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void aic_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->realize = aic_realize;
++    device_class_set_legacy_reset(dc, aic_reset);
++    device_class_set_props(dc, aic_properties);
++    dc->vmsd = &vmstate_aic;
++    dc->desc = "Watari AIC (Apple Interrupt Controller v1, test bench)";
++    set_bit(DEVICE_CATEGORY_MISC, dc->categories);
++}
++
++static const TypeInfo aic_info = {
++    .name = TYPE_WATARI_AIC,
++    .parent = TYPE_SYS_BUS_DEVICE,
++    .instance_size = sizeof(WatariAICState),
++    .class_init = aic_class_init,
++};
++
++static void aic_register_types(void)
++{
++    type_register_static(&aic_info);
++}
++
++type_init(aic_register_types)
+--- a/hw/intc/meson.build
++++ b/hw/intc/meson.build
+@@ -28,6 +28,7 @@
+ system_ss.add(when: 'CONFIG_OMAP', if_true: files('omap_intc.c'))
+ system_ss.add(when: 'CONFIG_OPENPIC', if_true: files('openpic.c'))
+ system_ss.add(when: 'CONFIG_PL190', if_true: files('pl190.c'))
++system_ss.add(when: 'CONFIG_ARM_VIRT', if_true: files('watari_aic.c'))
+ system_ss.add(when: 'CONFIG_RASPI', if_true: files('bcm2835_ic.c', 'bcm2836_control.c'))
+ system_ss.add(when: 'CONFIG_REALVIEW', if_true: files('realview_gic.c'))
+ system_ss.add(when: 'CONFIG_SLAVIO', if_true: files('slavio_intctl.c'))

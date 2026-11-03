@@ -121,6 +121,14 @@ unsigned cpu_from_mpidr(uint64_t mpidr);     /* index into g_pcpu, or ~0u */
 /* pirq_qemu.c: SPI policy (wel2_pirq.h) on the QEMU physical GICv3. */
 extern struct pirq g_pirq;
 void pirq_qemu_init(struct vgic *v, unsigned nr_vcpus);   /* before the guest can touch the vGIC */
+/* #42: the hybrid machine (QEMU patched with aic=on) also has a Watari AIC that owns some devices' lines. */
+struct fdt_aic_info;
+struct pirq_aic;
+extern bool g_aic_on;                        /* the AIC backend is active (FDT node found and accepted) */
+extern struct pirq_aic g_aic;
+int  pirq_qemu_init_aic(struct vgic *v, unsigned nr_vcpus, const struct fdt_aic_info *ai, const char **why);
+int  pirq_qemu_init_aic_cpu(unsigned vcpu);  /* every core, after its GIC interface is up */
+void pirq_qemu_aic_irq(unsigned me);         /* drain this core's AIC events (IRQ branch) */
 
 /* cpuif.c: virtual CPU interface (ICH_*) driven from the vGIC model. */
 void cpuif_init(struct vgic *v);             /* boot core: shared + per-core init */

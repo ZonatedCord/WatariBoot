@@ -311,3 +311,57 @@ int fdt_get_memory(void *fdt, struct wel2_ram *ram, uint64_t min_base, uint64_t 
         return -1;
     return c.found ? c.rc : -1;
 }
+
+struct aic_ctx {
+    struct fdt_aic_info *info;
+    unsigned addr_cells, size_cells;
+    bool compat;
+};
+
+/* The node "watari-aic@..." QEMU adds with aic=on (patch 0002 of tools/qemu-watari): compatible
+ * "watari,aic-v1", reg, watari,num-irq, watari,num-cpu, watari,routed-irqs (AIC input numbers of
+ * the devices wired to the AIC). Only a node at depth 1 with the right compatible string counts. */
+static bool aic_cb(void *vctx, unsigned depth, const char *node, const char *prop,
+                   uint8_t *val, uint32_t len)
+{
+    struct aic_ctx *c = vctx;
+    struct fdt_aic_info *i = c->info;
+
+    if (depth == 0 && len == 4) {
+        if (str_eq(prop, "#address-cells"))
+            c->addr_cells = be32(val);
+        else if (str_eq(prop, "#size-cells"))
+            c->size_cells = be32(val);
+    } else if (depth == 1 && name_is(node, "watari-aic")) {
+        if (str_eq(prop, "compatible")) {
+            c->compat = len == 14 && str_eq((const char *)val, "watari,aic-v1");
+        } else if (str_eq(prop, "reg")) {
+            unsigned a = c->addr_cells, s = c->size_cells;
+
+            if (a >= 1 && a <= 2 && s >= 1 && s <= 2 && len >= 4 * (a + s)) {
+                i->base = be_cells(val, a);
+                i->size = be_cells(val + 4 * a, s);
+                i->has_reg = true;
+            }
+        } else if (str_eq(prop, "watari,num-irq") && len == 4) {
+            i->nr_irq = be32(val);
+        } else if (str_eq(prop, "watari,num-cpu") && len == 4) {
+            i->nr_cpu = be32(val);
+        } else if (str_eq(prop, "watari,routed-irqs")) {
+            for (unsigned k = 0; k + 4 <= len && i->n_routed < FDT_AIC_MAX_ROUTED; k += 4)
+                i->routed[i->n_routed++] = be32(val + k);
+        }
+    }
+    return false;
+}
+
+int fdt_find_aic(void *fdt, struct fdt_aic_info *info)
+{
+    struct aic_ctx c = { info, 2, 2, false };
+
+    *info = (struct fdt_aic_info){ 0 };
+    if (fdt_walk_props(fdt, aic_cb, &c))
+        return -1;
+    info->found = c.compat && info->has_reg && info->nr_irq != 0;
+    return 0;
+}

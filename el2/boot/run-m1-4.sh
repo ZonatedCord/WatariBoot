@@ -27,7 +27,7 @@ TICKS=600                       # 60 s
 [ "${WITH_NIC:-0}" = 1 ] && { NIC=""; TICKS=1500; }   # 150 s
 LOG=build-chain/uart.log
 : > "$LOG"
-qemu-system-aarch64 -M virt,virtualization=on,gic-version=3 -cpu max -accel tcg \
+"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu max -accel tcg \
     -nographic -m 2G -smp 4 $NIC -kernel build-chain/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
     -device loader,file="$FD",addr=0x40280000,force-raw=on \
     -serial "file:$LOG" -monitor none >build-chain/qemu.out 2>&1 &

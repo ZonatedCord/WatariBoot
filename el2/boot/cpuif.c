@@ -44,6 +44,7 @@
 // unmasked again, so a level interrupt that is still asserted re-fires.
 
 #include "boot.h"
+#include "wel2_aic.h"
 #include "wel2_vcif.h"
 #include "wel2_ram.h"
 
@@ -532,6 +533,12 @@ void cpuif_irq(void)
         }
         gic_phys_eoi(id);
     }
+    /* #42: the CPU IRQ line is the OR of the GIC and the AIC. The GIC is asked first (cheap system
+     * register, and it carries the timer / maintenance PPIs that fire all the time); once it reports
+     * nothing, the AIC is drained with EVENT reads (MMIO) until it reports 0. Both are empty before
+     * the flush, and a source that asserts meanwhile keeps the line high, so the next IRQ finds it. */
+    if (g_aic_on)
+        pirq_qemu_aic_irq(me);
     cpuif_flush();
     cpuif_kick_others();
 }
@@ -728,6 +735,12 @@ void cpuif_stats(void)
     put_kv("Watari EL2: stats: underflow maintenance irqs (UIE) = ", t[7]);
     put_kv("Watari EL2: stats: LR evictions (higher priority arrived) = ", t[6]);
     put_kv("Watari EL2: stats: forwarded SPIs = ", t[4]);
+    if (g_aic_on) {
+        put_kv("Watari EL2: stats: AIC events = ", g_aic.st.events);
+        put_kv("Watari EL2: stats: AIC empty EVENT reads = ", g_aic.st.spurious);
+        put_kv("Watari EL2: stats: AIC unexpected (IPI / bad) = ", g_aic.st.ipi_unexpected + g_aic.st.bad);
+        put_kv("Watari EL2: stats: AIC sources denied (not exposed) = ", g_pirq.st.denied);
+    }
     {
         /* The EL2 regime must survive a guest that ran: an EL2 access to SCTLR_EL1 with E2H = 1 would be redirected
          * to SCTLR_EL2 (Arm ARM D8.13.2) and switch the EL2 MMU off. Checked here, after the guest, on this core. */

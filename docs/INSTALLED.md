@@ -78,3 +78,16 @@ Nothing downloaded or installed. `tools/build-edk2-kernel.sh` compiles the alrea
 - `WatariBoot-data/src/edk2/Build/ArmVirtQemuKernel-AArch64/` (EDK2 build tree, ~200 MB), log `WatariBoot-data/logs/m1-4-build-kernel.log`.
 - `WatariBoot-data/build-kernel/QEMU_EFI-kernel.fd` (3 MB, the image loaded into RAM by `el2/boot/run-m1-4.sh`).
 Removal: delete those paths. In the repo, `el2/boot/build-chain/` is a git-ignored build output (`make -C el2/boot clean`).
+
+## #42 QEMU source build with a Watari AIC (2026-11-03)
+Time Machine backup confirmed by Marco on 2026-11-02, who authorized exactly these downloads/installs. Nothing else was downloaded.
+
+| What | Version | Size | Where | Remove |
+|---|---|---|---|---|
+| QEMU source tarball `qemu-11.1.2.tar.xz` (from `https://download.qemu.org/`), same version as the Homebrew QEMU | 11.1.2 | 135 MB (141,815,216 bytes) | `$WATARI_DATA/qemu-watari/dl/` | with the data folder |
+| Its detached signature `qemu-11.1.2.tar.xz.sig` | - | 310 bytes | same folder | same |
+| Homebrew `ninja` (QEMU build prerequisite; QEMU bundles meson, `configure --disable-download` so nothing else is fetched) | 1.13.2 | 438 KB | `/opt/homebrew/Cellar/ninja` | `tools/uninstall-watari.sh --yes` (ninja is not in `brew-prima.txt`, it was NOT installed before: checked with `which ninja` and `grep ninja brew-prima.txt`) or `brew uninstall ninja` |
+| Work image `work.sparseimage` (12 GB sparse APFS image, attached at `/private/tmp/watari-qemu`; QEMU's configure refuses paths with spaces); it holds the source trees and the build (about 2-3 GB when built) | - | grows with use | `$WATARI_DATA/qemu-watari/work.sparseimage` | `hdiutil detach /private/tmp/watari-qemu` (done by `tools/uninstall-watari.sh --yes`), then the data folder |
+
+Integrity: sha256 of the tarball `731b5681e4bb18be313231579b8efd0296c5b015fa36dc533874b639ba838016` (pinned in `tools/qemu-watari/build.sh`, checked on every build; `xz -t` ok). **The GPG signature was NOT verified**: the QEMU release key is not on this Mac and importing it would be one more download. Side effect: `gpg --verify` created an empty `~/.gnupg` (keyring only, no keys) on 2026-11-03; harmless, `rm -r ~/.gnupg` removes it (the uninstall script only reminds about it).
+Not touched: the Homebrew QEMU (`/opt/homebrew/bin/qemu-system-aarch64`). Our binary is `/private/tmp/watari-qemu/build/qemu-system-aarch64`, used by explicit path (`QEMU=`). Details: `tools/qemu-watari/README.md`.

@@ -9,6 +9,7 @@
 #include "wel2_vgic.h"
 #include "boot.h"
 #include "fdt.h"
+#include "wel2_aic.h"
 #include "wel2_maps.h"
 
 #define HCR_VM   (1ULL << 0)
@@ -177,6 +178,7 @@ static void handle_smc(struct frame *f)
  * Note: without the chain build EL2's own image sits in the RAM block, i.e. it is visible to the guest.
  * M1-3: all cores share these tables (one VTTBR value, VMID 0).
  */
+static struct fdt_aic_info g_aic_info;  /* the Watari AIC node (#42), found when g_aic_on */
 static uint8_t s2_pool[WEL2_S2_POOL_BYTES] __attribute__((aligned(16384)));
 static struct wel2_pt s2_pt;
 static uint64_t g_vtcr;
@@ -184,12 +186,19 @@ static uint64_t g_vtcr;
 static void stage2_init(void)
 {
     struct wel2_ram ram = { g_ram_base, g_ram_end };
-    struct wel2_range holes[3] = {
+    struct wel2_range holes[4] = {
         { GICD_PHYS, GICD_SIZE },
         { GICR_PHYS, 8ULL * VGIC_GICR_FRAME_SIZE },
         { 0, 0 },
+        { 0, 0 },
     };
     unsigned nholes = 2;
+
+    if (g_aic_on) {                     /* #42: the AIC belongs to the layer, the guest faults there */
+        holes[nholes].base = g_aic_info.base;
+        holes[nholes].size = g_aic_info.size;
+        nholes++;
+    }
 
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
@@ -231,6 +240,7 @@ static unsigned g_log_budget = 16;
  * SKIP ones (EDK2 does ~1000 of them), at most 3000 lines. Off by default. */
 bool g_trace_on;
 static bool g_lpi = true;       /* wel2.lpi=off: hide LPIs from the guest (GICD_TYPER.LPIS = 0) */
+static bool g_aic_allowed = true;   /* wel2.aic=off: ignore the AIC node of the QEMU aic=on machine */
 static unsigned g_trace_skip, g_trace_left = 3000;
 
 static unsigned idx_cpu(void)
@@ -288,7 +298,7 @@ static void lpi_reg_cb(void *ctx, unsigned cpu, unsigned off, uint64_t val)
     gic_phys_lpi_reg(cpu, off, val);
 }
 
-static void vgic_setup(void)
+static void vgic_setup(uint64_t fdt)
 {
     uint32_t aff[MAX_CPUS];
 
@@ -304,6 +314,19 @@ static void vgic_setup(void)
         .idbits = gic_phys_idbits(),
     };
     pirq_qemu_init(&g_vgic, g_ncpu);            /* SPI policy first: vGIC effects reach it */
+    /* #42: the QEMU machine with aic=on describes its Apple-style AIC in the FDT; the layer then owns it too. */
+    if (g_aic_allowed && fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
+        fdt_find_aic((void *)fdt, &g_aic_info) == 0 && g_aic_info.found) {
+        const char *why = "";
+
+        if (g_aic_info.nr_cpu != g_ncpu)
+            fatal_msg("AIC node: num-cpu differs from the cores found");
+        if (pirq_qemu_init_aic(&g_vgic, g_ncpu, &g_aic_info, &why))
+            fatal_msg(why);
+        put_kv("Watari EL2: AIC at ", g_aic_info.base);
+        put_kv("Watari EL2:   inputs = ", g_aic.nr_irq);
+        put_kv("Watari EL2:   devices routed to the AIC = ", g_aic_info.n_routed);
+    }
     if (vgic_init(&g_vgic, &cfg) != 0)
         fatal_msg("vgic_init failed");
 }
@@ -530,6 +553,8 @@ static void parse_bootargs(uint64_t fdt)
             g_cpuif_trap = true;
         else if (arg_is(p, "wel2.lpi=off"))
             g_lpi = false;
+        else if (arg_is(p, "wel2.aic=off"))
+            g_aic_allowed = false;
         else if (arg_is(p, "wel2.cpuif=hw"))
             g_cpuif_trap = false;
         else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 't' &&
@@ -619,7 +644,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     g_hcr |= HCR_TSC;
 #endif
     parse_bootargs(fdt);
-    vgic_setup();
+    vgic_setup(fdt);
     pirq_vcpu_on(&g_pirq, this_cpu());          /* the cold-boot core can take SPIs */
     stage2_init();
     stage2_enable();
@@ -627,6 +652,8 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     puts_("Watari EL2: stage-2 on (identity, GICD/GICR unmapped), vGIC ready\n");
     gic_phys_init_dist();
     gic_phys_init_cpu();
+    if (g_aic_on && pirq_qemu_init_aic_cpu(this_cpu()))
+        fatal_msg("AIC: WHOAMI of the boot core differs from its index");
     cpuif_init(&g_vgic);
     puts_("Watari EL2: physical GIC owned by EL2, virtual CPU interface on\n");
 #ifdef WEL2_CHAIN
@@ -657,6 +684,8 @@ void __attribute__((noreturn)) el2_secondary_main(void)
     stage2_enable();
     set_virtual_ids();
     gic_phys_init_cpu();
+    if (g_aic_on && pirq_qemu_init_aic_cpu(me))
+        fatal_msg("AIC: WHOAMI of a secondary core differs from its index");
     cpuif_init_cpu();
 
     big_lock();
