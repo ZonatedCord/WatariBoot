@@ -58,11 +58,11 @@ esac
 if [ -n "${NOLAYER:-}" ]; then
     MACH="virt,gic-version=3,$MSIOPT"; LOADER=(-kernel "$FD")
 else
-    MACH="virt,virtualization=on,gic-version=3,$MSIOPT"
+    MACH="virt,virtualization=on,gic-version=3,$MSIOPT${MACHINE_OPTS:+,$MACHINE_OPTS}"
     LOADER=(-kernel build-chain/wel2.bin ${APPEND[@]+"${APPEND[@]}"} -device loader,file="$FD",addr=0x40280000,force-raw=on)
 fi
 echo "machine: $MACH"
-qemu-system-aarch64 -M "$MACH" -cpu max -accel tcg \
+"${QEMU:-qemu-system-aarch64}" -M "$MACH" -cpu max -accel tcg \
     -m "${MEM:-4G}" -smp "${SMP:-4}" -display none -nic none \
     "${LOADER[@]}" \
     -chardev "socket,id=ser0,path=$SOCKDIR/ser.sock,server=on,wait=off,logfile=$LOG" -serial chardev:ser0 \

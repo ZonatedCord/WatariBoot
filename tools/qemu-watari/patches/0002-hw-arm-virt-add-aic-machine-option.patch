@@ -1,0 +1,257 @@
+Subject: [PATCH 2/2] hw/arm/virt: add the aic=on machine option
+
+SPDX-License-Identifier: GPL-2.0-or-later
+---
+--- a/include/hw/arm/virt.h
++++ b/include/hw/arm/virt.h
+@@ -100,6 +100,7 @@
+     VIRT_GWDT_WS0,
+     VIRT_GWDT_REFRESH,
+     VIRT_GWDT_CONTROL,
++    VIRT_WATARI_AIC,
+     VIRT_LOWMEMMAP_LAST,
+ };
+ 
+@@ -174,6 +175,9 @@
+     bool highmem_redists;
+     bool tcg_its;
+     bool virt;
++    bool aic;               /* Watari: an Apple-style AIC next to the GIC (aic=on) */
++    uint32_t aic_routes;    /* Watari: devices wired to the AIC instead of the GIC */
++    DeviceState *aic_dev;
+     bool ras;
+     bool mte;
+     bool dtb_randomness;
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -69,6 +69,8 @@
+ #include "hw/intc/arm_gicv3_common.h"
+ #include "hw/intc/arm_gicv3_its_common.h"
+ #include "hw/intc/arm_gicv5_common.h"
++#include "hw/intc/watari_aic.h"
++#include "hw/core/or-irq.h"
+ #include "hw/core/irq.h"
+ #include "kvm_arm.h"
+ #include "whpx_arm.h"
+@@ -217,6 +219,8 @@
+     [VIRT_SECURE_MEM] =         { 0x0e000000, 0x01000000 },
+     [VIRT_GWDT_REFRESH] =       { 0x0f000000, 0x00001000 },
+     [VIRT_GWDT_CONTROL] =       { 0x0f001000, 0x00001000 },
++    /* Watari: AIC window (aic=on), 16 KB aligned, nothing else lives here */
++    [VIRT_WATARI_AIC] =         { 0x0f004000, WATARI_AIC_MMIO_SIZE },
+     [VIRT_PCIE_MMIO] =          { 0x10000000, 0x2eff0000 },
+     [VIRT_PCIE_PIO] =           { 0x3eff0000, 0x00010000 },
+     [VIRT_PCIE_ECAM] =          { 0x3f000000, 0x01000000 },
+@@ -1277,6 +1281,66 @@
+            (vms->gic_version != VIRT_GIC_VERSION_2);
+ }
+ 
++/*
++ * Watari AIC (aic=on): the GIC stays (QEMU provides the ICH_* virtual CPU interface only with
++ * it, and the M1 has ICH_* too), an Apple-style AIC is added at VIRT_WATARI_AIC and selected
++ * devices are wired to AIC inputs instead of GIC SPIs. The AIC input number of a device is its
++ * usual SPI number (RTC 2, UART0 1), so the INTID a layer exposes to the guest (32 + hwirq) is
++ * the one the FDT / ACPI already announce. The CPU IRQ line is shared by GIC and AIC through an
++ * OR gate per CPU.
++ */
++#define NUM_AIC_IRQS 128
++enum {
++    AIC_ROUTE_RTC   = 1 << 0,
++    AIC_ROUTE_UART0 = 1 << 1,
++};
++
++static qemu_irq virt_dev_irq(const VirtMachineState *vms, uint32_t route,
++                             int irq)
++{
++    if (vms->aic_dev && (vms->aic_routes & route)) {
++        return qdev_get_gpio_in(vms->aic_dev, irq);
++    }
++    return qdev_get_gpio_in(vms->gic, irq);
++}
++
++static void create_watari_aic(VirtMachineState *vms)
++{
++    MachineState *ms = MACHINE(vms);
++    hwaddr base = vms->memmap[VIRT_WATARI_AIC].base;
++    hwaddr size = vms->memmap[VIRT_WATARI_AIC].size;
++    uint32_t irqs[2];
++    unsigned n = 0;
++    char *nodename;
++    SysBusDevice *s;
++
++    vms->aic_dev = qdev_new(TYPE_WATARI_AIC);
++    qdev_prop_set_uint32(vms->aic_dev, "num-irq", NUM_AIC_IRQS);
++    qdev_prop_set_uint32(vms->aic_dev, "num-cpu", ms->smp.cpus);
++    s = SYS_BUS_DEVICE(vms->aic_dev);
++    sysbus_realize_and_unref(s, &error_fatal);
++    sysbus_mmio_map(s, 0, base);
++
++    if (vms->aic_routes & AIC_ROUTE_UART0) {
++        irqs[n++] = cpu_to_be32(vms->irqmap[VIRT_UART0]);
++    }
++    if (vms->aic_routes & AIC_ROUTE_RTC) {
++        irqs[n++] = cpu_to_be32(vms->irqmap[VIRT_RTC]);
++    }
++
++    nodename = g_strdup_printf("/watari-aic@%" PRIx64, base);
++    qemu_fdt_add_subnode(ms->fdt, nodename);
++    qemu_fdt_setprop_string(ms->fdt, nodename, "compatible", "watari,aic-v1");
++    qemu_fdt_setprop_sized_cells(ms->fdt, nodename, "reg", 2, base, 2, size);
++    qemu_fdt_setprop_cell(ms->fdt, nodename, "watari,num-irq", NUM_AIC_IRQS);
++    qemu_fdt_setprop_cell(ms->fdt, nodename, "watari,num-cpu", ms->smp.cpus);
++    if (n) {
++        qemu_fdt_setprop(ms->fdt, nodename, "watari,routed-irqs", irqs,
++                         n * sizeof(irqs[0]));
++    }
++    g_free(nodename);
++}
++
+ static void gic_connect_ppis(VirtMachineState *vms)
+ {
+     /*
+@@ -1288,6 +1352,14 @@
+     MachineState *ms = MACHINE(vms);
+     unsigned int smp_cpus = ms->smp.cpus;
+     SysBusDevice *gicbusdev = SYS_BUS_DEVICE(vms->gic);
++
++    if (vms->aic) {
++        if (vms->gic_version == VIRT_GIC_VERSION_2) {
++            error_report("aic=on needs a GICv3 or GICv4 (gic-version=3)");
++            exit(1);
++        }
++        create_watari_aic(vms);
++    }
+ 
+     for (int i = 0; i < smp_cpus; i++) {
+         DeviceState *cpudev = DEVICE(qemu_get_cpu(i));
+@@ -1327,7 +1399,21 @@
+                                     qdev_get_gpio_in(vms->gic, intidbase
+                                                      + VIRTUAL_PMU_IRQ));
+ 
+-        sysbus_connect_irq(gicbusdev, i, qdev_get_gpio_in(cpudev, ARM_CPU_IRQ));
++        if (vms->aic) {
++            /* GIC and AIC outputs share the CPU IRQ line: OR them */
++            DeviceState *orgate = qdev_new(TYPE_OR_IRQ);
++
++            qdev_prop_set_uint16(orgate, "num-lines", 2);
++            qdev_realize_and_unref(orgate, NULL, &error_fatal);
++            qdev_connect_gpio_out(orgate, 0,
++                                  qdev_get_gpio_in(cpudev, ARM_CPU_IRQ));
++            sysbus_connect_irq(gicbusdev, i, qdev_get_gpio_in(orgate, 0));
++            sysbus_connect_irq(SYS_BUS_DEVICE(vms->aic_dev), i,
++                               qdev_get_gpio_in(orgate, 1));
++        } else {
++            sysbus_connect_irq(gicbusdev, i,
++                               qdev_get_gpio_in(cpudev, ARM_CPU_IRQ));
++        }
+         sysbus_connect_irq(gicbusdev, i + smp_cpus,
+                            qdev_get_gpio_in(cpudev, ARM_CPU_FIQ));
+         sysbus_connect_irq(gicbusdev, i + 2 * smp_cpus,
+@@ -1517,7 +1603,9 @@
+     sysbus_realize_and_unref(SYS_BUS_DEVICE(dev), &error_fatal);
+     memory_region_add_subregion(mem, base,
+                                 sysbus_mmio_get_region(s, 0));
+-    sysbus_connect_irq(s, 0, qdev_get_gpio_in(vms->gic, irq));
++    sysbus_connect_irq(s, 0,
++                       virt_dev_irq(vms, uart == VIRT_UART0 && !secure ?
++                                         AIC_ROUTE_UART0 : 0, irq));
+ 
+     nodename = g_strdup_printf("/pl011@%" PRIx64, base);
+     qemu_fdt_add_subnode(ms->fdt, nodename);
+@@ -1561,7 +1649,7 @@
+     const char compat[] = "arm,pl031\0arm,primecell";
+     MachineState *ms = MACHINE(vms);
+ 
+-    sysbus_create_simple("pl031", base, qdev_get_gpio_in(vms->gic, irq));
++    sysbus_create_simple("pl031", base, virt_dev_irq(vms, AIC_ROUTE_RTC, irq));
+ 
+     nodename = g_strdup_printf("/pl031@%" PRIx64, base);
+     qemu_fdt_add_subnode(ms->fdt, nodename);
+@@ -3656,6 +3744,60 @@
+         error_setg(errp, "Invalid gic-version value");
+         error_append_hint(errp, "Valid values are 2, 3, 4, x-5, host, and max.\n");
+     }
++}
++
++static bool virt_get_aic(Object *obj, Error **errp)
++{
++    VirtMachineState *vms = VIRT_MACHINE(obj);
++
++    return vms->aic;
++}
++
++static void virt_set_aic(Object *obj, bool value, Error **errp)
++{
++    VirtMachineState *vms = VIRT_MACHINE(obj);
++
++    vms->aic = value;
++}
++
++static char *virt_get_aic_routes(Object *obj, Error **errp)
++{
++    VirtMachineState *vms = VIRT_MACHINE(obj);
++    GString *r = g_string_new("");
++
++    if (vms->aic_routes & AIC_ROUTE_RTC) {
++        g_string_append(r, "rtc");
++    }
++    if (vms->aic_routes & AIC_ROUTE_UART0) {
++        g_string_append(r, r->len ? "+uart" : "uart");
++    }
++    if (!r->len) {
++        g_string_append(r, "none");
++    }
++    return g_string_free(r, false);
++}
++
++static void virt_set_aic_routes(Object *obj, const char *value, Error **errp)
++{
++    VirtMachineState *vms = VIRT_MACHINE(obj);
++    char **tok = g_strsplit(value, "+", -1);
++    uint32_t routes = 0;
++
++    for (char **t = tok; *t; t++) {
++        if (!strcmp(*t, "rtc")) {
++            routes |= AIC_ROUTE_RTC;
++        } else if (!strcmp(*t, "uart")) {
++            routes |= AIC_ROUTE_UART0;
++        } else if (strcmp(*t, "none")) {
++            error_setg(errp, "Invalid aic-routes value '%s'", *t);
++            error_append_hint(errp, "Valid values: none, rtc, uart, joined "
++                              "with '+' (e.g. rtc+uart).\n");
++            g_strfreev(tok);
++            return;
++        }
++    }
++    g_strfreev(tok);
++    vms->aic_routes = routes;
+ }
+ 
+ static char *virt_get_iommu(Object *obj, Error **errp)
+@@ -4282,6 +4424,17 @@
+                                           "Set GIC version. "
+                                           "Valid values are 2, 3, 4, x-5, host and max");
+ 
++    object_class_property_add_bool(oc, "aic", virt_get_aic, virt_set_aic);
++    object_class_property_set_description(oc, "aic",
++                                          "Watari: add an Apple-style AIC next to "
++                                          "the GICv3 and wire selected devices to it");
++    object_class_property_add_str(oc, "aic-routes", virt_get_aic_routes,
++                                  virt_set_aic_routes);
++    object_class_property_set_description(oc, "aic-routes",
++                                          "Watari: devices wired to the AIC "
++                                          "instead of the GIC when aic=on: "
++                                          "none, rtc, uart, or rtc+uart (default)");
++
+     object_class_property_add_str(oc, "iommu", virt_get_iommu, virt_set_iommu);
+     object_class_property_set_description(oc, "iommu",
+                                           "Set the IOMMU type. "
+@@ -4363,6 +4516,8 @@
+ 
+     /* EL2 is also disabled by default, for similar reasons */
+     vms->virt = false;
++    vms->aic = false;
++    vms->aic_routes = AIC_ROUTE_RTC | AIC_ROUTE_UART0;
+ 
+     /* High memory is enabled by default */
+     vms->highmem = true;

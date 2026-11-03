@@ -206,3 +206,8 @@ Context: `wel2.e2h=1 wel2.gran=16k` (now the defaults), QEMU TCG `-cpu max`; det
 - **The default assembler architecture does not know `SCTLR_EL12`, `CNTV_CTL_EL02`.** `error: expected readable system register`. Use the generic names `S3_5_C1_C0_0` and `S3_5_C14_C3_1` (encodings from Arm ARM D24).
 - **The 16 KB granule has no 64 GB level-1 block** (only with FEAT_LPA2, Table D8-27): the largest block is 32 MB. A 1 TB device window therefore needs 15 level-2 tables (240 KB) at stage 2; accepted, pooled and host-tested. A 4 KB MMIO frame emulated by trapping (the GICv2m frame of the M3a design at `0xFFFFF000`) becomes a 16 KB hole with this granule: open point in the README, to decide before M3a.
 - **Not tested on QEMU, by construction:** the E2H bit really stuck at 1, the reset values of `CPTR_EL2`/`CNTHCTL_EL2`, page-table cache maintenance. **[hypothesis, needs the M1]**
+
+
+## F-28 · #42 QEMU source build: configure fails offline in the Python venv (2026-11-03)
+- QEMU refuses a source/build path with spaces (the data disk is "Arthur Fonzarelli"); a symlink does not help because the venv python resolves it (`line 953: /Volumes/Arthur: No such file or directory`). Workaround: a 12 GB sparse APFS image attached at `/private/tmp/watari-qemu` (`tools/qemu-watari/build.sh`).
+- Then `configure --disable-download` stops at `setuptools>=44.1.1` / `qemu.qmp` ("no matching distribution"): the `[tooling]` group needs `setuptools` and `wheel`, which are not vendored and are absent from Homebrew's Python 3.14 venv. Not solved: try `--python=` 3.12/3.13, or allow one PyPI download with Marco's go-ahead. Result: QEMU was never built in this session, so the AIC patches are uncompiled. See `tools/qemu-watari/README.md` Status.

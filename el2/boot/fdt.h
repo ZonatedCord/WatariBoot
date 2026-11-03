@@ -16,6 +16,17 @@ struct fdt_patch_info {
     uint32_t timer_intid[4];       /* secure phys, non-secure phys, virtual, hyp (INTIDs) */
 };
 
+#define FDT_AIC_MAX_ROUTED 16
+/* The Watari AIC node of the QEMU "aic=on" machine (tools/qemu-watari). */
+struct fdt_aic_info {
+    bool found;                    /* node with compatible "watari,aic-v1", a reg and a num-irq */
+    bool has_reg;
+    uint64_t base, size;           /* MMIO window */
+    uint32_t nr_irq, nr_cpu;
+    uint32_t routed[FDT_AIC_MAX_ROUTED];   /* AIC inputs of the devices wired to it */
+    unsigned n_routed;
+};
+
 typedef bool (*fdt_prop_cb)(void *ctx, unsigned depth, const char *node, const char *prop,
                             uint8_t *val, uint32_t len);
 
@@ -36,6 +47,10 @@ int fdt_patch_for_guest(void *fdt, uint64_t carve_base, uint64_t carve_size, uin
  * is safe with the MMU off (stage1.c calls it before the EL2 map exists: this file is built with
  * -mstrict-align). */
 int fdt_get_memory(void *fdt, struct wel2_ram *ram, uint64_t min_base, uint64_t max_end);
+
+/* Looks for the Watari AIC node. 0 = blob walked (info->found tells whether the node is there),
+ * -1 = malformed blob. Reads only. */
+int fdt_find_aic(void *fdt, struct fdt_aic_info *info);
 
 /* /chosen/bootargs (QEMU -append) copied into out (NUL-terminated, truncated to max-1).
  * Returns the string length, or -1 if there is none or the blob is malformed. */

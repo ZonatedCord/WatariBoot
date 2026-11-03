@@ -14,7 +14,7 @@ make -s || { echo "FAIL: build"; exit 2; }
 
 LOG=build/uart.log
 : > "$LOG"
-qemu-system-aarch64 -M virt,virtualization=on,gic-version=3 -cpu max -accel tcg \
+"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu max -accel tcg \
     -nographic -m 512M -smp 1 -kernel build/wel2.bin ${APPEND[@]+"${APPEND[@]}"} -serial "file:$LOG" -monitor none \
     >build/qemu.out 2>&1 &
 QPID=$!

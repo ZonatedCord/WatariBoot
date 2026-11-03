@@ -27,6 +27,22 @@ else
     echo "Specifiche Arm (M0-A): $SPECS non presente."
 fi
 
+# QEMU 11.1.2 source build (#42, tools/qemu-watari): the work image is mounted at /private/tmp/watari-qemu.
+# The tarball and the image file live in $WATARI_DATA/qemu-watari/ and go with the data folder below.
+# ninja (brew, build prerequisite) is not in brew-prima.txt, so the diff below uninstalls it with the rest.
+QW=/private/tmp/watari-qemu
+if [[ "$(mount)" == *" on $QW "* ]]; then
+    echo "QEMU work image mounted at $QW ($(du -sh "$QW" 2>/dev/null | cut -f1))"
+    if [ "$DO" = 1 ]; then
+        hdiutil detach "$QW" && echo "QEMU work image detached."
+    else
+        echo "  (dry-run) hdiutil detach $QW"
+    fi
+else
+    echo "QEMU work image: not mounted."
+fi
+[ -d "$HOME/.gnupg" ] && echo "Note: ~/.gnupg was created by 'gpg --verify' on 2026-11-03 (empty keyring); not removed by this script, delete it by hand if you want."
+
 if [ ! -f "$BEFORE" ]; then
     echo "ERRORE: $BEFORE non trovato (disco collegato?). Non posso calcolare la differenza." >&2
     exit 1
