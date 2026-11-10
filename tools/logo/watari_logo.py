@@ -6,44 +6,50 @@ SVG used by the README; `pixels()` is also used to draw the logo on the M1 scree
 """
 import sys
 
-G = 25                      # grid size (cells)
+LOGO_W, LOGO_H = 51, 28     # whole logo, gate and text on one grid; W is odd, axis = column 25
+G = LOGO_W
 BG = "#0d0a08"
 RED, DRED, GOLD, GOLD2 = "#c8102e", "#7a0a1c", "#d4a017", "#ffcc33"
 TEXT1, TEXT2, SHADOW = "#ffcc33", "#d4a017", "#7a0a1c"
+AXIS = LOGO_W // 2
 
-TORII = [                   # R red, D dark red, G gold, Y bright gold
-    ".........................",
-    ".........................",
-    "RRR...................RRR",
-    "RRRRRRRRRRRRRRRRRRRRRRRRR",
-    ".RRRRRRRRRRRRRRRRRRRRRRR.",
-    "...DDDDDDDDDDDDDDDDDDD...",
-    ".....RRD....GYG....RRD...",
-    ".....RRD....GYG....RRD...",
-    ".....RRD....GYG....RRD...",
-    "...RRRRRRRRRRRRRRRRRRRD..",
-    "...DDDDDDDDDDDDDDDDDDDD..",
-    ".....RRD...........RRD...",
-    ".....RRD...........RRD...",
-    ".....RRD...........RRD...",
-    ".....RRD...........RRD...",
-    ".....RRD...........RRD...",
-    ".....RRD...........RRD...",
-    ".....RRD...........RRD...",
-    ".....RRD...........RRD...",
-    ".....RRD...........RRD...",
-    ".....RRD...........RRD...",
-    "....GGGGG.........GGGGG..",
-    "....YYYYY.........YYYYY..",
-    ".GGGGGGGGGGGGGGGGGGGGGGG.",
-    ".........................",
-]
-_COL = {"R": RED, "D": DRED, "G": GOLD, "Y": GOLD2}
+def _gate():
+    """Gate cells, built for the left half (x <= AXIS) and mirrored, so it is exactly symmetric."""
+    half = {}
+    def put(x0, x1, y, col):
+        for x in range(x0, x1 + 1):
+            half[(x, y)] = col
+    put(0, 3, 0, RED)                       # kasagi (top beam), upturned tips
+    put(0, AXIS, 1, RED)
+    put(1, AXIS, 2, RED)
+    put(4, AXIS, 3, DRED)
+    for y in range(4, 25):                  # pillars
+        put(4, 5, y, RED); put(6, 6, y, DRED)
+    put(2, AXIS, 13, RED); put(2, AXIS, 14, RED)    # nuki (second beam)
+    put(2, AXIS, 15, DRED)
+    put(2, 8, 25, GOLD); put(2, 8, 26, GOLD2)       # stone bases
+    put(1, AXIS, 27, GOLD)                          # ground line
+    out = {}
+    for (x, y), col in half.items():
+        out[(x, y)] = col
+        out[(LOGO_W - 1 - x, y)] = col
+    return out
+
+def _text(s, y0, col):
+    w = 6 * len(s) - 1
+    x0 = (LOGO_W - w) // 2
+    return {(x0 + x, y0 + y): col for (x, y) in text_cells(s)}
 
 def pixels():
-    """List of (x, y, colour) cells on a G x G grid, drawn in order."""
-    return [(x, y, _COL[ch]) for y, row in enumerate(TORII)
-            for x, ch in enumerate(row) if ch in _COL]
+    """List of (x, y, colour) cells on the LOGO_W x LOGO_H grid, drawn in order (gate, then text)."""
+    cells = _gate()
+    cells.update(_text("WATARI", 5, TEXT1))     # fused: runs between the kasagi and the nuki
+    cells.update(_text("BOOT", 18, TEXT2))      # between the pillars
+    return [(x, y, c) for (x, y), c in sorted(cells.items(), key=lambda kv: (kv[0][1], kv[0][0]))]
+
+def screen_cells():
+    """The whole logo (gate and text) as (x, y, colour) cells on a LOGO_W x LOGO_H grid."""
+    return pixels()
 
 FONT = {
  'W': ["10001","10001","10001","10101","10101","11011","10001"],
@@ -63,23 +69,13 @@ def text_cells(s):
 
 def svg(cell=12):
     pad = 2
-    w1, w2 = 6 * len("WATARI") - 1, 6 * len("BOOT") - 1
-    gw = max(G, w1) + 2 * pad
-    gh = pad + G + 2 + 7 + 2 + 7 + pad
-    r = []
-    a = r.append
-    a(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {gw * cell} {gh * cell}" '
-      f'width="{gw * cell // 2}" shape-rendering="crispEdges" role="img" aria-label="Watari Boot logo">')
-    a(f'<rect width="100%" height="100%" rx="{cell * 2}" fill="{BG}"/>')
-    ox = (gw - G) // 2
-    for (x, y, col) in pixels():
-        a(f'<rect x="{(ox + x) * cell}" y="{(pad + y) * cell}" width="{cell}" height="{cell}" fill="{col}"/>')
-    for s, col, y0 in (("WATARI", TEXT1, pad + G + 2), ("BOOT", TEXT2, pad + G + 11)):
-        x0 = (gw - (6 * len(s) - 1)) // 2
-        for (x, y) in text_cells(s):
-            a(f'<rect x="{(x0 + x) * cell + cell // 3}" y="{(y0 + y) * cell + cell // 3}" width="{cell}" height="{cell}" fill="{SHADOW}"/>')
-            a(f'<rect x="{(x0 + x) * cell}" y="{(y0 + y) * cell}" width="{cell}" height="{cell}" fill="{col}"/>')
-    a("</svg>")
+    gw, gh = LOGO_W + 2 * pad, LOGO_H + 2 * pad
+    r = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {gw * cell} {gh * cell}" '
+         f'width="{gw * cell // 2}" shape-rendering="crispEdges" role="img" aria-label="Watari Boot logo">',
+         f'<rect width="100%" height="100%" rx="{cell * 2}" fill="{BG}"/>']
+    for (x, y, col) in screen_cells():
+        r.append(f'<rect x="{(pad + x) * cell}" y="{(pad + y) * cell}" width="{cell}" height="{cell}" fill="{col}"/>')
+    r.append("</svg>")
     return "\n".join(r) + "\n"
 
 if __name__ == "__main__":
