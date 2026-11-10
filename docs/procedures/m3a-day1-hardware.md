@@ -21,6 +21,8 @@ Results: `re/m3a-ehw0-measurements.md`; diary `docs/sessions/2026-11-10-ciani-01
 - **Option A exists:** with `EXPERT=1 sh /tmp/alx.sh` the OS list has "Tethered boot (m1n1, for development)" (2.5 GB stub, no SIP/NVRAM change by hand). Exact wording of the UEFI option: "UEFI environment only (m1n1 + U-Boot + ESP)". The bootstrap script runs fine from a saved file; `/tmp` is emptied at every reboot, so re-download (sha256 of `alx.sh` on 2026-11-10: `4818f37e1a4f11c3aa2c09e8d66f8f8f308f3be2f903715d93c572ea7c22e754`).
 - **step2 in 1TR** asks to put the new volume (its own VGID) into Permissive Security, then an admin username and password.
 - **USB names** and **`m1n1.setup` writes the PMU**: see section 4, steps 2 and 5.
+- **Day 2 exception to the AIC rule:** on 2026-11-10 (day 2) the "never read AIC `EVENT`" rule was lifted only for an unused IRQ (891 routed to core 7, `tools/m3a/aic_qd5.py`), with both people agreeing. It stays in force for every other source.
+- **Warning, vGIC tests:** entering EL1 with an armed list register hangs m1n1 (it has no EL1 vectors; the virtual IRQ arrives as `EL1 Exception: 0x15`); a power cycle is needed. Do not repeat vGIC tests until a proper EL1 payload with vectors exists.
 
 ## 0. Instructions for Claude running on Ciani's Mac
 

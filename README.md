@@ -1,7 +1,5 @@
 # Watari Boot
 
-<p align="center"><img src="docs/img/logo.svg" alt="Watari Boot logo: pixel-art torii gate in red and gold" width="300"></p>
-
 **渡 (watari): to cross over, to pass from one shore to the other.**
 
 > **Watari Boot: Native Windows on Apple Silicon**: an open research project to dual-boot Windows 11 ARM64 on Apple Silicon Macs, starting from the M1.
