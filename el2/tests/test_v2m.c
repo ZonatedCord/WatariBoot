@@ -81,10 +81,14 @@ static void t_access_rules(void)
 	setup_frame();
 	CHECK(v2m_contains(&M, FRAME));
 	CHECK(v2m_contains(&M, FRAME + 0xFFF));
-	CHECK(!v2m_contains(&M, FRAME - 1));
+	/* the trap window is the whole 16 KB page 0xFFFFC000-0xFFFFFFFF (#74) */
+	CHECK(v2m_contains(&M, 0xFFFFC000ull));
+	CHECK(v2m_contains(&M, FRAME - 1));
+	CHECK(!v2m_contains(&M, 0xFFFFBFFFull));
 	CHECK(!v2m_contains(&M, FRAME + 0x1000));
-	CHECK_EQ(v2m_mmio_read(&M, FRAME - 4, 4, &v), VGIC_ERR_RANGE);
+	CHECK_EQ(v2m_mmio_read(&M, 0xFFFFBFFCull, 4, &v), VGIC_ERR_RANGE);
 	CHECK_EQ(v2m_mmio_write(&M, FRAME + 0x1000, 4, 0), VGIC_ERR_RANGE);
+	CHECK_EQ(v2m_mmio_write(&M, 0xFFFFBFFCull, 4, 0), VGIC_ERR_RANGE);
 	CHECK_EQ(v2m_mmio_read(&M, FRAME + V2M_TYPER, 8, &v), VGIC_ERR_ACCESS);   /* 64-bit */
 	CHECK_EQ(v2m_mmio_read(&M, FRAME + V2M_TYPER, 1, &v), VGIC_ERR_ACCESS);
 	CHECK_EQ(v2m_mmio_read(&M, FRAME + V2M_TYPER + 2, 4, &v), VGIC_ERR_ACCESS);   /* misaligned */
@@ -131,6 +135,101 @@ static void t_doorbell_range(void)
 	CHECK_EQ(bell(8192u + 928u), VGIC_OK);
 	CHECK(pending(928));
 	CHECK_EQ(M.st.doorbells, 1);
+}
+
+/* ---- #74: the 16 KB trap page around the frame ------------------------------------- */
+
+static int n_stray;
+static uint32_t stray_off[16];
+static bool stray_wr[16];
+
+static void stray_cb(void *c, uint32_t off, bool wr, unsigned sz)
+{
+	(void)c; (void)sz;
+	if (n_stray < 16) {
+		stray_off[n_stray] = off;
+		stray_wr[n_stray] = wr;
+	}
+	n_stray++;
+}
+
+static void t_page_layout(void)
+{
+	uint64_t v;
+
+	setup_frame();
+	CHECK_EQ(M.page_base, 0xFFFFC000ull);
+	CHECK_EQ(FRAME - M.page_base, 0x3000ull);                  /* the frame is the last 4 KB of the page */
+	CHECK_EQ(v2m_doorbell_addr(&M), 0xFFFFF040ull);
+	/* correct registers at page offset 0x3000 + register offset */
+	CHECK_EQ(v2m_mmio_read(&M, 0xFFFFC000ull + 0x3008, 4, &v), VGIC_OK);
+	CHECK_EQ(v, (928u << 16) | 32u);
+	CHECK_EQ(v2m_mmio_read(&M, 0xFFFFC000ull + 0x3000 + 0xFCC, 4, &v), VGIC_OK);
+	CHECK_EQ(v, V2M_IIDR_VALUE);
+	CHECK_EQ(v2m_mmio_write(&M, 0xFFFFC000ull + 0x3040, 4, 930), VGIC_OK);
+	CHECK(pending(930));
+	CHECK_EQ(M.st.stray, 0);
+	/* the same register numbers at the other 4 KB frames of the page are NOT the registers */
+	for (uint32_t fr_off = 0; fr_off < 0x3000; fr_off += 0x1000) {
+		CHECK_EQ(v2m_mmio_read(&M, 0xFFFFC000ull + fr_off + V2M_TYPER, 4, &v), VGIC_OK);
+		CHECK_EQ(v, 0);
+		CHECK_EQ(v2m_mmio_read(&M, 0xFFFFC000ull + fr_off + V2M_IIDR, 4, &v), VGIC_OK);
+		CHECK_EQ(v, 0);
+		CHECK_EQ(v2m_mmio_write(&M, 0xFFFFC000ull + fr_off + V2M_SETSPI_NS, 4, 931), VGIC_OK);
+	}
+	CHECK(!pending(931));
+	CHECK_EQ(M.st.doorbells, 1);
+}
+
+static void t_page_raz_wi(void)
+{
+	uint64_t v;
+	static const unsigned sizes[] = { 1, 2, 4, 8 };
+
+	setup_frame();
+	M.log_stray = stray_cb;
+	n_stray = 0;
+	/* every 4-byte word in 0x0..0x2FFC reads zero and ignores writes (nothing pending, nothing refused) */
+	for (uint32_t off = 0; off < 0x3000; off += 4) {
+		v = ~0ull;
+		CHECK_EQ(v2m_mmio_read(&M, M.page_base + off, 4, &v), VGIC_OK);
+		CHECK_EQ(v, 0);
+		CHECK_EQ(v2m_mmio_write(&M, M.page_base + off, 4, 0xFFFFFFFFu), VGIC_OK);
+	}
+	/* any size or alignment is accepted outside the frame: refusing would kill the guest at EL2 */
+	for (unsigned i = 0; i < 4; i++) {
+		v = ~0ull;
+		CHECK_EQ(v2m_mmio_read(&M, M.page_base + 0x1001, sizes[i], &v), VGIC_OK);
+		CHECK_EQ(v, 0);
+		CHECK_EQ(v2m_mmio_write(&M, M.page_base + 0x2FFC, sizes[i], 930), VGIC_OK);
+	}
+	CHECK_EQ(M.st.stray, 2 * 0xC00 + 8);
+	CHECK_EQ(M.st.bad_access, 0);
+	CHECK_EQ(M.st.doorbells, 0);
+	for (uint32_t id = 32; id < 960; id++)
+		CHECK(!pending(id));
+	/* the log is rate-limited: only the first V2M_STRAY_LOG_MAX, with page-relative offsets */
+	CHECK_EQ(n_stray, V2M_STRAY_LOG_MAX);
+	CHECK_EQ(stray_off[0], 0);
+	CHECK(!stray_wr[0]);
+	CHECK_EQ(stray_off[1], 0);
+	CHECK(stray_wr[1]);
+	CHECK_EQ(stray_off[2], 4);
+	/* the frame itself still behaves after that */
+	CHECK_EQ(v2m_mmio_read(&M, FRAME + V2M_TYPER, 4, &v), VGIC_OK);
+	CHECK_EQ(v, (928u << 16) | 32u);
+}
+
+static void t_page_free_of_ram(void)
+{
+	setup_frame();
+	CHECK(v2m_page_free(&M, 0x800000000ull, 0xA00000000ull));        /* M1: RAM at 32 GB */
+	CHECK(v2m_page_free(&M, 0x40000000ull, 0xC0000000ull));          /* QEMU -m 2G ends below the page */
+	CHECK(v2m_page_free(&M, 0x40000000ull, 0xFFFFC000ull));          /* ends exactly at the page */
+	CHECK(!v2m_page_free(&M, 0x40000000ull, 0xFFFFC001ull));
+	CHECK(!v2m_page_free(&M, 0x40000000ull, 0x140000000ull));        /* QEMU -m 4G: RAM there */
+	CHECK(v2m_page_free(&M, 0x100000000ull, 0x140000000ull));        /* starts right after the page */
+	CHECK(v2m_page_free(&M, 0, 0));
 }
 
 static void t_log_once(void)
@@ -209,6 +308,7 @@ static void t_init_validation(void)
 	CHECK_EQ(v2m_init(&m, FRAME, 960, 1, &F.v), -1);
 	CHECK_EQ(v2m_init(&m, FRAME, 32, 1024, &F.v), -1);       /* count does not fit TYPER[9:0] */
 	CHECK_EQ(v2m_init(&m, FRAME, 32, 927, &F.v), 0);
+	CHECK_EQ(v2m_init(&m, FRAME + 0x800, 928, 32, &F.v), -1);   /* the frame is 4 KB aligned */
 	/* a SoC without an MSI pool has no frame to model */
 	{
 		struct intr_map nopool = INTR_MAP_T8103;
@@ -316,6 +416,9 @@ int main(void)
 	RUN(t_registers);
 	RUN(t_access_rules);
 	RUN(t_doorbell_range);
+	RUN(t_page_layout);
+	RUN(t_page_raz_wi);
+	RUN(t_page_free_of_ram);
 	RUN(t_log_once);
 	RUN(t_edge_pending_semantics);
 	RUN(t_disabled_spi_stays_pending);

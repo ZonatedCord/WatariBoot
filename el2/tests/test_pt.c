@@ -5,6 +5,7 @@
 #include "test.h"
 #include "wel2_maps.h"
 #include "wel2_aic.h"
+#include "wel2_v2m.h"
 
 #define BASE   0x40000000ULL
 #define GICD_P 0x08000000ULL
@@ -261,6 +262,54 @@ static void t_s2_aic_hole(void)
 	check_aic_maps(WEL2_GRAN_4K);
 }
 
+/* #74: the GICv2m frame (4 KB at 0xFFFFF000) is trapped as the whole 16 KB page 0xFFFFC000-0xFFFFFFFF with
+ * either granule. The RAM is the M1 layout (above 4 GB), so the page is plain device space around the hole. */
+static void check_v2m_hole(unsigned gshift)
+{
+	const uint64_t rb = 0x800000000ULL, page = 0xFFFFC000ULL;
+	struct wel2_range holes[6] = { { GICD_P, 0x10000 }, { GICR_P, 8 * 0x20000 } };
+	unsigned n = 2;
+	struct vgic *none = NULL;
+	struct v2m m;
+	struct wel2_pt pt;
+	struct wel2_ram ram;
+
+	CHECK_EQ(v2m_init(&m, V2M_T8103_BASE, 928, 32, none), 0);
+	CHECK_EQ(v2m_add_hole(&m, holes, &n, 6, gshift), 0);
+	CHECK_EQ(n, 3);
+	CHECK_EQ(holes[2].base, page);
+	CHECK_EQ(holes[2].size, 0x4000);
+	CHECK(v2m_page_free(&m, rb, rb + 0x200000000ULL));
+	CHECK_EQ(wel2_ram_set(&ram, rb, rb + 0x200000000ULL, rb, 1ULL << 36), 0);
+	CHECK_EQ(wel2_pt_init(&pt, pool_s2, sizeof(pool_s2), gshift, WEL2_S2_IPA_BITS), 0);
+	CHECK_EQ(wel2_s2_build(&pt, &ram, holes, n), 0);
+	/* every 4 KB of the page is unmapped: the layer sees all the faults, whatever the granule */
+	for (uint64_t a = page; a < page + 0x4000; a += 0x1000)
+		CHECK(!wel2_pt_walk(&pt, a, NULL, NULL, NULL));
+	CHECK(!wel2_pt_walk(&pt, 0xFFFFFFFFULL, NULL, NULL, NULL));
+	/* neighbours are device blocks/pages: below the page and the 4 GB boundary above it */
+	CHECK_EQ(attrs_of(&pt, page - 0x1000), ATTR_DEV_S2);
+	CHECK_EQ(attrs_of(&pt, page - 0x4000), ATTR_DEV_S2);
+	CHECK_EQ(attrs_of(&pt, 0x100000000ULL), ATTR_DEV_S2);
+	CHECK_EQ(attrs_of(&pt, 0x100000000ULL + 0x3000), ATTR_DEV_S2);
+	CHECK(wel2_pt_walk(&pt, 0xFFFF8000ULL, NULL, NULL, NULL));
+	/* the other holes are still there, and RAM is intact */
+	CHECK(!wel2_pt_walk(&pt, GICD_P, NULL, NULL, NULL));
+	CHECK(!wel2_pt_walk(&pt, GICR_P, NULL, NULL, NULL));
+	CHECK_EQ(attrs_of(&pt, rb), ATTR_NORMAL_S2);
+	/* idempotent: adding the same page again, or only the frame, changes nothing */
+	CHECK_EQ(v2m_add_hole(&m, holes, &n, 6, gshift), 0);
+	CHECK_EQ(n, 3);
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 6, V2M_T8103_BASE, V2M_FRAME_SIZE, gshift), 0);
+	CHECK_EQ(n, 3);
+}
+
+static void t_s2_v2m_hole(void)
+{
+	check_v2m_hole(WEL2_GRAN_16K);
+	check_v2m_hole(WEL2_GRAN_4K);
+}
+
 static void t_s2_add_hole_rules(void)
 {
 	struct wel2_range h[4];
@@ -369,6 +418,7 @@ int main(void)
 	RUN(t_bad_arguments_and_exhaustion);
 	RUN(t_s2_map);
 	RUN(t_s2_aic_hole);
+	RUN(t_s2_v2m_hole);
 	RUN(t_s2_add_hole_rules);
 	RUN(t_s2_odd_ram_end);
 	RUN(t_s1_map);

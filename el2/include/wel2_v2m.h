@@ -8,7 +8,16 @@
  * (ARCHITECTURE docs/design/watari-el2-devirq 5.1/5.2): there the device MSI never reaches
  * CPU-visible memory (Apple PCIe turns it into an AIC edge, pirq delivers it), so the frame
  * only has to exist and answer; the doorbell write here is the CPU-write path that the QEMU
- * bench exercises. This module is not linked into the boot path.
+ * bench exercises.
+ *
+ * Trap window (#74): with the 16 KB stage-2 granule a 4 KB frame cannot be a hole on its own, so the
+ * hole is the whole 16 KB page that contains the frame: 0xFFFFC000-0xFFFFFFFF on the t8103, the frame
+ * being its last 4 KB (page offset 0x3000). The 12 KB before the frame are RAZ/WI and logged (first
+ * V2M_STRAY_LOG_MAX accesses only). The same 16 KB page is used with the 4 KB granule, so the guest sees
+ * one behaviour whatever the granule (v2m_add_hole()). Evidence: the day-1 ADT has no node at
+ * 0xFFFFC000-0xFFFFFFFF [verified: re/m3a-ehw0-measurements.md row 7, ADT-listed devices only] and every
+ * apcie node has msi-address = 0xFFFFF000 [verified: same file, row 12]. Register offsets inside the
+ * frame: see below.
  *
  * Register offsets, frame-relative:
  *  0x008 TYPER       RO. Compatibility layout: SPI base [25:16], SPI count [9:0], upper bits 0.
@@ -37,8 +46,12 @@
 #include <stdint.h>
 #include "wel2_intr_map.h"
 #include "wel2_vgic.h"
+#include "wel2_maps.h"
 
 #define V2M_FRAME_SIZE    0x1000u
+#define V2M_T8103_BASE    0xFFFFF000ull /* the frame on the t8103 (Apple PCIe msi-address); page 0xFFFFC000 */
+#define V2M_PAGE_SIZE     0x4000u       /* the 16 KB stage-2 page that holds the frame (#74) */
+#define V2M_STRAY_LOG_MAX 8u            /* logged accesses outside the frame, then silent (counted) */
 #define V2M_TYPER         0x008u
 #define V2M_SETSPI_NS     0x040u
 #define V2M_IIDR          0xFCCu
@@ -53,16 +66,20 @@ struct v2m_stats {
 	uint32_t doorbells;     /* writes that made an SPI pending */
 	uint32_t ignored;       /* INTID outside the frame's range */
 	uint32_t bad_access;    /* size not supported on the register */
+	uint32_t stray;         /* accesses to the page outside the frame (RAZ/WI) */
 };
 
 struct v2m {
-	uint64_t base;          /* guest address of the frame */
+	uint64_t base;          /* guest address of the 4 KB frame */
+	uint64_t page_base;     /* base of the 16 KB page that holds it (the trap window) */
 	uint32_t spi_base;      /* first INTID of the pool */
 	uint32_t spi_count;
 	struct vgic *v;
 	void (*log)(void *ctx, uint32_t value);   /* first ignored doorbell value; may be NULL */
 	void *log_ctx;
 	bool logged;
+	/* access outside the frame, only the first V2M_STRAY_LOG_MAX; page-relative offset; may be NULL */
+	void (*log_stray)(void *ctx, uint32_t page_off, bool write, unsigned size);
 	struct v2m_stats st;
 };
 
@@ -72,6 +89,13 @@ int v2m_init(struct v2m *m, uint64_t base, uint32_t spi_base, uint32_t spi_count
  * has no pool. */
 int v2m_init_from_map(struct v2m *m, uint64_t base, const struct intr_map *map, struct vgic *v);
 
+/* Adds the 16 KB trap page of the frame to a stage-2 hole list (wel2_s2_add_hole(); the same page for both
+ * granules). 0, or -1 when the list is full. */
+int v2m_add_hole(const struct v2m *m, struct wel2_range *holes, unsigned *n, unsigned cap, unsigned gshift);
+/* False when guest RAM [ram_base, ram_end) overlaps the 16 KB page (the QEMU bench with -m 4G or more has RAM
+ * at 0xFFFFF000): the page then cannot be a hole, and the frame is not emulated. */
+bool v2m_page_free(const struct v2m *m, uint64_t ram_base, uint64_t ram_end);
+/* True for any address of the 16 KB page (the frame and the RAZ/WI bytes around it). */
 bool v2m_contains(const struct v2m *m, uint64_t addr);
 /* Guest-visible MMIO. Return VGIC_OK, VGIC_ERR_ACCESS (size) or VGIC_ERR_RANGE (not ours). */
 int v2m_mmio_read(struct v2m *m, uint64_t addr, unsigned size, uint64_t *val);

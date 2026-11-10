@@ -11,6 +11,7 @@
 #include "fdt.h"
 #include "wel2_aic.h"
 #include "wel2_maps.h"
+#include "wel2_v2m.h"
 
 #define HCR_VM   (1ULL << 0)
 #define HCR_FMO  (1ULL << 3)
@@ -181,31 +182,59 @@ static void handle_smc(struct frame *f)
 static struct fdt_aic_info g_aic_info;  /* the Watari AIC node (#42), found when g_aic_on */
 static uint8_t s2_pool[WEL2_S2_POOL_BYTES] __attribute__((aligned(16384)));
 static struct wel2_pt s2_pt;
+static bool g_v2m_on;                   /* the page is a hole (no guest RAM there) */
+static struct v2m g_v2m;                /* #74: the MSI frame at 0xFFFFF000, trapped as one 16 KB page */
 static uint64_t g_vtcr;
 
 /* TODO(T6): the M1 path must also add the real AIC hole to this list, via wel2_s2_add_hole() with
  * AIC_T8103_BASE/SIZE0 (wel2_aic.h; reg[1] is inside reg[0], so one hole). NOT wired yet: today only the
  * QEMU Watari AIC node (g_aic_info) is covered. Until then the guest could reach the real AIC. */
+static void v2m_stray_log(void *ctx, uint32_t page_off, bool write, unsigned size)
+{
+    (void)ctx;
+    puts_(write ? "Watari EL2: MSI page stray write, page offset " : "Watari EL2: MSI page stray read, page offset ");
+    puthex(page_off);
+    put_kv("  size = ", size);
+}
+
+static void v2m_bell_log(void *ctx, uint32_t val)
+{
+    (void)ctx;
+    put_kv("Watari EL2: MSI doorbell write outside the pool, value ", val);
+}
+
 static void stage2_init(void)
 {
     struct wel2_ram ram = { g_ram_base, g_ram_end };
-    struct wel2_range holes[4] = {
+    struct wel2_range holes[6] = {
         { GICD_PHYS, GICD_SIZE },
         { GICR_PHYS, 8ULL * VGIC_GICR_FRAME_SIZE },
-        { 0, 0 },
-        { 0, 0 },
     };
     unsigned nholes = 2;
 
+    /* #74: the GICv2m frame (4 KB at 0xFFFFF000) lives in the 16 KB page 0xFFFFC000-0xFFFFFFFF, trapped for
+     * both granules (v2m_add_hole -> wel2_s2_add_hole). Nothing else is there on the t8103 [verified: ADT,
+     * re/m3a-ehw0-measurements.md]; on the QEMU virt machine the range is unused. SPI pool 928..959. */
+    if (v2m_init(&g_v2m, V2M_T8103_BASE, 928, 32, &g_vgic))
+        fatal_msg("MSI frame: bad geometry");
+    g_v2m.log = v2m_bell_log;
+    g_v2m.log_stray = v2m_stray_log;
+    /* QEMU virt with -m 4G or more has RAM at 0xFFFFC000: then there is no hole and no frame. */
+    g_v2m_on = v2m_page_free(&g_v2m, g_ram_base, g_ram_end);
+    if (g_v2m_on && v2m_add_hole(&g_v2m, holes, &nholes, 6, g_gran))
+        fatal_msg("stage-2 holes: MSI frame page does not fit");
+    if (!g_v2m_on)
+        puts_("Watari EL2: MSI frame page 0xFFFFC000 is guest RAM here: not emulated\n");
+
     if (g_aic_on) {                     /* #42: the AIC belongs to the layer, the guest faults there */
-        if (wel2_s2_add_hole(holes, &nholes, 4, g_aic_info.base, g_aic_info.size, g_gran))
+        if (wel2_s2_add_hole(holes, &nholes, 6, g_aic_info.base, g_aic_info.size, g_gran))
             fatal_msg("stage-2 holes: AIC window does not fit");
     }
 
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
 
-    if (wel2_s2_add_hole(holes, &nholes, 4, hide_lo, GUEST_RAM_BASE + WEL2_CARVE_SIZE - hide_lo, g_gran))
+    if (wel2_s2_add_hole(holes, &nholes, 6, hide_lo, GUEST_RAM_BASE + WEL2_CARVE_SIZE - hide_lo, g_gran))
         fatal_msg("stage-2 holes: layer carve-out does not fit");
 #endif
     if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, WEL2_S2_IPA_BITS) ||
@@ -349,8 +378,9 @@ static void handle_dabt(struct frame *f, unsigned idx)
     uint32_t dfsc = iss & 0x3f;
     int in_gic = (ipa >= GICD_PHYS && ipa < GICD_PHYS + GICD_SIZE) ||
                  (ipa >= GICR_PHYS && ipa < GICR_PHYS + 8 * VGIC_GICR_FRAME_SIZE);
+    int in_v2m = g_v2m_on && v2m_contains(&g_v2m, ipa);        /* #74: the whole 16 KB page */
 
-    if (!isv || !in_gic || (dfsc >> 2) != 1 /* translation fault, any level */) {
+    if (!isv || !(in_gic || in_v2m) || (dfsc >> 2) != 1 /* translation fault, any level */) {
         puts_("Watari EL2: unhandled guest data abort\n");
         put_kv("  HPFAR_EL2 = ", hpfar);
         put_kv("  IPA       = ", ipa);
@@ -364,9 +394,9 @@ static void handle_dabt(struct frame *f, unsigned idx)
         val = srt == 31 ? 0 : f->x[srt];
         if (size < 8)
             val &= (1ULL << (size * 8)) - 1;
-        rc = vgic_mmio_write(&g_vgic, ipa, size, val);
+        rc = in_v2m ? v2m_mmio_write(&g_v2m, ipa, size, val) : vgic_mmio_write(&g_vgic, ipa, size, val);
     } else {
-        rc = vgic_mmio_read(&g_vgic, ipa, size, &val);
+        rc = in_v2m ? v2m_mmio_read(&g_v2m, ipa, size, &val) : vgic_mmio_read(&g_vgic, ipa, size, &val);
         if (rc == VGIC_OK) {
             if (sse && size < 8 && ((val >> (size * 8 - 1)) & 1))
                 val |= ~0ULL << (size * 8);
@@ -406,7 +436,7 @@ static void handle_dabt(struct frame *f, unsigned idx)
     /* M1-4: progress evidence for a firmware that does thousands of GIC accesses. */
     {
         static unsigned n_gicd, n_gicr;
-        unsigned n = ipa < GICD_PHYS + GICD_SIZE ? ++n_gicd : ++n_gicr;
+        unsigned n = in_v2m ? 0 : ipa < GICD_PHYS + GICD_SIZE ? ++n_gicd : ++n_gicr;   /* v2m: no progress line */
 
         for (unsigned p = 1; p <= 1000000; p *= 10) {
             if (n == p) {
