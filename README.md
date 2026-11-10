@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/img/logo.png" alt="Watari Boot logo: a pixel-art monkey on a torii gate marked 渡" width="320"></p>
+
 # Watari Boot
 
 **渡 (watari): to cross over, to pass from one shore to the other.**
