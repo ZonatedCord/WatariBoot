@@ -4,11 +4,11 @@
     "2a07d291d919": {
       "models": {
         "claude-opus-5-5": {
-          "cache_read": 48175573,
-          "cache_write_1h": 342914,
+          "cache_read": 49727006,
+          "cache_write_1h": 347094,
           "cache_write_5m": 0,
-          "input": 432,
-          "output": 166453
+          "input": 440,
+          "output": 171432
         },
         "claude-sonnet-5-5": {
           "cache_read": 1629197,
