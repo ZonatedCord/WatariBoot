@@ -76,8 +76,10 @@ park:
 
 // Entry of cores 1..n at EL2, started by the firmware on guest PSCI CPU_ON
 // (M1-3). x0 = context given to the firmware (unused). MMU off, caches off.
-// Stack: 16 KB slot selected by MPIDR_EL1.Aff0 (QEMU virt numbering; real
-// hardware needs a proper cpu index, see README).
+// Stack: 16 KB slot selected like wel2_core_index() (include/wel2_coreidx.h; keep the formula identical):
+//   idx = Aff1*4 + Aff0, valid iff Aff0 < 4, Aff1 < 2, Aff2 == Aff1, Aff3 == 0.
+// A core outside that range must not touch a stack: it records its MPIDR (bit 63 set) in g_bad_mpidr
+// (best effort; the boot core reports it on the next CPU_ON) and parks.
     .text
     .global secondary_entry
 secondary_entry:
@@ -86,12 +88,21 @@ secondary_entry:
     cmp     x1, #2
     b.ne    park                    // started below EL2: cannot continue
     mrs     x1, mpidr_el1
-    and     x1, x1, #0xff
-    cmp     x1, #8
-    b.hs    park
+    ubfx    x2, x1, #0, #8          // Aff0
+    ubfx    x3, x1, #8, #8          // Aff1
+    ubfx    x4, x1, #16, #8         // Aff2
+    ubfx    x5, x1, #32, #8         // Aff3
+    cmp     x2, #4
+    b.hs    bad_core
+    cmp     x3, #2
+    b.hs    bad_core
+    cmp     x4, x3
+    b.ne    bad_core
+    cbnz    x5, bad_core
+    add     x1, x2, x3, lsl #2      // idx = Aff0 + 4*Aff1 (0..7)
     ldr     x2, =__el2_stacks
     add     x1, x1, #1
-    lsl     x1, x1, #14             // (Aff0 + 1) * 0x4000
+    lsl     x1, x1, #14             // (idx + 1) * 0x4000
     add     sp, x2, x1
     ldr     x1, =el2_vectors
     msr     vbar_el2, x1
@@ -99,6 +110,21 @@ secondary_entry:
     bl      s1_enable               // same tables as the boot core (#53), then C code
     bl      el2_secondary_main      // never returns
     b       park
+
+bad_core:
+    // No stack here. MMU off: the store goes straight to memory.
+    orr     x1, x1, #(1 << 63)
+    ldr     x2, =g_bad_mpidr
+    str     x1, [x2]
+    dsb     sy
+    b       park
+
+    .bss
+    .balign 8
+    .global g_bad_mpidr
+g_bad_mpidr:
+    .quad   0
+    .text
 
 // s1_enable: HCR_EL2.E2H, then MAIR/TCR/TTBR0_EL2 from g_s1 (stage1.c), invalidate TLB + I-cache, then
 // SCTLR_EL2.M/C/I = 1 (A, WXN, EE cleared). Registers only (x0-x5), returns through x30.

@@ -6,7 +6,7 @@ WARN    := -std=c11 -Wall -Wextra -Werror
 INC     := -Iinclude
 BUILD   := build
 LIBSRC  := vgic/vgic.c vgic/vcif.c vgic/intr_map.c vgic/pirq.c vgic/pirq_guard.c vgic/pirq_aic.c vgic/v2m.c vgic/ram_map.c vgic/pt.c vgic/maps.c
-TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif intr_map ram_map pirq_guard pirq_aic v2m pirq_eoi pt
+TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif intr_map ram_map pirq_guard pirq_aic v2m pirq_eoi pt core_index
 
 .PHONY: test clean
 test: $(addprefix $(BUILD)/test_,$(TESTS))

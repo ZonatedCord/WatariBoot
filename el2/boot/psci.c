@@ -13,6 +13,7 @@
 // through to the firmware unchanged once validated.
 
 #include "boot.h"
+#include "wel2_coreidx.h"
 
 #define PSCI_VERSION          0x84000000u
 #define PSCI_CPU_SUSPEND_32   0x84000001u
@@ -72,6 +73,11 @@ static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
     unsigned idx = cpu_from_mpidr(target);
     if (idx == ~0u)
         return PSCI_INVALID_PARAMETERS;
+    /* The core needs an EL2 stack slot (wel2_core_index, start.S): refuse before powering it on. */
+    if (wel2_core_index(target) == WEL2_CORE_INVALID)
+        return PSCI_INVALID_PARAMETERS;
+    if (g_bad_mpidr)
+        put_kv("Watari EL2: a core parked without a stack slot, MPIDR|bit63 = ", g_bad_mpidr);
     /* Entry point: a 4-byte aligned address inside guest RAM, else the
      * implementation knows it is unavailable to the caller (5.6.2). */
     if ((entry & 3) || entry < GUEST_RAM_BASE || entry >= g_ram_end)

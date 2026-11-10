@@ -116,6 +116,7 @@ void     gic_phys_kick(unsigned cpu);        /* physical SGI_KICK to another cor
 void     gic_phys_spi_enable(uint32_t intid, bool on);
 void     gic_phys_spi_route(uint32_t intid, int vcpu);
 void     gic_phys_spi_trigger(uint32_t intid, bool edge);
+extern volatile uint64_t g_bad_mpidr;           /* MPIDR|bit63 of a core parked by start.S bad_core, else 0 */
 unsigned cpu_from_mpidr(uint64_t mpidr);     /* index into g_pcpu, or ~0u */
 
 /* pirq_qemu.c: SPI policy (wel2_pirq.h) on the QEMU physical GICv3. */
