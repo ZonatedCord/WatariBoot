@@ -110,3 +110,10 @@ Volatile CPU/AIC state only; m1n1 still running afterwards. Scripts in `tools/m3
 
 - Settled: EVENT layout and auto-mask on read **[verified]**; EVENT does not clear SW_SET; MASK_SET / SW_SET reads return the current state; no spurious zero event in this sequence. Consequence for `pirq_aic.c`: a `sw_trigger` must be followed by `SW_CLR` when the event is taken (or at EOI), or the source fires again at every unmask.
 - Still open: whether a **hardware edge** pulse is latched while the source is masked (needs a real edge source, e.g. a PCIe MSI: E-HW1, #68).
+
+### vGIC list-register delivery (Plan B "hw" cpuif mode): `vgic_test.py` (cpu7), `vgic_test0.py` (core 0), `el1_ctrl.py`
+- At EL2 the virtual CPU interface accepts the set-up: `ICC_SRE_EL2 = 0xf` before (SRE and Enable already 1), `ICH_VMCR_EL2` written `0xff000002` (VPMR 0xff, VENG1), `ICH_LR0_EL2 = 0x50a000000000002a` (pending, group 1, priority 0xa0, vINTID 42) read back as written, `ICH_HCR_EL2.En = 1`, `ICH_MISR_EL2 = 0`. Initial `ICH_VMCR_EL2 = 0xf84c0008`, `ICH_ELRSR_EL2 = 0xff` (8 empty LRs, consistent with ListRegs = 8).
+- **Control:** `el1_call` on core 0 without the vGIC armed works (`CurrentEL = 1`, `MIDR_EL1` read at EL1).
+- **With the LR armed, the first EL1 entry hangs m1n1** (no reply, power cycle needed): once on cpu7 (`smp_call_sync_el1`, DAIF 0xc0 at EL2 there) and once on core 0 (`el1_call`). The restore did not run either time; a reboot clears it.
+- **[hypothesis]** On core 0 m1n1 enters EL1 with the PSTATE it captured at EL2 (`exception_asm.S` `el1_call`: DAIF taken from the caller, core 0 runs with DAIF = 0), so the pending virtual IRQ would be taken at once through `VBAR_EL1`, which m1n1 does not set up for this: a hang that would mean the LR **was delivered**. The cpu7 hang, with IRQs masked, is not explained by this. Not settled.
+- **Next:** a small EL1 test payload with its own vector table (take the IRQ, read `ICC_IAR1_EL1`, EOI, return a value), like the layer's QEMU payloads, built on a machine with the toolchain. Until then the "hw" mode on the M1 is unproven; the "trap" mode does not depend on it.
