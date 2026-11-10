@@ -105,6 +105,8 @@ int pirq_aic_init(struct pirq_aic *a, const struct aic_io *io, const struct intr
 	for (unsigned i = 0; i < AIC_MAX_CPUS; i++)
 		a->cpu_of_vcpu[i] = i < nr_vcpus ? cpu_of_vcpu[i] : 0;
 	a->st = (struct pirq_aic_stats){ 0 };
+	for (unsigned i = 0; i < AIC_MAX_IRQS / 32; i++)
+		a->sw_owned[i] = 0;
 
 	n = AIC_INFO_NR_IRQ(rd(a, AIC_INFO));
 	if (n == 0 || (n & 31))
@@ -179,6 +181,22 @@ struct aic_event pirq_aic_poll(struct pirq_aic *a)
 	case AIC_EVENT_TYPE_HW:
 		if (irq_ok(a, ev.num)) {
 			ev.kind = AIC_EV_IRQ;
+			/* A source the layer raised by software stays asserted after the EVENT read (SW_SET is
+			 * level-like [verified: re/m3a-ehw0-measurements.md, Q-D5, j293 2026-11-10]). Clear it
+			 * NOW, at take time, not at EOI:
+			 *  - the EVENT read has just masked the source, so nothing can re-fire between the read
+			 *    and this write, and the software "event" is consumed exactly once, like an edge;
+			 *  - at EOI the source is unmasked, and a new sw_set issued while the guest handles the
+			 *    first one would be erased by a late SW_CLR: clearing now loses nothing;
+			 *  - only bits we set ourselves are cleared (sw_owned). SW_CLR touches the software bit
+			 *    only, the hardware line and a latched edge are separate state, so a level or edge
+			 *    HW source is never disturbed, and a firmware-set SW bit is not ours to drop.
+			 * The guest's pending state lives in the vGIC and is unaffected. */
+			if ((a->sw_owned[ev.num / 32] >> (ev.num % 32)) & 1u) {
+				a->sw_owned[ev.num / 32] &= ~(1u << (ev.num % 32));
+				wr(a, AIC_SW_CLR(ev.num), 1u << (ev.num % 32));
+				a->st.sw_cleared++;
+			}
 		} else {
 			ev.kind = AIC_EV_BAD;
 			a->st.bad++;
@@ -201,14 +219,18 @@ struct aic_event pirq_aic_poll(struct pirq_aic *a)
 
 void pirq_aic_sw_set(struct pirq_aic *a, uint32_t irq)
 {
-	if (irq_ok(a, irq))
+	if (irq_ok(a, irq)) {
+		a->sw_owned[irq / 32] |= 1u << (irq % 32);
 		wr(a, AIC_SW_SET(irq), 1u << (irq % 32));
+	}
 }
 
 void pirq_aic_sw_clr(struct pirq_aic *a, uint32_t irq)
 {
-	if (irq_ok(a, irq))
+	if (irq_ok(a, irq)) {
+		a->sw_owned[irq / 32] &= ~(1u << (irq % 32));
 		wr(a, AIC_SW_CLR(irq), 1u << (irq % 32));
+	}
 }
 
 bool pirq_aic_line(struct pirq_aic *a, uint32_t irq)

@@ -62,6 +62,18 @@
 #include "wel2_intr_map.h"
 #include "wel2_pirq.h"
 
+/* AIC windows of the t8103 as the ADT lists them [verified: re/m3a-ehw0-measurements.md row 1,
+ * measured on j293 2026-11-10]: reg[0] = 0x23b100000 size 0xc000, reg[1] = 0x23b108000 size 0x1000.
+ * Range 1 lies INSIDE range 0 (0x23b108000 + 0x1000 <= 0x23b100000 + 0xc000), so the union is the
+ * single window [0x23b100000, 0x23b10c000): the layer maps it Device for itself (EL2 stage 1 maps
+ * everything below RAM as Device) and the guest stage 2 gets ONE hole for it; a second hole would be
+ * redundant, and a 4 KB hole cannot even be expressed with the 16 KB granule (wel2_s2_add_hole()
+ * rounds outwards and drops a range already covered). */
+#define AIC_T8103_BASE      0x23b100000ull
+#define AIC_T8103_SIZE0     0xc000ull
+#define AIC_T8103_BASE1     0x23b108000ull
+#define AIC_T8103_SIZE1     0x1000ull
+
 #define AIC_INFO            0x0004u
 #define AIC_INFO_NR_IRQ(v)  ((v) & 0xFFFFu)
 #define AIC_WHOAMI          0x2000u
@@ -120,6 +132,7 @@ struct pirq_aic_stats {
 	uint32_t trigger_noop; /* set_trigger calls (the AIC has no trigger register) */
 	uint32_t bad_vcpu;     /* set_target with a vCPU that has no core */
 	uint32_t whoami_mismatch; /* pirq_aic_init_cpu: WHOAMI differs from the expected core */
+	uint32_t sw_cleared;   /* SW_CLR written at take time for a source the layer had SW_SET */
 };
 
 struct pirq_aic {
@@ -130,6 +143,9 @@ struct pirq_aic {
 	uint8_t cpu_of_vcpu[AIC_MAX_CPUS];        /* vCPU index -> AIC core index (plat.pcpu_of_vcpu) */
 	struct pirq_ops ops;
 	struct pirq_aic_stats st;
+	/* Sources the layer itself raised with pirq_aic_sw_set() and has not cleared yet (bit n = IRQ n).
+	 * pirq_aic_poll() writes SW_CLR for exactly these when it takes them, see pirq_aic.c. */
+	uint32_t sw_owned[AIC_MAX_IRQS / 32];
 };
 
 /* Reads INFO, masks every source, clears every software bit, points every TARGET_CPU at the
@@ -150,7 +166,10 @@ const struct pirq_ops *pirq_aic_ops(struct pirq_aic *a);
 /* One EVENT read on the calling core. A legacy IPI is acked and left masked here. */
 struct aic_event pirq_aic_poll(struct pirq_aic *a);
 
-/* Software generate / clear a source (tests, irq_set_irqchip_state-like uses). */
+/* Software generate / clear a source (tests, irq_set_irqchip_state-like uses). A source raised with
+ * sw_set is cleared by pirq_aic_poll() when it is taken (the EVENT read does not clear SW_SET on the
+ * M1, so the source would re-fire at every unmask). Callers on different cores must serialise
+ * sw_set / poll for the same source (the pirq lock) [hypothesis: the layer takes it]. */
 void pirq_aic_sw_set(struct pirq_aic *a, uint32_t irq);
 void pirq_aic_sw_clr(struct pirq_aic *a, uint32_t irq);
 /* Current hardware line of a source (HW_IRQ_MON), for diagnostics. */

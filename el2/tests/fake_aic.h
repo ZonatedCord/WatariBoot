@@ -4,8 +4,9 @@
  * Offsets and the documented behaviour: include/wel2_aic.h. Behaviour that is a hypothesis
  * until E-HW0 on hardware is a knob here so the tests can exercise both answers:
  *   latch_pulses  an edge pulse is remembered while the source is masked (hypothesis)
- *   event_clears_sw  the EVENT read clears the SW_SET bit of the delivered source (hypothesis;
- *                    default off: the conservative reading, SW_CLR is explicit)
+ *   event_clears_sw  the EVENT read clears the SW_SET bit of the delivered source. Default OFF:
+ *                    [verified: re/m3a-ehw0-measurements.md Q-D5, j293 2026-11-10] the real M1 does
+ *                    not clear it (SW_SET is level-like); the "on" mode is kept for tests only
  * The model acts as one core at a time: set fa.cpu to the core that reads the registers.
  * "Wires": fa_line() drives a level input, fa_pulse() an edge pulse.
  */
@@ -43,6 +44,7 @@ static inline void fa_reset(struct fake_aic *f)
 	memset(f, 0, sizeof *f);
 	f->nr_irq = 896 + 32 + 96;        /* 1024 */
 	f->latch_pulses = true;
+	f->event_clears_sw = false;       /* [verified: measured on the M1, Q-D5] */
 	for (unsigned i = 0; i < FA_WORDS; i++)
 		f->mask[i] = 0xFFFFFFFFu;
 	for (unsigned i = 0; i < FA_N; i++)

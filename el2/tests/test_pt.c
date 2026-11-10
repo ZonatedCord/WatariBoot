@@ -4,6 +4,7 @@
  * constants the layer used before the builder existed (4 KB). */
 #include "test.h"
 #include "wel2_maps.h"
+#include "wel2_aic.h"
 
 #define BASE   0x40000000ULL
 #define GICD_P 0x08000000ULL
@@ -203,6 +204,80 @@ static void t_s2_map(void)
 	check_s2(WEL2_GRAN_16K);
 }
 
+/* The t8103 AIC (wel2_aic.h): reg[0] 0x23b100000 + 0xc000, reg[1] 0x23b108000 + 0x1000 inside it.
+ * The guest must not see either range (stage-2 hole); EL2 stage 1 maps both as Device for the layer.
+ * M1-like layout: 8 GB of RAM at 0x800000000, 16 KB granule is the real case, 4 KB checked too. */
+static void check_aic_maps(unsigned gshift)
+{
+	const uint64_t rb = 0x800000000ULL;
+	struct wel2_range holes[4];
+	struct wel2_pt pt;
+	struct wel2_ram ram;
+	struct wel2_s1_layout l = { rb + 0x80000, rb + 0x84000, rb + 0x88000 };
+	unsigned n = 0;
+
+	n = wel2_s2_add_hole(holes, n, AIC_T8103_BASE, AIC_T8103_SIZE0, gshift);
+	n = wel2_s2_add_hole(holes, n, AIC_T8103_BASE1, AIC_T8103_SIZE1, gshift);
+	CHECK_EQ(n, 1);                                                    /* reg[1] is inside reg[0]: one hole */
+	CHECK_EQ(holes[0].base, AIC_T8103_BASE); CHECK_EQ(holes[0].size, AIC_T8103_SIZE0);
+	/* the other order gives the same single (widest) coverage */
+	unsigned m = wel2_s2_add_hole(holes + 1, 0, AIC_T8103_BASE1, AIC_T8103_SIZE1, gshift);
+	CHECK_EQ(m, 1);                                                    /* rounded outwards to a page */
+	CHECK((holes[1].base & ((1ULL << gshift) - 1)) == 0 && holes[1].base <= AIC_T8103_BASE1);
+	CHECK(holes[1].base + holes[1].size >= AIC_T8103_BASE1 + AIC_T8103_SIZE1);
+
+	CHECK_EQ(wel2_ram_set(&ram, rb, 0x200000000ULL, rb, 1ULL << 36), 0);
+	/* stage 2 */
+	CHECK_EQ(wel2_pt_init(&pt, pool_s2, sizeof(pool_s2), gshift, WEL2_S2_IPA_BITS), 0);
+	CHECK_EQ(wel2_s2_build(&pt, &ram, holes, n), 0);
+	for (uint64_t a = AIC_T8103_BASE; a < AIC_T8103_BASE + AIC_T8103_SIZE0; a += 0x1000)
+		CHECK(!wel2_pt_walk(&pt, a, NULL, NULL, NULL));
+	for (uint64_t a = AIC_T8103_BASE1; a < AIC_T8103_BASE1 + AIC_T8103_SIZE1; a += 0x1000)
+		CHECK(!wel2_pt_walk(&pt, a, NULL, NULL, NULL));
+	CHECK(wel2_pt_walk(&pt, AIC_T8103_BASE - 1, NULL, NULL, NULL));                    /* neighbours stay mapped */
+	CHECK(wel2_pt_walk(&pt, AIC_T8103_BASE + AIC_T8103_SIZE0, NULL, NULL, NULL));
+	CHECK_EQ(attrs_of(&pt, AIC_T8103_BASE - 0x1000), ATTR_DEV_S2);
+	/* stage 1 of the layer: both ranges present, Device, whichever regime */
+	for (int e2h = 0; e2h <= 1; e2h++) {
+		uint64_t ap1 = e2h ? 0 : (1ULL << 6);
+		uint64_t xn = e2h ? ((1ULL << 53) | (1ULL << 54)) : (1ULL << 54);
+		uint64_t pa = 0;
+
+		CHECK_EQ(wel2_ram_set(&ram, rb, 0x200000000ULL, rb, 1ULL << wel2_s1_va_bits(gshift)), 0);
+		CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), gshift, wel2_s1_va_bits(gshift)), 0);
+		CHECK_EQ(wel2_s1_build(&pt, &ram, &l, e2h != 0), 0);
+		for (uint64_t a = AIC_T8103_BASE; a < AIC_T8103_BASE + AIC_T8103_SIZE0; a += 0x1000) {
+			CHECK(wel2_pt_walk(&pt, a, &pa, NULL, NULL));
+			CHECK_EQ(pa, a);
+			CHECK_EQ(attrs_of(&pt, a), (1ULL << 10) | ap1 | xn);             /* AttrIndx 0 = Device-nGnRnE */
+		}
+		CHECK_EQ(attrs_of(&pt, AIC_T8103_BASE1), (1ULL << 10) | ap1 | xn);
+	}
+}
+
+static void t_s2_aic_hole(void)
+{
+	check_aic_maps(WEL2_GRAN_16K);
+	check_aic_maps(WEL2_GRAN_4K);
+}
+
+static void t_s2_add_hole_rules(void)
+{
+	struct wel2_range h[4];
+	unsigned n = 0;
+
+	n = wel2_s2_add_hole(h, n, 0x1000, 0, WEL2_GRAN_4K);              /* empty: ignored */
+	CHECK_EQ(n, 0);
+	n = wel2_s2_add_hole(h, n, ~0ULL - 0xff, 0x1000, WEL2_GRAN_4K);   /* wraps: ignored */
+	CHECK_EQ(n, 0);
+	n = wel2_s2_add_hole(h, n, 0x23b108000ULL, 0x1000, WEL2_GRAN_16K); /* 4 KB range, 16 KB granule */
+	CHECK_EQ(n, 1); CHECK_EQ(h[0].base, 0x23b108000ULL); CHECK_EQ(h[0].size, 0x4000);
+	n = wel2_s2_add_hole(h, n, 0x23b10a000ULL, 0x1000, WEL2_GRAN_16K); /* same 16 KB page: dropped */
+	CHECK_EQ(n, 1);
+	n = wel2_s2_add_hole(h, n, 0x23b10c000ULL, 0x4000, WEL2_GRAN_16K); /* adjacent: its own hole */
+	CHECK_EQ(n, 2);
+}
+
 static void t_s2_odd_ram_end(void)
 {
 	/* RAM that ends inside a 32 MB block: 16 KB pages (the RAM helper rounds to 2 MB) / 2 MB blocks */
@@ -259,6 +334,8 @@ int main(void)
 	RUN(t_blocks_and_pages);
 	RUN(t_bad_arguments_and_exhaustion);
 	RUN(t_s2_map);
+	RUN(t_s2_aic_hole);
+	RUN(t_s2_add_hole_rules);
 	RUN(t_s2_odd_ram_end);
 	RUN(t_s1_map);
 	TESTS_DONE();

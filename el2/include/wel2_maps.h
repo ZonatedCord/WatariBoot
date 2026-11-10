@@ -37,6 +37,13 @@ struct wel2_s1_layout {
  * (AP[1] = RES1, XN). 0, or -1 on bad arguments / pool exhausted. */
 int wel2_s1_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_s1_layout *l, bool e2h);
 
+/* Append [base, base+size) to holes[0..n) for the granule 1 << gshift and return the new count. The range is
+ * rounded OUTWARDS to the granule (a stage-2 hole cannot be smaller than a page; the guest losing the rest of
+ * that page is the safe direction for a device window). A range already inside an existing hole is dropped
+ * (the t8103 AIC lists reg[1] inside reg[0]: wel2_aic.h). Returns n unchanged for size 0 or a wrapping range.
+ * The caller provides room for the entry. */
+unsigned wel2_s2_add_hole(struct wel2_range *holes, unsigned n, uint64_t base, uint64_t size, unsigned gshift);
+
 /* 0, or -1 on bad arguments / pool exhausted. */
 int wel2_s2_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_range *holes, unsigned nholes);
 

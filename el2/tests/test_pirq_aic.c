@@ -478,23 +478,108 @@ static void t_sw_set_clr(void)
 	struct aic_event ev;
 
 	setup_aic(false, false);
+	CHECK(!FA.event_clears_sw);                                /* [verified] the M1 does not clear it */
 	enable_spi(ANS_V);
 	pirq_aic_sw_set(&A, ANS_PHYS);
 	CHECK(fa_bit(FA.sw, ANS_PHYS));
 	ev = pirq_aic_poll(&A);
 	CHECK_EQ(ev.num, ANS_PHYS);
+	CHECK(!fa_bit(FA.sw, ANS_PHYS));                           /* cleared by the take (SW_CLR), not by the read */
+	CHECK_EQ(A.st.sw_cleared, 1);
 	CHECK_EQ(arrive(ev, 0, 0), ANS_V);
-	CHECK(fa_bit(FA.sw, ANS_PHYS));                            /* [hypothesis] not cleared by the read */
-	pirq_aic_sw_clr(&A, ANS_PHYS);
-	CHECK(!fa_bit(FA.sw, ANS_PHYS));
 	CHECK_EQ(vgic_ack(&F.v, 0), ANS_V);
 	pirq_line_low(&P, 0, ANS_V);
 	vgic_eoi(&F.v, 0, ANS_V);
 	pirq_finish(&P, ANS_V);
-	CHECK(!fa_irq_out(&FA, 0));                                /* nothing left to fire */
+	CHECK(!fa_irq_out(&FA, 0));                                /* unmasked at EOI, nothing re-fires */
+	CHECK_EQ(pirq_aic_poll(&A).kind, AIC_EV_NONE);
 
 	pirq_aic_sw_set(&A, 9999);                                 /* out of range: ignored */
 	CHECK_EQ(FA.n_unknown_wr, 0);
+}
+
+/* Q-D5: on the M1 SW_SET survives the EVENT read, so without the clear at take the source would
+ * fire again at every unmask. The explicit mode switch checks the layer also works if a future
+ * chip revision clears it itself. */
+static void t_sw_cleared_at_take(void)
+{
+	struct aic_event ev;
+
+	for (int clears = 0; clears <= 1; clears++) {
+		setup_aic(false, false);
+		FA.event_clears_sw = clears;
+		enable_spi(ANS_V);
+		pirq_aic_sw_set(&A, ANS_PHYS);
+		ev = pirq_aic_poll(&A);
+		CHECK_EQ(ev.kind, AIC_EV_IRQ);
+		CHECK(!fa_bit(FA.sw, ANS_PHYS));
+		CHECK_EQ(arrive(ev, 0, 0), ANS_V);
+		CHECK_EQ(vgic_ack(&F.v, 0), ANS_V);
+		pirq_line_low(&P, 0, ANS_V);
+		vgic_eoi(&F.v, 0, ANS_V);
+		pirq_finish(&P, ANS_V);
+		CHECK(!fa_irq_out(&FA, 0));
+		CHECK_EQ(A.st.sw_cleared, 1u);          /* the write is idempotent either way */
+	}
+}
+
+/* A new sw_set between take and EOI must survive: that is why the clear is at take, not at EOI. */
+static void t_sw_set_between_take_and_eoi(void)
+{
+	struct aic_event ev;
+
+	setup_aic(false, false);
+	enable_spi(ANS_V);
+	pirq_aic_sw_set(&A, ANS_PHYS);
+	ev = pirq_aic_poll(&A);
+	CHECK_EQ(arrive(ev, 0, 0), ANS_V);
+	CHECK_EQ(vgic_ack(&F.v, 0), ANS_V);
+	pirq_aic_sw_set(&A, ANS_PHYS);                             /* second software event while the guest runs */
+	CHECK(fa_bit(FA.sw, ANS_PHYS));
+	pirq_line_low(&P, 0, ANS_V);
+	vgic_eoi(&F.v, 0, ANS_V);
+	pirq_finish(&P, ANS_V);                                    /* unmask: the second event fires */
+	ev = pirq_aic_poll(&A);
+	CHECK_EQ(ev.kind, AIC_EV_IRQ);
+	CHECK_EQ(ev.num, ANS_PHYS);
+	CHECK(!fa_bit(FA.sw, ANS_PHYS));
+	CHECK_EQ(A.st.sw_cleared, 2);
+}
+
+/* A hardware level line is not touched by the clear: it keeps firing after the take, and a SW bit
+ * the layer did not set (firmware) is left alone. */
+static void t_sw_clear_spares_hw_and_foreign(void)
+{
+	struct aic_event ev;
+
+	setup_aic(false, false);
+	enable_spi(ANS_V);
+	enable_spi(DWC_V);
+	fa_line(&FA, ANS_PHYS, true);                              /* HW level, no sw_set by us */
+	FA.sw[DWC_PHYS / 32] |= 1u << (DWC_PHYS % 32);             /* foreign SW bit */
+	ev = pirq_aic_poll(&A);
+	CHECK_EQ(ev.kind, AIC_EV_IRQ);
+	CHECK_EQ(A.st.sw_cleared, 0);
+	CHECK(fa_bit(FA.line, ANS_PHYS));
+	/* both sources: one is ANS (line), one is DWC (foreign SW); neither was cleared */
+	ev = pirq_aic_poll(&A);
+	CHECK_EQ(ev.kind, AIC_EV_IRQ);
+	CHECK_EQ(A.st.sw_cleared, 0);
+	CHECK(fa_bit(FA.sw, DWC_PHYS));
+	/* SW and HW at once: the SW bit goes, the line stays and re-fires on unmask */
+	pirq_aic_sw_set(&A, ANS_PHYS);
+	pirq_aic_sw_clr(&A, ANS_PHYS);                             /* explicit clear drops ownership */
+	CHECK(!fa_bit(FA.sw, ANS_PHYS));
+	CHECK(fa_bit(FA.line, ANS_PHYS));
+	pirq_aic_sw_set(&A, ANS_PHYS);
+	FA.mask[ANS_PHYS / 32] &= ~(1u << (ANS_PHYS % 32));
+	ev = pirq_aic_poll(&A);
+	CHECK_EQ(ev.num, ANS_PHYS);
+	CHECK_EQ(A.st.sw_cleared, 1);
+	CHECK(!fa_bit(FA.sw, ANS_PHYS));
+	CHECK(fa_bit(FA.line, ANS_PHYS));
+	FA.mask[ANS_PHYS / 32] &= ~(1u << (ANS_PHYS % 32));
+	CHECK_EQ(pirq_aic_poll(&A).num, ANS_PHYS);                 /* the hardware line still fires */
 }
 
 /* DIE is [31:24], TYPE [23:16]: a type-1 event on die 1 is not an IRQ of ours, and a type
@@ -565,5 +650,8 @@ int main(void)
 	RUN(t_init_cpu_ipi_per_core);
 	RUN(t_init_cpu_whoami);
 	RUN(t_sw_set_clr);
+	RUN(t_sw_cleared_at_take);
+	RUN(t_sw_set_between_take_and_eoi);
+	RUN(t_sw_clear_spares_hw_and_foreign);
 	TESTS_DONE();
 }

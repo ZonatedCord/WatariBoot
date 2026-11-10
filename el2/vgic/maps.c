@@ -54,6 +54,24 @@ int wel2_s1_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct w
 	return 0;
 }
 
+unsigned wel2_s2_add_hole(struct wel2_range *holes, unsigned n, uint64_t base, uint64_t size, unsigned gshift)
+{
+	uint64_t g = 1ULL << gshift, lo, hi;
+
+	if (!size || base + size < base)
+		return n;
+	lo = base & ~(g - 1);
+	hi = (base + size + g - 1) & ~(g - 1);
+	if (hi < lo)
+		return n;
+	for (unsigned i = 0; i < n; i++)
+		if (lo >= holes[i].base && hi <= holes[i].base + holes[i].size)
+			return n;
+	holes[n].base = lo;
+	holes[n].size = hi - lo;
+	return n + 1;
+}
+
 int wel2_s2_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_range *holes, unsigned nholes)
 {
 	if (map_clamped(pt, 0, 1ULL << pt->va_bits, S2_AF | S2_S2AP_RW | S2_ATTR_DEV | S2_XN))

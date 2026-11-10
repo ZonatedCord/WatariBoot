@@ -195,9 +195,7 @@ static void stage2_init(void)
     unsigned nholes = 2;
 
     if (g_aic_on) {                     /* #42: the AIC belongs to the layer, the guest faults there */
-        holes[nholes].base = g_aic_info.base;
-        holes[nholes].size = g_aic_info.size;
-        nholes++;
+        nholes = wel2_s2_add_hole(holes, nholes, g_aic_info.base, g_aic_info.size, g_gran);
     }
 
 #ifdef WEL2_CHAIN

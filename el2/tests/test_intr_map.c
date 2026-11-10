@@ -5,6 +5,7 @@
  * level/edge semantics for a GIC-like and an AIC-like backend, re-target on CPU_OFF/CPU_ON).
  * Design: docs/design/watari-el2-devirq/ARCHITECTURE.md sections 4, 7.1 and TEST_STRATEGY 2.
  */
+#include <string.h>
 #include "test.h"
 #include "fake_pirq.h"
 
@@ -134,6 +135,54 @@ static void t_allow_list_default_deny(void)
 		CHECK(intr_find(T8103, h) != NULL);
 	}
 	CHECK_EQ(n, T8103->n_allow);
+}
+
+/* Measured on j293 (re/m3a-ehw0-measurements.md rows 10-13): listed, but never exposed. */
+static void t_measured_denied_list(void)
+{
+	static const struct { uint32_t h; const char *name; } k[] = {
+		{ 583, "ans-mbox0" }, { 584, "ans-mbox1" }, { 585, "ans-mbox2" }, { 586, "ans-mbox3" },
+		{ 778, "usb-drd0-1" }, { 779, "usb-drd0-2" }, { 780, "usb-drd0-3" }, { 736, "usb-drd0-4" },
+		{ 858, "usb-drd1-1" }, { 859, "usb-drd1-2" }, { 860, "usb-drd1-3" }, { 816, "usb-drd1-4" },
+		{ 770, "apciec0" }, { 772, "apciec0-piodma" }, { 850, "apciec1" }, { 852, "apciec1-piodma" },
+		{ 605, "uart0" }, { 607, "uart2" },
+	};
+	struct intr_map m = INTR_MAP_T8103;
+	unsigned n = sizeof k / sizeof k[0];
+
+	CHECK_EQ(T8103->n_denied, n);
+	for (unsigned i = 0; i < n; i++) {
+		const struct intr_entry *e = intr_find_denied(T8103, k[i].h);
+
+		CHECK(e != NULL);
+		if (!e)
+			continue;
+		CHECK_EQ(e->hwirq, k[i].h);
+		CHECK_EQ(e->edge, INTR_TRIG_UNKNOWN);             /* trigger not measured */
+		CHECK(!strcmp(e->name, k[i].name));
+		CHECK(intr_find(T8103, k[i].h) == NULL);           /* disjoint from the allow-list */
+		CHECK_EQ(intr_exposed_vintid(T8103, k[i].h), INTR_INVALID);
+		CHECK_EQ(intr_exposed_hwirq(T8103, 32 + k[i].h), INTR_INVALID);
+		CHECK_EQ(intr_trigger(T8103, k[i].h), -1);
+		CHECK_EQ(intr_wired_vintid(T8103, k[i].h), 32 + k[i].h);   /* arithmetic exists, exposure does not */
+	}
+	CHECK(intr_find_denied(T8103, 590) == NULL);              /* allowed rows are not in the denied list */
+	CHECK(intr_find_denied(T8103, 777) == NULL);
+	CHECK(intr_find_denied(T8103, 857) == NULL);
+	CHECK_EQ(intr_exposed_vintid(T8103, 736), INTR_INVALID);  /* first wired hwirq after the pool */
+	/* the validator rejects a denied row that is also allowed, in the pool, or out of range */
+	static const struct intr_entry dup[] = { { 590, INTR_TRIG_UNKNOWN, "d" } };
+	static const struct intr_entry pool[] = { { 710, INTR_TRIG_UNKNOWN, "p" } };
+	static const struct intr_entry hi[] = { { 896, INTR_TRIG_UNKNOWN, "h" } };
+
+	m.denied = dup;  m.n_denied = 1;
+	CHECK_EQ(intr_map_validate(&m), INTR_E_DUP);
+	m.denied = pool; m.n_denied = 1;
+	CHECK_EQ(intr_map_validate(&m), INTR_E_POOL);
+	m.denied = hi;   m.n_denied = 1;
+	CHECK_EQ(intr_map_validate(&m), INTR_E_RANGE);
+	m.denied = NULL; m.n_denied = 0;
+	CHECK_EQ(intr_map_validate(&m), INTR_OK);
 }
 
 static void t_msi_pool_exposed(void)
@@ -594,6 +643,7 @@ int main(void)
 	RUN(t_inverse_boundaries);
 	RUN(t_bijection);
 	RUN(t_allow_list_default_deny);
+	RUN(t_measured_denied_list);
 	RUN(t_msi_pool_exposed);
 	RUN(t_trigger);
 	RUN(t_validate);
