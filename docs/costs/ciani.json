@@ -1,0 +1,67 @@
+{
+  "autore": "ciani",
+  "sessions": {
+    "2a07d291d919": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 49727006,
+          "cache_write_1h": 347094,
+          "cache_write_5m": 0,
+          "input": 440,
+          "output": 171432
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 1629197,
+          "cache_write_1h": 0,
+          "cache_write_5m": 95807,
+          "input": 50,
+          "output": 23637
+        }
+      }
+    },
+    "4683d4a804ad": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 326459,
+          "cache_write_1h": 30145,
+          "cache_write_5m": 0,
+          "input": 14,
+          "output": 2995
+        }
+      }
+    },
+    "4d4eb1d7b92d": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 169760,
+          "cache_write_1h": 29479,
+          "cache_write_5m": 0,
+          "input": 8,
+          "output": 5199
+        }
+      }
+    },
+    "7d8c52c0a532": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 11926594,
+          "cache_write_1h": 147192,
+          "cache_write_5m": 0,
+          "input": 178,
+          "output": 46573
+        }
+      }
+    },
+    "d40e35f8576d": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 610953,
+          "cache_write_1h": 43167,
+          "cache_write_5m": 0,
+          "input": 22,
+          "output": 7532
+        }
+      }
+    }
+  }
+}

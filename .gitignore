@@ -37,3 +37,5 @@ out/
 
 # Claude Code worktrees (agent isolation)
 .claude/worktrees/
+__pycache__/
+*.pyc

@@ -6,7 +6,9 @@
  * against tests/fake_aic.h and on the M1 against the real block (the boot path supplies
  * an accessor over the mapped AIC window; it is NOT wired in yet, QEMU has a GIC: M3a).
  *
- * Register map (AIC base 0x23b100000 on the t8103, window 0x8000). Every offset is a hardware
+ * Register map (AIC base 0x23b100000 on the t8103; the ADT gives reg[0] size 0xc000 and reg[1]
+ * 0x23b108000 size 0x1000, INFO = 0x000a0380, NR_IRQ 896: measured on j293 2026-11-10,
+ * re/m3a-ehw0-measurements.md; this header used to say window 0x8000). Every offset is a hardware
  * fact taken from public documentation only (Asahi Linux docs "Apple Interrupt Controller",
  * Linux DT binding apple,aic.yaml, our notes re/f0-m1-fiq-irq.md and re/f0-qemu-aic-models.md);
  * no driver code is copied. Status marks are per row:
@@ -29,17 +31,23 @@
  *                                                             [verified: Asahi doc "SW_GEN_*"]
  *   0x4100 MASK_SET / 0x4180 MASK_CLR  one bit per IRQ; write 1 = set/clear
  *                                                             [verified: Asahi doc "IRQ_MASK_*"]
- *                       that a MASK_SET read returns the current mask state: [hypothesis]
- *                       (Asahi doc: "reads current state"), never relied on by this code
+ *                       a MASK_SET read returns the current mask state [verified: measured
+ *                       on j293 2026-11-10], never relied on by this code
  *   0x4200 HW_IRQ_MON   current hardware line state           [verified offset, meaning is a
  *                                                              "?" in the Asahi doc: hypothesis]
  *   EVENT type 1 = hardware IRQ, 4 = legacy IPI (number 1 other, 2 self)
  *                                  [verified: Linux driver defines, as hardware facts]
  *   IPI_ACK / IPI_MASK_SET / IPI_MASK_CLR are per-core views: run pirq_aic_init_cpu() on every core.
  *
- * Not verified (E-HW0, M3a): reset value of MASK/TARGET_CPU, whether the EVENT read clears a
- * SW_SET bit, whether an edge pulse is latched while the source is masked, order of IPI vs IRQ
- * events, WHOAMI vs MPIDR numbering of the P cores, the exact INFO field widths.
+ * Measured on j293 2026-11-10 (re/m3a-ehw0-measurements.md, day 2 section), IRQ 891 routed to
+ * core 7: SW_SET on a masked source delivers nothing; after MASK_CLR the EVENT read returns
+ * 0x0001037b (die 0, type 1, number 891) and re-masks the source; the EVENT read does NOT clear
+ * SW_SET, so the source fires again on the next unmask until SW_CLR (level-like); no spurious
+ * event after SW_CLR + unmask; MASK_SET and SW_SET reads return the current state; WHOAMI = 0..7
+ * with E cores 0-3 and P cores 4-7; TARGET_CPU and MASK reset values seen: 0 (or 1 for IRQ 0) and
+ * all masked.
+ * Still not verified: whether a hardware edge pulse is latched while the source is masked (needs
+ * a real edge source), order of IPI vs IRQ events, the INFO field above bit 15.
  *
  * What does NOT go through here (ARCHITECTURE devirq 4.5): the guest timers and the PMU are
  * FIQ sources, the fast IPI is a system register on the t8103; none of them is an AIC EVENT.
