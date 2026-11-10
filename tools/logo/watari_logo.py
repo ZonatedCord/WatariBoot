@@ -2,16 +2,39 @@
 """Watari Boot logo: original pixel-art torii gate in black, red and gold.
 
 One pixel grid feeds both outputs: `python3 tools/logo/watari_logo.py docs/img/logo.svg` writes the
-SVG used by the README; `pixels()` is also used to draw the logo on the M1 screen through m1n1.
+SVG used by the README; `screen_cells()` is also used to draw the logo on the M1 screen through m1n1.
 """
 import sys
 
-LOGO_W, LOGO_H = 51, 28     # whole logo, gate and text on one grid; W is odd, axis = column 25
+LOGO_W, LOGO_H = 53, 50     # whole logo, gate and text on one grid; W is odd, axis = column 26
 G = LOGO_W
 BG = "#0d0a08"
 RED, DRED, GOLD, GOLD2 = "#c8102e", "#7a0a1c", "#d4a017", "#ffcc33"
 TEXT1, TEXT2, SHADOW = "#ffcc33", "#d4a017", "#7a0a1c"
 AXIS = LOGO_W // 2
+
+# Bold arcade pixel font, 9 rows, 2-cell strokes. A, T, I, O, W are exactly mirror-symmetric.
+FONT = {
+ 'A': [".###.", "##.##", "##.##", "##.##", "#####", "##.##", "##.##", "##.##", "##.##"],
+ 'T': ["#####", "#####", ".###.", ".###.", ".###.", ".###.", ".###.", ".###.", ".###."],
+ 'I': ["#####", "#####", ".###.", ".###.", ".###.", ".###.", ".###.", "#####", "#####"],
+ 'O': [".###.", "##.##", "##.##", "##.##", "##.##", "##.##", "##.##", "##.##", ".###."],
+ 'R': ["####.", "##.##", "##.##", "##.##", "####.", "###..", "##.##", "##.##", "##.##"],
+ 'B': ["####.", "##.##", "##.##", "##.##", "####.", "##.##", "##.##", "##.##", "####."],
+ 'W': ["##...##", "##...##", "##...##", "##...##", "##.#.##", "##.#.##", "#######", "###.###", "##...##"],
+}
+
+def _width(s):
+    return sum(len(FONT[ch][0]) for ch in s) + len(s) - 1
+
+def text_cells(s):
+    """(x, y) cells of a string in the font, 1-cell spacing, left edge at x = 0."""
+    out, x0 = [], 0
+    for ch in s:
+        for r, row in enumerate(FONT[ch]):
+            out.extend((x0 + c, r) for c, b in enumerate(row) if b == "#")
+        x0 += len(FONT[ch][0]) + 1
+    return out
 
 def _gate():
     """Gate cells, built for the left half (x <= AXIS) and mirrored, so it is exactly symmetric."""
@@ -19,16 +42,23 @@ def _gate():
     def put(x0, x1, y, col):
         for x in range(x0, x1 + 1):
             half[(x, y)] = col
-    put(0, 3, 0, RED)                       # kasagi (top beam), upturned tips
-    put(0, AXIS, 1, RED)
-    put(1, AXIS, 2, RED)
-    put(4, AXIS, 3, DRED)
-    for y in range(4, 25):                  # pillars
-        put(4, 5, y, RED); put(6, 6, y, DRED)
-    put(2, AXIS, 13, RED); put(2, AXIS, 14, RED)    # nuki (second beam)
-    put(2, AXIS, 15, DRED)
-    put(2, 8, 25, GOLD); put(2, 8, 26, GOLD2)       # stone bases
-    put(1, AXIS, 27, GOLD)                          # ground line
+    for x in range(AXIS + 1):               # kasagi (top beam) with upward-curving tips
+        top = min(3, x // 4)
+        bot = 3 if x < 4 else 5
+        for y in range(top, bot + 1):
+            half[(x, y)] = RED
+        if x >= 4:
+            half[(x, 6)] = DRED
+            half[(x, 7)] = DRED
+    for y in range(8, 47):                  # pillars
+        put(4, 5, y, RED)
+        put(6, 6, y, DRED)
+    for y in (21, 22, 23):                  # nuki (second beam)
+        put(2, AXIS, y, RED)
+    put(2, AXIS, 24, DRED)
+    put(2, 9, 47, GOLD)                     # stone bases
+    put(2, 9, 48, GOLD2)
+    put(1, AXIS, 49, GOLD)                  # ground line
     out = {}
     for (x, y), col in half.items():
         out[(x, y)] = col
@@ -36,36 +66,19 @@ def _gate():
     return out
 
 def _text(s, y0, col):
-    w = 6 * len(s) - 1
-    x0 = (LOGO_W - w) // 2
+    x0 = (LOGO_W - _width(s)) // 2
     return {(x0 + x, y0 + y): col for (x, y) in text_cells(s)}
 
 def pixels():
     """List of (x, y, colour) cells on the LOGO_W x LOGO_H grid, drawn in order (gate, then text)."""
     cells = _gate()
-    cells.update(_text("WATARI", 5, TEXT1))     # fused: runs between the kasagi and the nuki
-    cells.update(_text("BOOT", 18, TEXT2))      # between the pillars
+    cells.update(_text("WATARI", 10, TEXT1))    # fused: between the kasagi and the nuki
+    cells.update(_text("BOOT", 31, TEXT2))      # between the pillars
     return [(x, y, c) for (x, y), c in sorted(cells.items(), key=lambda kv: (kv[0][1], kv[0][0]))]
 
 def screen_cells():
     """The whole logo (gate and text) as (x, y, colour) cells on a LOGO_W x LOGO_H grid."""
     return pixels()
-
-FONT = {
- 'W': ["10001","10001","10001","10101","10101","11011","10001"],
- 'A': ["01110","10001","10001","11111","10001","10001","10001"],
- 'T': ["11111","00100","00100","00100","00100","00100","00100"],
- 'R': ["11110","10001","10001","11110","10100","10010","10001"],
- 'I': ["11111","00100","00100","00100","00100","00100","11111"],
- 'B': ["11110","10001","10001","11110","10001","10001","11110"],
- 'O': ["01110","10001","10001","10001","10001","10001","01110"],
- ' ': ["00000"] * 7,
-}
-
-def text_cells(s):
-    """(x, y) cells of a string in the 5x7 font, 1-cell spacing."""
-    return [(i * 6 + c, r) for i, ch in enumerate(s) for r, row in enumerate(FONT[ch])
-            for c, b in enumerate(row) if b == "1"]
 
 def svg(cell=12):
     pad = 2
