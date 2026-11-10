@@ -19,6 +19,7 @@
 - Headless smoke test: `tools/test-qemu-windows.sh`
 - Token/cost counter: `python3 -I tools/token-usage.py --autore <marco|ciani>`
 - Everything installed/downloaded and how to remove it: `docs/INSTALLED.md`, `tools/uninstall-watari.sh` (dry-run unless `--yes`)
+- Real-hardware day 1 (M3a, Marco's M1 + Ciani's host Mac, read-only, zero footprint on the host): `docs/procedures/m3a-day1-hardware.md`
 - Lint/format: none yet.
 
 ## Structure
