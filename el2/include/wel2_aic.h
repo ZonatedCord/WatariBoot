@@ -168,8 +168,9 @@ struct aic_event pirq_aic_poll(struct pirq_aic *a);
 
 /* Software generate / clear a source (tests, irq_set_irqchip_state-like uses). A source raised with
  * sw_set is cleared by pirq_aic_poll() when it is taken (the EVENT read does not clear SW_SET on the
- * M1, so the source would re-fire at every unmask). Callers on different cores must serialise
- * sw_set / poll for the same source (the pirq lock) [hypothesis: the layer takes it]. */
+ * M1, so the source would re-fire at every unmask). Callers on different cores need no lock:
+ * sw_owned is updated with atomics in a fixed order (see pirq_aic.c); two sw_sets before a take are
+ * one event (intended coalescing). */
 void pirq_aic_sw_set(struct pirq_aic *a, uint32_t irq);
 void pirq_aic_sw_clr(struct pirq_aic *a, uint32_t irq);
 /* Current hardware line of a source (HW_IRQ_MON), for diagnostics. */

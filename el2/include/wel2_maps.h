@@ -37,12 +37,14 @@ struct wel2_s1_layout {
  * (AP[1] = RES1, XN). 0, or -1 on bad arguments / pool exhausted. */
 int wel2_s1_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_s1_layout *l, bool e2h);
 
-/* Append [base, base+size) to holes[0..n) for the granule 1 << gshift and return the new count. The range is
- * rounded OUTWARDS to the granule (a stage-2 hole cannot be smaller than a page; the guest losing the rest of
- * that page is the safe direction for a device window). A range already inside an existing hole is dropped
- * (the t8103 AIC lists reg[1] inside reg[0]: wel2_aic.h). Returns n unchanged for size 0 or a wrapping range.
- * The caller provides room for the entry. */
-unsigned wel2_s2_add_hole(struct wel2_range *holes, unsigned n, uint64_t base, uint64_t size, unsigned gshift);
+/* Add [base, base+size) to holes[0..*n) (capacity cap) for the granule 1 << gshift. The range is rounded
+ * OUTWARDS to the granule (a stage-2 hole cannot be smaller than a page; the guest losing the rest of that page is
+ * the safe direction for a device window). A range inside an existing hole is dropped (the t8103 AIC lists reg[1]
+ * inside reg[0]: wel2_aic.h); existing holes inside the new, wider range are removed; partial overlaps are kept
+ * as separate holes (unmapping twice is harmless). Returns 0 (also for a size-0 range: nothing to add), or -1 if
+ * the range wraps past 2^64 or the array is full; *n is unchanged on error. */
+int wel2_s2_add_hole(struct wel2_range *holes, unsigned *n, unsigned cap, uint64_t base, uint64_t size,
+		     unsigned gshift);
 
 /* 0, or -1 on bad arguments / pool exhausted. */
 int wel2_s2_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_range *holes, unsigned nholes);

@@ -141,11 +141,11 @@ static void t_allow_list_default_deny(void)
 static void t_measured_denied_list(void)
 {
 	static const struct { uint32_t h; const char *name; } k[] = {
-		{ 583, "ans-mbox0" }, { 584, "ans-mbox1" }, { 585, "ans-mbox2" }, { 586, "ans-mbox3" },
-		{ 778, "usb-drd0-1" }, { 779, "usb-drd0-2" }, { 780, "usb-drd0-3" }, { 736, "usb-drd0-4" },
-		{ 858, "usb-drd1-1" }, { 859, "usb-drd1-2" }, { 860, "usb-drd1-3" }, { 816, "usb-drd1-4" },
-		{ 770, "apciec0" }, { 772, "apciec0-piodma" }, { 850, "apciec1" }, { 852, "apciec1-piodma" },
-		{ 605, "uart0" }, { 607, "uart2" },
+		{ 583, "ans-irq583" }, { 584, "ans-irq584" }, { 585, "ans-irq585" }, { 586, "ans-irq586" },
+		{ 778, "usb-drd0-irq778" }, { 779, "usb-drd0-irq779" }, { 780, "usb-drd0-irq780" }, { 736, "usb-drd0-irq736" },
+		{ 858, "usb-drd1-irq858" }, { 859, "usb-drd1-irq859" }, { 860, "usb-drd1-irq860" }, { 816, "usb-drd1-irq816" },
+		{ 770, "apciec0-irq770" }, { 772, "apciec0-irq772" }, { 850, "apciec1-irq850" }, { 852, "apciec1-irq852" },
+		{ 605, "uart0-irq605" }, { 607, "uart2-irq607" },
 	};
 	struct intr_map m = INTR_MAP_T8103;
 	unsigned n = sizeof k / sizeof k[0];
@@ -229,6 +229,10 @@ static void t_validate(void)
 	CHECK_EQ(intr_map_validate(&m), INTR_E_POOL);
 	m.allow = dup;  m.n_allow = 3;
 	CHECK_EQ(intr_map_validate(&m), INTR_E_DUP);
+	static const struct intr_entry unk[] = { { 5, INTR_TRIG_UNKNOWN, "u" } };
+
+	m.allow = unk;  m.n_allow = 1;
+	CHECK_EQ(intr_map_validate(&m), INTR_E_TRIG);                  /* an exposed row needs level or edge */
 	m = INTR_MAP_T8103;
 	m.wired_max = 900;                                         /* wired range would reach the MSI SPIs */
 	CHECK_EQ(intr_map_validate(&m), INTR_E_LAYOUT);

@@ -27,30 +27,32 @@ static const struct intr_entry t8103_allow[] = {
  * [verified: re/m3a-ehw0-measurements.md, ADT read on 2026-11-10, m1n1 v1.6.1]. The trigger type
  * of none of them was measured (the ADT interrupt cells give numbers only), so each is
  * INTR_TRIG_UNKNOWN; that is also why they are not allow-listed: exposing needs the trigger. */
+/* Names are neutral labels (owner node + number), not measured roles: the ADT gives the numbers in a
+ * fixed order and which line does what inside a node was NOT measured [hypothesis]. */
 static const struct intr_entry t8103_denied[] = {
 	/* ANS mailbox lines (row 10; the NVMe line 590 is allowed above) */
-	{ 583, INTR_TRIG_UNKNOWN, "ans-mbox0" },
-	{ 584, INTR_TRIG_UNKNOWN, "ans-mbox1" },
-	{ 585, INTR_TRIG_UNKNOWN, "ans-mbox2" },
-	{ 586, INTR_TRIG_UNKNOWN, "ans-mbox3" },
+	{ 583, INTR_TRIG_UNKNOWN, "ans-irq583" },
+	{ 584, INTR_TRIG_UNKNOWN, "ans-irq584" },
+	{ 585, INTR_TRIG_UNKNOWN, "ans-irq585" },
+	{ 586, INTR_TRIG_UNKNOWN, "ans-irq586" },
 	/* usb-drd0: 777 (allowed above), then the four extra lines (row 11) */
-	{ 778, INTR_TRIG_UNKNOWN, "usb-drd0-1" },
-	{ 779, INTR_TRIG_UNKNOWN, "usb-drd0-2" },
-	{ 780, INTR_TRIG_UNKNOWN, "usb-drd0-3" },
-	{ 736, INTR_TRIG_UNKNOWN, "usb-drd0-4" },     /* first wired hwirq after the MSI pool: vINTID 768 */
+	{ 778, INTR_TRIG_UNKNOWN, "usb-drd0-irq778" },
+	{ 779, INTR_TRIG_UNKNOWN, "usb-drd0-irq779" },
+	{ 780, INTR_TRIG_UNKNOWN, "usb-drd0-irq780" },
+	{ 736, INTR_TRIG_UNKNOWN, "usb-drd0-irq736" },     /* first wired hwirq after the MSI pool: vINTID 768 */
 	/* usb-drd1: 857 (allowed above) */
-	{ 858, INTR_TRIG_UNKNOWN, "usb-drd1-1" },
-	{ 859, INTR_TRIG_UNKNOWN, "usb-drd1-2" },
-	{ 860, INTR_TRIG_UNKNOWN, "usb-drd1-3" },
-	{ 816, INTR_TRIG_UNKNOWN, "usb-drd1-4" },
+	{ 858, INTR_TRIG_UNKNOWN, "usb-drd1-irq858" },
+	{ 859, INTR_TRIG_UNKNOWN, "usb-drd1-irq859" },
+	{ 860, INTR_TRIG_UNKNOWN, "usb-drd1-irq860" },
+	{ 816, INTR_TRIG_UNKNOWN, "usb-drd1-irq816" },
 	/* Thunderbolt PCIe controllers apciec0 / apciec1 (row 12) and their pio-DMA lines */
-	{ 770, INTR_TRIG_UNKNOWN, "apciec0" },
-	{ 772, INTR_TRIG_UNKNOWN, "apciec0-piodma" },
-	{ 850, INTR_TRIG_UNKNOWN, "apciec1" },
-	{ 852, INTR_TRIG_UNKNOWN, "apciec1-piodma" },
+	{ 770, INTR_TRIG_UNKNOWN, "apciec0-irq770" },
+	{ 772, INTR_TRIG_UNKNOWN, "apciec0-irq772" },
+	{ 850, INTR_TRIG_UNKNOWN, "apciec1-irq850" },
+	{ 852, INTR_TRIG_UNKNOWN, "apciec1-irq852" },
 	/* UARTs (row 13; uart0 is the Linux t8103 console UART) */
-	{ 605, INTR_TRIG_UNKNOWN, "uart0" },
-	{ 607, INTR_TRIG_UNKNOWN, "uart2" },
+	{ 605, INTR_TRIG_UNKNOWN, "uart0-irq605" },
+	{ 607, INTR_TRIG_UNKNOWN, "uart2-irq607" },
 };
 
 const struct intr_map INTR_MAP_T8103 = {
@@ -172,6 +174,8 @@ int intr_map_validate(const struct intr_map *m)
 			return INTR_E_RANGE;
 		if (in_pool(m, h))
 			return INTR_E_POOL;
+		if (m->allow[i].edge != INTR_TRIG_LEVEL && m->allow[i].edge != INTR_TRIG_EDGE)
+			return INTR_E_TRIG;              /* an exposed source needs a known trigger */
 		for (uint32_t j = 0; j < i; j++)
 			if (m->allow[j].hwirq == h)
 				return INTR_E_DUP;

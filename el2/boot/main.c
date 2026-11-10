@@ -183,6 +183,9 @@ static uint8_t s2_pool[WEL2_S2_POOL_BYTES] __attribute__((aligned(16384)));
 static struct wel2_pt s2_pt;
 static uint64_t g_vtcr;
 
+/* TODO(T6): the M1 path must also add the real AIC hole to this list, via wel2_s2_add_hole() with
+ * AIC_T8103_BASE/SIZE0 (wel2_aic.h; reg[1] is inside reg[0], so one hole). NOT wired yet: today only the
+ * QEMU Watari AIC node (g_aic_info) is covered. Until then the guest could reach the real AIC. */
 static void stage2_init(void)
 {
     struct wel2_ram ram = { g_ram_base, g_ram_end };
@@ -195,15 +198,15 @@ static void stage2_init(void)
     unsigned nholes = 2;
 
     if (g_aic_on) {                     /* #42: the AIC belongs to the layer, the guest faults there */
-        nholes = wel2_s2_add_hole(holes, nholes, g_aic_info.base, g_aic_info.size, g_gran);
+        if (wel2_s2_add_hole(holes, &nholes, 4, g_aic_info.base, g_aic_info.size, g_gran))
+            fatal_msg("stage-2 holes: AIC window does not fit");
     }
 
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
 
-    holes[nholes].base = hide_lo;
-    holes[nholes].size = GUEST_RAM_BASE + WEL2_CARVE_SIZE - hide_lo;
-    nholes++;
+    if (wel2_s2_add_hole(holes, &nholes, 4, hide_lo, GUEST_RAM_BASE + WEL2_CARVE_SIZE - hide_lo, g_gran))
+        fatal_msg("stage-2 holes: layer carve-out does not fit");
 #endif
     if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, WEL2_S2_IPA_BITS) ||
         wel2_s2_build(&s2_pt, &ram, holes, nholes))

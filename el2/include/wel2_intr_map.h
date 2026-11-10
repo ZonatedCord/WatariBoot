@@ -60,6 +60,7 @@ struct intr_map {
 #define INTR_E_POOL       (-2)   /* allow-listed hwirq inside the MSI pool */
 #define INTR_E_DUP        (-3)   /* hwirq listed twice */
 #define INTR_E_LAYOUT     (-4)   /* pool or vINTID layout does not fit the vGIC model */
+#define INTR_E_TRIG       (-5)   /* allow-listed row with a trigger other than LEVEL / EDGE (e.g. UNKNOWN) */
 /* A denied-list row is checked like an allow-list row (RANGE, POOL, DUP) and must not also be allow-listed (DUP). */
 
 /* The static example table of the 13" M1 MacBook Pro (t8103, j293). */

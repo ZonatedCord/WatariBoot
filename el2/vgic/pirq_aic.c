@@ -192,8 +192,8 @@ struct aic_event pirq_aic_poll(struct pirq_aic *a)
 			 *    only, the hardware line and a latched edge are separate state, so a level or edge
 			 *    HW source is never disturbed, and a firmware-set SW bit is not ours to drop.
 			 * The guest's pending state lives in the vGIC and is unaffected. */
-			if ((a->sw_owned[ev.num / 32] >> (ev.num % 32)) & 1u) {
-				a->sw_owned[ev.num / 32] &= ~(1u << (ev.num % 32));
+			if (__atomic_fetch_and(&a->sw_owned[ev.num / 32], ~(1u << (ev.num % 32)),
+					       __ATOMIC_SEQ_CST) & (1u << (ev.num % 32))) {
 				wr(a, AIC_SW_CLR(ev.num), 1u << (ev.num % 32));
 				a->st.sw_cleared++;
 			}
@@ -220,15 +220,22 @@ struct aic_event pirq_aic_poll(struct pirq_aic *a)
 void pirq_aic_sw_set(struct pirq_aic *a, uint32_t irq)
 {
 	if (irq_ok(a, irq)) {
-		a->sw_owned[irq / 32] |= 1u << (irq % 32);
+		/* Order: SW_SET first, owner bit second, both visible to a poll on another core in that
+		 * order. A poll between the two sees the source with no owner and does not clear it; the
+		 * owner bit is then set with the SW bit still up, so the NEXT take clears it (one coalesced,
+		 * possibly late, event; never a SW bit that nobody will clear). The opposite order could let
+		 * a poll consume the owner bit before SW_SET lands and strand the bit set. owned is atomic
+		 * (no lock exists in el2/ yet); a stale owner bit with SW clear only costs one extra SW_CLR.
+		 * Two sw_sets before a take are one event (the bit is level-like): intended coalescing. */
 		wr(a, AIC_SW_SET(irq), 1u << (irq % 32));
+		__atomic_fetch_or(&a->sw_owned[irq / 32], 1u << (irq % 32), __ATOMIC_SEQ_CST);
 	}
 }
 
 void pirq_aic_sw_clr(struct pirq_aic *a, uint32_t irq)
 {
 	if (irq_ok(a, irq)) {
-		a->sw_owned[irq / 32] &= ~(1u << (irq % 32));
+		__atomic_fetch_and(&a->sw_owned[irq / 32], ~(1u << (irq % 32)), __ATOMIC_SEQ_CST);
 		wr(a, AIC_SW_CLR(irq), 1u << (irq % 32));
 	}
 }

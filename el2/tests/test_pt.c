@@ -214,15 +214,15 @@ static void check_aic_maps(unsigned gshift)
 	struct wel2_pt pt;
 	struct wel2_ram ram;
 	struct wel2_s1_layout l = { rb + 0x80000, rb + 0x84000, rb + 0x88000 };
-	unsigned n = 0;
+	unsigned n = 0, m = 0;
 
-	n = wel2_s2_add_hole(holes, n, AIC_T8103_BASE, AIC_T8103_SIZE0, gshift);
-	n = wel2_s2_add_hole(holes, n, AIC_T8103_BASE1, AIC_T8103_SIZE1, gshift);
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 4, AIC_T8103_BASE, AIC_T8103_SIZE0, gshift), 0);
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 4, AIC_T8103_BASE1, AIC_T8103_SIZE1, gshift), 0);
 	CHECK_EQ(n, 1);                                                    /* reg[1] is inside reg[0]: one hole */
 	CHECK_EQ(holes[0].base, AIC_T8103_BASE); CHECK_EQ(holes[0].size, AIC_T8103_SIZE0);
-	/* the other order gives the same single (widest) coverage */
-	unsigned m = wel2_s2_add_hole(holes + 1, 0, AIC_T8103_BASE1, AIC_T8103_SIZE1, gshift);
-	CHECK_EQ(m, 1);                                                    /* rounded outwards to a page */
+	/* reg[1] alone is rounded outwards to a page (the sub-range is not expressible otherwise) */
+	CHECK_EQ(wel2_s2_add_hole(holes + 1, &m, 3, AIC_T8103_BASE1, AIC_T8103_SIZE1, gshift), 0);
+	CHECK_EQ(m, 1);
 	CHECK((holes[1].base & ((1ULL << gshift) - 1)) == 0 && holes[1].base <= AIC_T8103_BASE1);
 	CHECK(holes[1].base + holes[1].size >= AIC_T8103_BASE1 + AIC_T8103_SIZE1);
 
@@ -266,16 +266,50 @@ static void t_s2_add_hole_rules(void)
 	struct wel2_range h[4];
 	unsigned n = 0;
 
-	n = wel2_s2_add_hole(h, n, 0x1000, 0, WEL2_GRAN_4K);              /* empty: ignored */
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x1000, 0, WEL2_GRAN_4K), 0);            /* empty: nothing added */
 	CHECK_EQ(n, 0);
-	n = wel2_s2_add_hole(h, n, ~0ULL - 0xff, 0x1000, WEL2_GRAN_4K);   /* wraps: ignored */
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, ~0ULL - 0xff, 0x1000, WEL2_GRAN_4K), -1);   /* wraps */
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0xffffffffffffe000ULL, 0x2000, WEL2_GRAN_4K), -1);   /* ends at 2^64 */
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0xffffffffffffe001ULL, 0x1000, WEL2_GRAN_16K), -1);  /* rounding wraps */
 	CHECK_EQ(n, 0);
-	n = wel2_s2_add_hole(h, n, 0x23b108000ULL, 0x1000, WEL2_GRAN_16K); /* 4 KB range, 16 KB granule */
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x23b108000ULL, 0x1000, WEL2_GRAN_16K), 0);   /* 4 KB range, 16 KB granule */
 	CHECK_EQ(n, 1); CHECK_EQ(h[0].base, 0x23b108000ULL); CHECK_EQ(h[0].size, 0x4000);
-	n = wel2_s2_add_hole(h, n, 0x23b10a000ULL, 0x1000, WEL2_GRAN_16K); /* same 16 KB page: dropped */
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x23b10a000ULL, 0x1000, WEL2_GRAN_16K), 0);   /* same page: dropped */
 	CHECK_EQ(n, 1);
-	n = wel2_s2_add_hole(h, n, 0x23b10c000ULL, 0x4000, WEL2_GRAN_16K); /* adjacent: its own hole */
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x23b10c000ULL, 0x4000, WEL2_GRAN_16K), 0);   /* adjacent: its own hole */
 	CHECK_EQ(n, 2);
+
+	/* superset first, subset second: the subset is dropped */
+	n = 0;
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x10000, 0x10000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x12000, 0x2000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(n, 1); CHECK_EQ(h[0].base, 0x10000); CHECK_EQ(h[0].size, 0x10000);
+	/* subset first, superset second: the old hole is removed, not duplicated */
+	n = 0;
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x12000, 0x2000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x30000, 0x1000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x10000, 0x10000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(n, 2);
+	CHECK_EQ(h[0].base, 0x30000); CHECK_EQ(h[1].base, 0x10000); CHECK_EQ(h[1].size, 0x10000);
+	/* partial overlap: kept as two holes (unmapping the overlap twice is harmless) */
+	n = 0;
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x10000, 0x8000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0x14000, 0x8000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(n, 2);
+	/* highest valid page */
+	n = 0;
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0xffffffffffffc000ULL, 0x4000, WEL2_GRAN_16K), -1);   /* ends at 2^64 */
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 4, 0xffffffffffff8000ULL, 0x4000, WEL2_GRAN_16K), 0);
+	CHECK_EQ(n, 1);
+	/* capacity: full array is an error and leaves the list untouched */
+	n = 0;
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 2, 0x10000, 0x1000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 2, 0x20000, 0x1000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 2, 0x30000, 0x1000, WEL2_GRAN_4K), -1);
+	CHECK_EQ(n, 2); CHECK_EQ(h[0].base, 0x10000); CHECK_EQ(h[1].base, 0x20000);
+	/* a wider range that absorbs both fits even in a full list */
+	CHECK_EQ(wel2_s2_add_hole(h, &n, 2, 0x0, 0x40000, WEL2_GRAN_4K), 0);
+	CHECK_EQ(n, 1); CHECK_EQ(h[0].size, 0x40000);
 }
 
 static void t_s2_odd_ram_end(void)
