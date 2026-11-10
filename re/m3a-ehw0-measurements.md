@@ -85,3 +85,28 @@ All values below: **[verified: measured on j293 on 2026-11-10, m1n1 v1.6.1]** un
 - Corrected: AIC window size (0xc000 + 0x1000 at +0x8000, not 0x8000); TGran4 (supported).
 - New to-do from the measurements: the `start.S` stack slot by Aff0 collides on the M1 (row 2).
 - Still open: E2H stuck-bit test, AIC edge/latch behaviour (Q-D5) and anything else that needs writes: **day 2**. Apple PCIe MSI data semantics (#68, E-HW1).
+
+## Day 2 experiments (same day, writes, both people agreed)
+Volatile CPU/AIC state only; m1n1 still running afterwards. Scripts in `tools/m3a/`.
+
+### E2H stuck-bit test (#60): `e2h_test.py`
+- On cpu7 (P core), one instruction block: read `HCR_EL2`, write it back with E2H (bit 34) cleared, `isb`, read, restore the original, `isb`.
+- Before `0x0000032488000038`, after writing E2H = 0 **`0x0000032488000038`**, after restore the same: **E2H is stuck at 1** (the write of 0 is ignored). **[verified: measured on j293 2026-11-10, m1n1 v1.6.1]** The layer must run with E2H = 1 on the M1; `wel2.e2h=0` is only usable in QEMU.
+
+### AIC software-trigger and mask behaviour (Q-D5 family): `aic_qd5.py`
+- Test IRQ **891** (the highest number below NR_IRQ that no ADT node lists; 287 distinct numbers are in use), routed only to **core 7**, because core 0 runs the m1n1 proxy with IRQs unmasked (`DAIF = 0x0`; cores 1-7 have `DAIF = 0xc0`). EVENT is read on core 7 (it is a per-core view). Initial state: `TARGET_CPU[891] = 0`, masked, SW clear; four EVENT reads before the test: all 0.
+
+| step | action | result |
+|---|---|---|
+| T1 | masked, no SW | EVENT 0 |
+| T2 | `SW_SET` while masked | SW bit reads 1, still masked, EVENT **0**: a masked source does not deliver |
+| T3 | `MASK_CLR` | EVENT **`0x0001037b`** = die 0, type 1 (HW IRQ), number 891 |
+| T4 | after that EVENT read | **masked again** (the read masks the source); SW bit **still 1** |
+| T5 | EVENT again | 0 |
+| T6 | `MASK_CLR` again, SW still set | EVENT `0x0001037b` again: SW_SET is **level-like**, it re-fires until cleared |
+| T7 | `SW_CLR` | SW bit 0 |
+| T8 | `MASK_CLR` with nothing pending | EVENT **0**: no spurious event |
+| end | restore | `TARGET_CPU = 0`, masked, SW clear |
+
+- Settled: EVENT layout and auto-mask on read **[verified]**; EVENT does not clear SW_SET; MASK_SET / SW_SET reads return the current state; no spurious zero event in this sequence. Consequence for `pirq_aic.c`: a `sw_trigger` must be followed by `SW_CLR` when the event is taken (or at EOI), or the source fires again at every unmask.
+- Still open: whether a **hardware edge** pulse is latched while the source is masked (needs a real edge source, e.g. a PCIe MSI: E-HW1, #68).

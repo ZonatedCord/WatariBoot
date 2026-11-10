@@ -1,6 +1,6 @@
 # Watari Boot
 
-<p align="center"><img src="docs/img/logo.svg" alt="Watari Boot logo: pixel-art skull and crossbones in a neon ring" width="234"></p>
+<p align="center"><img src="docs/img/logo.svg" alt="Watari Boot logo: pixel-art torii gate in red and gold" width="234"></p>
 
 **渡 (watari): to cross over, to pass from one shore to the other.**
 
