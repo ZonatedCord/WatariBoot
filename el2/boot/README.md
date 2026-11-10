@@ -138,7 +138,7 @@ The real M1 differs from the QEMU spike in two ways that `-cpu max` (FEAT_VHE, 1
 | argument | meaning |
 |---|---|
 | `wel2.e2h=0\|1` | `HCR_EL2.E2H` the layer runs with. Written before the EL2 MMU is on, on **every** core in `s1_enable` (HCR_EL2 is per core). The value that reads back wins: on the M1 (bit stuck at 1) a request for 0 is logged as "stuck" and the layer runs with 1. |
-| `wel2.gran=4k\|16k` | translation granule of the EL2 stage 1 and of the guest stage 2. A granule the CPU lacks (`ID_AA64MMFR0_EL1.TGran4/TGran16`, `TGran4_2/TGran16_2`) falls back to the other one (logged). On the M1 `TGran4 = 0b1111`: 16 KB is the only choice. |
+| `wel2.gran=4k\|16k` | translation granule of the EL2 stage 1 and of the guest stage 2. A granule the CPU lacks (`ID_AA64MMFR0_EL1.TGran4/TGran16`, `TGran4_2/TGran16_2`) falls back to the other one (logged). On the M1 both 4 KB and 16 KB are supported (`ID_AA64MMFR0_EL1` = `0x000012120f100001`: TGran4 = 0, TGran16 = 1, TGran4_2 = TGran16_2 = 2, PARange 36 bits) **[verified: measured on j293 2026-11-10, `re/m3a-ehw0-measurements.md`]**; 16 KB stays the default. (An earlier version of this line said `TGran4 = 0b1111`: wrong.) |
 
 The boot log says what is in force: `stage-1 on (identity, 16 KB, 36-bit)`, `HCR_EL2.E2H = 1`, `stage-2 granule shift = 0xe`, `start level`, `tables used`.
 

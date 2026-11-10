@@ -12,6 +12,16 @@ Marking: **[verified: URL]** = read on that page while writing this document (20
 
 ---
 
+## First run, 2026-11-10: what differed from this text (read before running it again)
+Results: `re/m3a-ehw0-measurements.md`; diary `docs/sessions/2026-11-10-ciani-01.md`.
+- **DFU port:** the host saw the target only on the **left port nearest the hinge** (the farther one showed nothing). The DFU key sequence itself was not completed (the Mac ended in Startup Options); the DFU window was never seen, so the safety net is still unproven.
+- **`env.sh`:** the last line `[ -d venv ] && source ...` returned 1 without a venv and broke `source env.sh && ...` chains; fixed in 2.1.
+- **Free space:** installer v0.9.2 needs free space >= `MIN_FREE_OS` 38 GB + `MIN_INSTALL_FREE` 10 GB in the macOS container [verified: `main.py`]. Local Time Machine snapshots blocked it: `sudo tmutil deletelocalsnapshots /` after checking `tmutil latestbackup` freed ~50 GB.
+- **APFS corruption blocks the resize:** `fsck_apfs` found doc-id tree errors on the Data volume ("Storage system verify or repair failed", -69716). Disk Utility First Aid did **not** fix it; what worked, in 1TR Terminal: `diskutil apfs unlockVolume disk3s1 -nomount`, `diskutil unmountDisk disk3`, `fsck_apfs -y /dev/disk0s2`, then `fsck_apfs -n /dev/disk0s2` clean (disk numbers as seen in that recovery).
+- **Option A exists:** with `EXPERT=1 sh /tmp/alx.sh` the OS list has "Tethered boot (m1n1, for development)" (2.5 GB stub, no SIP/NVRAM change by hand). Exact wording of the UEFI option: "UEFI environment only (m1n1 + U-Boot + ESP)". The bootstrap script runs fine from a saved file; `/tmp` is emptied at every reboot, so re-download (sha256 of `alx.sh` on 2026-11-10: `4818f37e1a4f11c3aa2c09e8d66f8f8f308f3be2f903715d93c572ea7c22e754`).
+- **step2 in 1TR** asks to put the new volume (its own VGID) into Permissive Security, then an admin username and password.
+- **USB names** and **`m1n1.setup` writes the PMU**: see section 4, steps 2 and 5.
+
 ## 0. Instructions for Claude running on Ciani's Mac
 
 You (Claude Code) guide two people through this procedure. Read `CLAUDE.md` first and obey it. In addition:
@@ -85,7 +95,7 @@ export PYTHONPYCACHEPREFIX="$HOSTDIR/pyc"
 export PYTHONDONTWRITEBYTECODE=1
 export XDG_CACHE_HOME="$HOSTDIR/cache"
 export HISTFILE=/dev/null            # keep this session's commands out of ~/.zsh_history
-[ -d "$HOSTDIR/venv" ] && source "$HOSTDIR/venv/bin/activate"
+if [ -d "$HOSTDIR/venv" ]; then source "$HOSTDIR/venv/bin/activate"; fi
 ENVEOF
 echo "- ~/WatariBoot-host (whole folder), created $(date). Remove: rm -rf ~/WatariBoot-host" > ~/WatariBoot-host/INSTALLED-host.md
 ```
@@ -163,10 +173,10 @@ Decide with Marco (this choice touches NVRAM and security policy, so it needs hi
 ## 4. Connect and open the proxy (Ciani's Mac)
 
 1. Cable: C-to-C data cable from a Thunderbolt/USB-C port of the target to the host; charger on another target port; no hub.
-2. Host, read-only: `ls /dev/cu.usbmodem* 2>&1`. On macOS m1n1 appears as `/dev/cu.usbmodemP_01` and `/dev/cu.usbmodemP_03`; the first is the proxy interface, the second is reserved for the hypervisor's virtual UART **[verified: m1n1-user-guide]**. Exact names on this host: [check].
-3. `export M1N1DEVICE=/dev/cu.usbmodemP_01` (the doc says `M1N1DEVICE` selects the device **[verified]**), in the session or in `$HOSTDIR/env.sh` (inside the folder, fine).
+2. Host, read-only: `ls /dev/cu.usbmodem* 2>&1`. On macOS m1n1 appears as `/dev/cu.usbmodemP_01` and `/dev/cu.usbmodemP_03`; the first is the proxy interface, the second is reserved for the hypervisor's virtual UART **[verified: m1n1-user-guide]**. **On 2026-11-10 (m1n1 v1.6.1, macOS 27 host) the names were `/dev/cu.usbmodem<target serial>1` and `...3`** [verified: first run]; use `M1N1DEVICE=$(ls /dev/cu.usbmodem*1)` and never copy the serial into the repo.
+3. `export M1N1DEVICE=/dev/cu.usbmodemP_01` (or the name found in step 2) (the doc says `M1N1DEVICE` selects the device **[verified]**), in the session or in `$HOSTDIR/env.sh` (inside the folder, fine).
 4. Boot the target (Marco, picker, Asahi volume). In backdoor mode the 5-second window starts at boot and the host opening the device triggers proxy mode **[verified]**: the host must be ready. The tethered-boot page uses `proxyclient/tools/picocom-sec.sh` for the second port and needs `picocom` (another install): **skip it**, day 1 does not need the second port.
-5. Verify: in `$HOSTDIR/work/m1n1-main`, `python3 proxyclient/tools/shell.py` opens an interactive Python shell, exit with Ctrl-D **[verified: tethered-boot]**. For repeatability Claude writes the read-only script to `$HOSTDIR/work/ehw0.py` and runs it from that directory with the venv Python [check import path; do not use `python3 -I` here, it ignores `PYTHONPATH`]. No `chainload.py`, `linux.py`, `run_guest*.py` on day 1.
+5. **Do not use `shell.py` or `from m1n1.setup import *` on day 1: `m1n1/setup.py` calls `PMU(u).reset_panic_counter()`, an SPMI/I2C write to the PMU** [verified: m1n1 main 2026-11-10, `proxyclient/m1n1/setup.py` and `m1n1/hw/pmu.py`]. Use `tools/m3a/ehw0*.py`, which build `UartInterface` / `M1N1Proxy` / `bootstrap_port` / `ProxyUtils` themselves and skip that call; run them with the venv Python and `PYTHONPATH=$HOSTDIR/work/m1n1-main/proxyclient`. (Original text, for reference:) in `$HOSTDIR/work/m1n1-main`, `python3 proxyclient/tools/shell.py` opens an interactive Python shell, exit with Ctrl-D **[verified: tethered-boot]**. For repeatability Claude writes the read-only script to `$HOSTDIR/work/ehw0.py` and runs it from that directory with the venv Python [check import path; do not use `python3 -I` here, it ignores `PYTHONPATH`]. No `chainload.py`, `linux.py`, `run_guest*.py` on day 1.
 
 No `usbmodem` device: charge-only cable, wrong port, outside the 5-second window, or not a Thunderbolt port. Change nothing on the target; power off, retry; if still stuck, stop and record.
 

@@ -6,7 +6,9 @@
  * against tests/fake_aic.h and on the M1 against the real block (the boot path supplies
  * an accessor over the mapped AIC window; it is NOT wired in yet, QEMU has a GIC: M3a).
  *
- * Register map (AIC base 0x23b100000 on the t8103, window 0x8000). Every offset is a hardware
+ * Register map (AIC base 0x23b100000 on the t8103; the ADT gives reg[0] size 0xc000 and reg[1]
+ * 0x23b108000 size 0x1000, INFO = 0x000a0380, NR_IRQ 896: measured on j293 2026-11-10,
+ * re/m3a-ehw0-measurements.md; this header used to say window 0x8000). Every offset is a hardware
  * fact taken from public documentation only (Asahi Linux docs "Apple Interrupt Controller",
  * Linux DT binding apple,aic.yaml, our notes re/f0-m1-fiq-irq.md and re/f0-qemu-aic-models.md);
  * no driver code is copied. Status marks are per row:
