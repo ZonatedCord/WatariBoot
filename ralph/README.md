@@ -28,8 +28,8 @@ Ralph is Claude in a loop: at each iteration it receives the same prompt (`PROMP
 Ralph opens a PR `ralph/f0-gate-a → main`. A session with Opus is opened, which reviews the PR. Then a human approves and merges (squash).
 
 ## M3a night loop (2026-11-10)
-Prompt `ralph/PROMPT-m3a.md`, tasks `ralph/TASKS-m3a.md` (T1-T9: fixes from the day-1 measurements, design and code for the first M1 boot of the layer, day-2 procedure), log `ralph/PROGRESS-m3a.md`. Branch `ralph/m3a-night` (already created and pushed). Plug in the data disk for the QEMU/EDK2/Windows checks.
+Prompt `ralph/PROMPT-m3a.md`, tasks `ralph/TASKS-m3a.md` (T1-T16: fixes from the day-1 measurements, design and code for the first M1 boot of the layer, day-2 procedure, then ACPI/EDK2 for the M1, M3b research and free choice), log `ralph/PROGRESS-m3a.md`. Branch `ralph/m3a-night` (already created and pushed). Plug in the data disk for the QEMU/EDK2/Windows checks.
 ```
-/ralph-loop "Run the instructions in ralph/PROMPT-m3a.md" --completion-promise "RALPH STOP" --max-iterations 20
+/ralph-loop "Run the instructions in ralph/PROMPT-m3a.md" --completion-promise "RALPH STOP" --max-iterations 40
 ```
 If a usage limit stops the loop, start the same command again in the same session on the same branch: Ralph resumes from `TASKS-m3a.md`/`PROGRESS-m3a.md`.

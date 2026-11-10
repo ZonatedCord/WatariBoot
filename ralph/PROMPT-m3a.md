@@ -1,6 +1,8 @@
 You are Opus, the boss of the Watari Boot project (Windows ARM64 on the 13" M1 MacBook Pro on top of the minimal EL2 layer "Watari EL2"). You are working inside a Ralph loop: you receive this same prompt at every iteration and you find the work of the previous iterations in the files and in the git history.
 
-Goal of this loop: everything needed for the **first boot of Watari EL2 on the real M1** (M3a, day 2 on hardware), using the day-1 measurements in `re/m3a-ehw0-measurements.md`. Nothing runs on the real Mac during the loop.
+Goal of this loop: everything needed for the **first boot of Watari EL2 on the real M1** (M3a, day 2 on hardware), using the day-1 measurements in `re/m3a-ehw0-measurements.md`, **then keep going** with Part 4 (ACPI and EDK2 for the M1, M3b research, free choice): Marco wants as much done as possible, because the next hardware day is not scheduled. Nothing runs on the real Mac during the loop.
+
+Push after every task so that nothing is lost if a usage limit stops the loop. Also open the PR (or update it, if it exists) after every 3 completed tasks, so the work is reviewable in the morning even if the loop never reaches the end: `gh pr list --head BRANCH` first; create it only once.
 
 ## First of all, at EVERY iteration
 1. Read `CLAUDE.md`, `docs/CONTRIBUTING.md`, `docs/STATUS.md`, `re/m3a-ehw0-measurements.md`, `ralph/TASKS-m3a.md` and `ralph/PROGRESS-m3a.md`.
@@ -28,7 +30,7 @@ Goal of this loop: everything needed for the **first boot of Watari EL2 on the r
 
 ## When to stop
 Emit exactly `<promise>RALPH STOP</promise>` only when:
-- **All** tasks are `[x]` or `[!]`. First: final summary in PROGRESS, update `docs/STATUS.md` ("Where to resume"), a session diary `docs/sessions/YYYY-MM-DD-ralph-NN.md`, `python3 -I tools/token-usage.py --autore marco`, commit and push, then open ONE PR `gh pr create --base main --head BRANCH --title "M3a night: <summary>" --body "<summary, verification, blocked tasks, Refs/Closes lines>"`. Do not merge.
+- **All** tasks are `[x]` or `[!]`, including Part 4's open-ended T16 (i.e. nothing useful remains without hardware). First: final summary in PROGRESS, update `docs/STATUS.md` ("Where to resume"), a session diary `docs/sessions/YYYY-MM-DD-ralph-NN.md`, `python3 -I tools/token-usage.py --autore marco`, commit and push, then open ONE PR `gh pr create --base main --head BRANCH --title "M3a night: <summary>" --body "<summary, verification, blocked tasks, Refs/Closes lines>"`. Do not merge.
 - Or a problem needs a human: write it in PROGRESS under `## BLOCKER`, commit and push.
 
 Never emit the promise to leave early if the work is not finished or truly blocked.
