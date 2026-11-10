@@ -20,9 +20,14 @@
 #ifndef WEL2_COREIDX_H
 #define WEL2_COREIDX_H
 
+/* Stack geometry: the one place; start.S (preprocessed) and linker.ld (ASSERT) follow it. */
+#define WEL2_NSTACKS      8
+#define WEL2_STACK_SHIFT  14
+#define WEL2_STACK_SIZE   (1 << WEL2_STACK_SHIFT)
+
+#ifndef __ASSEMBLER__
 #include <stdint.h>
 
-#define WEL2_NSTACKS      8u
 #define WEL2_CORE_INVALID (~0u)
 
 static inline unsigned wel2_core_index(uint64_t mpidr)
@@ -36,5 +41,6 @@ static inline unsigned wel2_core_index(uint64_t mpidr)
 		return WEL2_CORE_INVALID;
 	return aff1 * 4 + aff0;
 }
+#endif /* __ASSEMBLER__ */
 
 #endif

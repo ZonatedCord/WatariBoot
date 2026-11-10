@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include "wel2_coreidx.h"
 // Watari EL2 M0-C: entry, arm64 Image header, EL2 exception vectors.
 // Written from the Arm Architecture Reference Manual (ARMv8-A) and the Linux
 // arm64 boot protocol document (header layout only).
@@ -28,7 +29,7 @@ reset:
     // x0 (the FDT address QEMU passes) stays untouched until el2_main(fdt)
 
     ldr     x1, =__el2_stacks       // core 0 uses the first 16 KB stack
-    add     x1, x1, #0x4000
+    add     x1, x1, #WEL2_STACK_SIZE
     mov     sp, x1
 
     // Zero .bss
@@ -51,7 +52,7 @@ reset:
     lsl     x3, x3, x2              // data cache line size in bytes
     ldr     x1, =__bss_start
     ldr     x4, =__el2_stacks
-    add     x4, x4, #0x20000        // 8 stacks of 16 KB
+    add     x4, x4, #(WEL2_NSTACKS * WEL2_STACK_SIZE)
     sub     x5, x3, #1
     bic     x1, x1, x5
 3:  dc      ivac, x1
@@ -79,7 +80,8 @@ park:
 // Stack: 16 KB slot selected like wel2_core_index() (include/wel2_coreidx.h; keep the formula identical):
 //   idx = Aff1*4 + Aff0, valid iff Aff0 < 4, Aff1 < 2, Aff2 == Aff1, Aff3 == 0.
 // A core outside that range must not touch a stack: it records its MPIDR (bit 63 set) in g_bad_mpidr
-// (best effort; the boot core reports it on the next CPU_ON) and parks.
+// (best effort: written with MMU/caches off, so the reader must invalidate its line first; the boot core
+// reports it at the next CPU_ON) and parks.
     .text
     .global secondary_entry
 secondary_entry:
@@ -102,7 +104,7 @@ secondary_entry:
     add     x1, x2, x3, lsl #2      // idx = Aff0 + 4*Aff1 (0..7)
     ldr     x2, =__el2_stacks
     add     x1, x1, #1
-    lsl     x1, x1, #14             // (idx + 1) * 0x4000
+    lsl     x1, x1, #WEL2_STACK_SHIFT   // (idx + 1) * WEL2_STACK_SIZE
     add     sp, x2, x1
     ldr     x1, =el2_vectors
     msr     vbar_el2, x1
@@ -119,11 +121,14 @@ bad_core:
     dsb     sy
     b       park
 
+    // Own cache-line-sized slot (128 B covers the M1's line [hypothesis: 128 B] and 64 B parts) so that
+    // invalidating it never discards neighbouring data.
     .bss
-    .balign 8
+    .balign 128
     .global g_bad_mpidr
 g_bad_mpidr:
     .quad   0
+    .skip   120
     .text
 
 // s1_enable: HCR_EL2.E2H, then MAIR/TCR/TTBR0_EL2 from g_s1 (stage1.c), invalidate TLB + I-cache, then

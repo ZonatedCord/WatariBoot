@@ -61,8 +61,22 @@ void psci_system_off(void)
     fatal_msg("SYSTEM_OFF returned");
 }
 
+/* A core that start.S parked (no valid stack slot) wrote g_bad_mpidr with its caches off: drop our line first.
+ * Report once, then clear and clean the line so the next report starts from 0. */
+static void report_bad_core(void)
+{
+    __asm__ volatile("dc ivac, %0; dsb sy" : : "r"(&g_bad_mpidr) : "memory");
+    uint64_t v = g_bad_mpidr;
+    if (!v)
+        return;
+    put_kv("Watari EL2: a core parked without a stack slot, MPIDR|bit63 = ", v);
+    g_bad_mpidr = 0;
+    __asm__ volatile("dc civac, %0; dsb sy" : : "r"(&g_bad_mpidr) : "memory");
+}
+
 static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
 {
+    report_bad_core();
     if (!is64) {                                   /* SMC32 convention: 32-bit args */
         target &= 0xffffffffULL;
         entry &= 0xffffffffULL;
@@ -76,8 +90,6 @@ static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
     /* The core needs an EL2 stack slot (wel2_core_index, start.S): refuse before powering it on. */
     if (wel2_core_index(target) == WEL2_CORE_INVALID)
         return PSCI_INVALID_PARAMETERS;
-    if (g_bad_mpidr)
-        put_kv("Watari EL2: a core parked without a stack slot, MPIDR|bit63 = ", g_bad_mpidr);
     /* Entry point: a 4-byte aligned address inside guest RAM, else the
      * implementation knows it is unavailable to the caller (5.6.2). */
     if ((entry & 3) || entry < GUEST_RAM_BASE || entry >= g_ram_end)

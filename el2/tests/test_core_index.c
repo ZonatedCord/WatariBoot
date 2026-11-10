@@ -38,7 +38,6 @@ static void m1_all(void)
 
 static void out_of_range(void)
 {
-	CHECK_EQ(wel2_core_index(0x80000004ull), WEL2_CORE_INVALID);   /* Aff0 >= 4 */
 	CHECK_EQ(wel2_core_index(0x80010104ull), WEL2_CORE_INVALID);   /* Aff0 >= 4, P cluster */
 	CHECK_EQ(wel2_core_index(0x80020200ull), WEL2_CORE_INVALID);   /* Aff1 = Aff2 = 2 */
 	CHECK_EQ(wel2_core_index(0x80000200ull), WEL2_CORE_INVALID);   /* Aff1 = 2, Aff2 = 0 */
@@ -50,11 +49,33 @@ static void out_of_range(void)
 	CHECK_EQ(wel2_core_index(0xffull), WEL2_CORE_INVALID);
 }
 
+/* Bits [63:40] are not affinity fields and are ignored. */
+static void high_bits_ignored(void)
+{
+	CHECK_EQ(wel2_core_index(0xffffff0000000000ull | 0x80010102ull), 6);
+	CHECK_EQ(wel2_core_index(0xffffff0000000000ull | 0x80000003ull), 3);
+	CHECK_EQ(wel2_core_index(0xffffff0000000000ull | 0x80000004ull), WEL2_CORE_INVALID);
+}
+
+/* Exhaustive against the spec predicate, with Aff3 = 0. */
+static void exhaustive(void)
+{
+	for (unsigned a2 = 0; a2 < 4; a2++)
+		for (unsigned a1 = 0; a1 < 4; a1++)
+			for (unsigned a0 = 0; a0 < 256; a0++) {
+				uint64_t m = 0x80000000ull | (uint64_t)a2 << 16 | (uint64_t)a1 << 8 | a0;
+				int ok = a0 < 4 && a1 < 2 && a2 == a1;
+				CHECK_EQ(wel2_core_index(m), ok ? a1 * 4 + a0 : WEL2_CORE_INVALID);
+			}
+}
+
 int main(void)
 {
 	RUN(qemu_plain);
 	RUN(qemu_with_res1);
 	RUN(m1_all);
 	RUN(out_of_range);
+	RUN(high_bits_ignored);
+	RUN(exhaustive);
 	TESTS_DONE();
 }

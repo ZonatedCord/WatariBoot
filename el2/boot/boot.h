@@ -3,6 +3,7 @@
 #ifndef WEL2_BOOT_H
 #define WEL2_BOOT_H
 
+#include "wel2_coreidx.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include "wel2_vgic.h"
@@ -14,6 +15,7 @@
 #define GICR_PHYS   0x080A0000UL   /* redistributor frame of CPU 0 (RD_base) */
 #define GICR_STRIDE 0x20000UL      /* RD_base + SGI_base frames */
 #define MAX_CPUS    VGIC_MAX_VCPUS
+_Static_assert(MAX_CPUS == WEL2_NSTACKS, "one EL2 stack slot per vCPU/core (wel2_coreidx.h)");
 /* Guest RAM (QEMU virt, up to -m 2G) and, in the M1-4 chain build, the part of it
  * the layer keeps for itself: the first WEL2_CARVE_SIZE of RAM, cut off the FDT
  * /memory node (INTERFACES 3.2). Inside it, [RAM base, layer image) is the FDT
@@ -116,7 +118,8 @@ void     gic_phys_kick(unsigned cpu);        /* physical SGI_KICK to another cor
 void     gic_phys_spi_enable(uint32_t intid, bool on);
 void     gic_phys_spi_route(uint32_t intid, int vcpu);
 void     gic_phys_spi_trigger(uint32_t intid, bool edge);
-extern volatile uint64_t g_bad_mpidr;           /* MPIDR|bit63 of a core parked by start.S bad_core, else 0 */
+extern volatile uint64_t g_bad_mpidr;           /* MPIDR|bit63 of a core parked by start.S bad_core, else 0; written
+                                                 * with caches off: read it via psci.c report_bad_core() */
 unsigned cpu_from_mpidr(uint64_t mpidr);     /* index into g_pcpu, or ~0u */
 
 /* pirq_qemu.c: SPI policy (wel2_pirq.h) on the QEMU physical GICv3. */

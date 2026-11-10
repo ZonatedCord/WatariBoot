@@ -13,7 +13,7 @@ PAYLOAD_OBJS ?= $(OUT)/payload_s.o $(OUT)/payload.o
 CFLAGS := -I../include --target=aarch64-none-elf -std=c11 -Wall -Wextra -Werror -O2 -g \
           -ffreestanding -nostdlib -mgeneral-regs-only -fno-pic -fno-stack-protector \
           -mno-outline-atomics -fno-builtin $(XFLAGS)
-ASFLAGS := --target=aarch64-none-elf -g
+ASFLAGS := --target=aarch64-none-elf -g -I../include
 
 OBJS := $(OUT)/start.o $(OUT)/util.o $(OUT)/stage1.o $(OUT)/main.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o \
         $(OUT)/pirq_qemu.o $(OUT)/fdt.o $(OUT)/vgic.o $(OUT)/vcif.o $(OUT)/intr_map.o $(OUT)/pirq.o $(OUT)/pirq_aic.o $(OUT)/ram_map.o $(OUT)/pt.o $(OUT)/maps.o $(PAYLOAD_OBJS)
@@ -29,7 +29,7 @@ all: build/wel2.bin
 chain:
 	$(MAKE) OUT=build-chain XFLAGS=-DWEL2_CHAIN=1 PAYLOAD_OBJS= build-chain/wel2.bin
 
-$(OUT)/%.o: %.c boot.h fdt.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_ram.h ../include/wel2_aic.h | $(OUT)
+$(OUT)/%.o: %.c boot.h fdt.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_ram.h ../include/wel2_aic.h ../include/wel2_coreidx.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/vgic.o: ../vgic/vgic.c ../include/wel2_vgic.h | $(OUT)
@@ -56,7 +56,7 @@ $(OUT)/pt.o: ../vgic/pt.c ../include/wel2_pt.h | $(OUT)
 $(OUT)/maps.o: ../vgic/maps.c ../include/wel2_maps.h ../include/wel2_pt.h ../include/wel2_ram.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(OUT)/%.o: %.S | $(OUT)
+$(OUT)/%.o: %.S ../include/wel2_coreidx.h | $(OUT)
 	$(CC) $(ASFLAGS) -c $< -o $@
 
 $(OUT)/payload_s.o: payload.S | $(OUT)

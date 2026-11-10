@@ -23,6 +23,7 @@ SECTIONS
     __image_size = __image_end - __image_start;
     __el2_stacks = .;              /* 8 x 16 KB EL2 stacks, slot = wel2_core_index(MPIDR), see start.S */
     . += 0x4000 * 8;
+    ASSERT(. - __el2_stacks == 8 * 0x4000, "stack area must be WEL2_NSTACKS * WEL2_STACK_SIZE (include/wel2_coreidx.h)")
     . += 0x4000;
     __el1_stack_top = .;
     ASSERT(. <= 0x40200000, "Watari EL2 image and stacks must fit the first 2 MB of RAM (stage1.c)")
