@@ -38,6 +38,26 @@ static int map_clamped(struct wel2_pt *pt, uint64_t lo, uint64_t hi, uint64_t at
 	return wel2_pt_map(pt, lo, lo, hi - lo, attrs);
 }
 
+int wel2_s1_map_device(struct wel2_pt *pt, const struct wel2_ram *ram, uint64_t base, uint64_t size, bool e2h)
+{
+	uint64_t g = 1ULL << pt->gshift;
+	uint64_t lo = base & ~(g - 1), hi = (base + size + g - 1) & ~(g - 1);
+	uint64_t ap1 = e2h ? 0 : S1_AP1;
+	uint64_t xn = e2h ? (S1_XN | S1_PXN) : S1_XN;
+
+	if (size == 0 || hi <= lo)
+		return 0;
+	if (hi > (1ULL << pt->va_bits))
+		return -1;
+	if (lo < ram->base)                         /* [0, RAM base) is Device already: drop the part below */
+		lo = ram->base;
+	if (hi <= lo)
+		return 0;
+	if (lo < ram->end)                          /* overlaps the RAM map: a device must not sit in RAM */
+		return -1;
+	return map_clamped(pt, lo, hi, S1_AF | S1_ATTR(S1_ATTR_DEV) | ap1 | xn);
+}
+
 int wel2_s1_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_s1_layout *l, bool e2h)
 {
 	uint64_t ap1 = e2h ? 0 : S1_AP1;

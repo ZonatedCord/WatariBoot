@@ -20,7 +20,7 @@
 /* Table pools (bytes), enough for the QEMU virt maps with either granule (test_pt.c prints the real use):
  * stage 2 with 16 KB needs a level-2 table per 64 GB of the 1 TB device window, stage 1 three tables. */
 #define WEL2_S1_POOL_BYTES  (8u * 16384u)
-#define WEL2_S2_POOL_BYTES  (24u * 16384u)
+#define WEL2_S2_POOL_BYTES  (32u * 16384u)
 
 struct wel2_range {
 	uint64_t base, size;
@@ -36,6 +36,12 @@ struct wel2_s1_layout {
 /* e2h selects the descriptor bits of the EL2&0 regime (AP[1] = 0, UXN + PXN) instead of the EL2 regime
  * (AP[1] = RES1, XN). 0, or -1 on bad arguments / pool exhausted. */
 int wel2_s1_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_s1_layout *l, bool e2h);
+
+/* Maps the device window [base, base+size) (rounded outwards to the granule) Device-nGnRnE XN in the EL2 stage 1
+ * when it lies above the RAM (on the M1 the console UART is below the RAM, already covered by [0, RAM base): then
+ * nothing is added). The part of the window below RAM base is dropped; a window overlapping the RAM range is
+ * refused. Call after wel2_s1_build. 0, or -1 (overlaps RAM, pool exhausted, beyond the input range). */
+int wel2_s1_map_device(struct wel2_pt *pt, const struct wel2_ram *ram, uint64_t base, uint64_t size, bool e2h);
 
 /* Add [base, base+size) to holes[0..*n) (capacity cap) for the granule 1 << gshift. The range is rounded
  * OUTWARDS to the granule (a stage-2 hole cannot be smaller than a page; the guest losing the rest of that page is
