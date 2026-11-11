@@ -74,9 +74,32 @@ void con_select_s5l(uint64_t base)
     };
 }
 
+/* ---- Framebuffer mirror (T5b) -------------------------------------------------------------------------------
+ * g_fb stays all-zero (format NONE) unless stage1_build found /chosen/framebuffer@* in the FDT; then every byte that
+ * goes to the UART is also drawn as text, and checkpoint() paints the squares of the boot stages. Aligned 32-bit
+ * stores only (fb.c), so all of it works with the MMU off too. */
+struct wel2_fb g_fb;
+
+void checkpoint(unsigned n)
+{
+    wel2_fb_checkpoint(&g_fb, n, WEL2_RGB_GREEN);
+}
+
+/* state: 0 running (amber), 1 pass (green), anything else fail (red) */
+void checkpoint_state(unsigned n, unsigned state)
+{
+    wel2_fb_checkpoint(&g_fb, n, state == 0 ? WEL2_RGB_AMBER : state == 1 ? WEL2_RGB_GREEN : WEL2_RGB_RED);
+}
+
+void checkpoint_fail(void)
+{
+    wel2_fb_checkpoint_fail(&g_fb);
+}
+
 void putc_(char c)
 {
     wel2_uart_putc(&g_con, (uint8_t)c);
+    wel2_fb_putc(&g_fb, c);
 }
 
 void puts_(const char *s)
@@ -84,6 +107,7 @@ void puts_(const char *s)
     bool got = spin_lock(&g_uart, 1UL << 24);
 
     wel2_uart_puts(&g_con, s);
+    wel2_fb_puts(&g_fb, s);
     if (got)
         spin_unlock(&g_uart);
 }

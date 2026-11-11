@@ -68,7 +68,7 @@ struct s1_regs {
 };
 struct s1_regs g_s1;
 
-#define MAIR_VALUE  0xff00ULL        /* Attr0 = 0x00 Device-nGnRnE, Attr1 = 0xff Normal WB RW allocate */
+#define MAIR_VALUE  WEL2_MAIR_EL2_VALUE   /* Attr0 Device-nGnRnE, Attr1 Normal WB RW allocate, Attr2 Normal NC (framebuffer) */
 #define HCR_E2H_BIT (1ULL << 34)
 
 static uint8_t s1_pool[WEL2_S1_POOL_BYTES] __attribute__((aligned(16384)));
@@ -166,6 +166,12 @@ void stage1_build(uint64_t fdt)
         g_con_s5l_size = uart.size ? uart.size : 0x1000;
     }
 
+    /* Framebuffer (T5b): /chosen/framebuffer@* of the loader's FDT. Found = putc_/puts_ mirror to it and checkpoint()
+     * can paint (all with aligned 32-bit stores, so this works with the MMU off). None (QEMU): g_fb stays zero and
+     * every call is a no-op. The stage-1 mapping (Normal non-cacheable) follows with the other maps below. */
+    if (fdt && !(fdt & 7) && !fdt_check((void *)fdt))
+        fdt_get_framebuffer((void *)fdt, &g_fb);
+
     /* Options from /chosen/bootargs (QEMU -append); the FDT is read-only here and the MMU is off. */
     args[0] = 0;
     if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) && fdt_get_bootargs((void *)fdt, args, sizeof(args)) >= 0) {
@@ -234,6 +240,15 @@ void stage1_build(uint64_t fdt)
         s1_msg("Watari EL2: WARNING: the S5L UART window does not fit the stage-1 map, console back on the PL011\n");
     }
 
+    /* The framebuffer: above the RAM on the M1 (0x9e2570000 vs the RAM top 0x9df610000), mapped Normal non-cacheable
+     * (MAIR Attr2). A framebuffer the map cannot take (inside the RAM, beyond the input range, pool full) is
+     * switched off: drawing into unmapped or cacheable memory would fault or never reach the panel. */
+    if (g_fb.fmt && wel2_s1_map_fb(&s1_pt, &ram, g_fb.base, wel2_fb_bytes(&g_fb), g_e2h)) {
+        g_fb = (struct wel2_fb){ 0 };
+        g_fb.cp = -1;
+        s1_msg("Watari EL2: WARNING: the framebuffer does not fit the stage-1 map, no framebuffer output\n");
+    }
+
     /* TCR_EL2 physical size = min(PARange, 40 bit). */
     uint64_t parange = mmfr0 & 0xf, ps = parange < 2 ? parange : 2;
 
@@ -246,6 +261,7 @@ void stage1_build(uint64_t fdt)
     clean_inval(s1_pool, (unsigned long)s1_pt.used << g_gran);
     clean_inval(&g_s1, sizeof(g_s1));
     clean_inval(&g_con, sizeof(g_con));
+    clean_inval(&g_fb, sizeof(g_fb));
     clean_inval(&g_con_s5l_base, sizeof(g_con_s5l_base));
     clean_inval(&g_con_s5l_size, sizeof(g_con_s5l_size));
     clean_inval(&g_layer_base, sizeof(g_layer_base));

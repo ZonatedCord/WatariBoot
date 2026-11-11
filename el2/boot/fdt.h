@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "wel2_ram.h"
+#include "wel2_fb.h"
 
 struct fdt_patch_info {
     bool mem_found, mem_patched;
@@ -62,6 +63,11 @@ struct fdt_reg_info {
 };
 #define FDT_COMPAT_S5L_UART "apple,s5l-uart"
 int fdt_find_compatible_reg(void *fdt, const char *compat, struct fdt_reg_info *info);
+
+/* The simple-framebuffer node /chosen/framebuffer@* (see fdt.c) into *fb (wel2_fb_setup: geometry validated, console
+ * state initialised). 0 = blob walked (fb->fmt != WEL2_FB_NONE tells whether a usable node was there), -1 = malformed
+ * blob (fb zeroed). Reads only the node's own properties; safe with the MMU off (-mstrict-align). */
+int fdt_get_framebuffer(void *fdt, struct wel2_fb *fb);
 
 /* /chosen/bootargs (QEMU -append) copied into out (NUL-terminated, truncated to max-1).
  * Returns the string length, or -1 if there is none or the blob is malformed. */

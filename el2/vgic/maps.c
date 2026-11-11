@@ -8,11 +8,13 @@
 #define S1_AP1       (1ULL << 6)       /* AP[1]: RES1 in the EL2 regime, EL0 access in EL2&0 (left clear) */
 #define S1_AP_RO     (1ULL << 7)
 #define S1_SH_ISH    (3ULL << 8)
+#define S1_SH_OSH    (2ULL << 8)
 #define S1_AF        (1ULL << 10)
 #define S1_XN        (1ULL << 54)      /* EL2 regime: XN; EL2&0: UXN */
 #define S1_PXN       (1ULL << 53)      /* EL2&0 only */
 #define S1_ATTR_DEV    0               /* MAIR_EL2 Attr0 = 0x00: Device-nGnRnE */
-#define S1_ATTR_NORMAL 1               /* MAIR_EL2 Attr1 = 0xff: Normal, Inner+Outer WB, RW allocate */
+#define S1_ATTR_NC     WEL2_S1_ATTR_NC /* MAIR_EL2 Attr2 = 0x44: Normal, Inner+Outer Non-cacheable */
+#define S1_ATTR_NORMAL 1              /* MAIR_EL2 Attr1 = 0xff: Normal, Inner+Outer WB, RW allocate */
 
 /* Stage 2: MemAttr[5:2], S2AP[7:6], SH[9:8], AF[10]; XN[54]. */
 #define S2_AF        (1ULL << 10)
@@ -56,6 +58,25 @@ int wel2_s1_map_device(struct wel2_pt *pt, const struct wel2_ram *ram, uint64_t 
 	if (lo < ram->end)                          /* overlaps the RAM map: a device must not sit in RAM */
 		return -1;
 	return map_clamped(pt, lo, hi, S1_AF | S1_ATTR(S1_ATTR_DEV) | ap1 | xn);
+}
+
+int wel2_s1_map_fb(struct wel2_pt *pt, const struct wel2_ram *ram, uint64_t base, uint64_t size, bool e2h)
+{
+	uint64_t g = 1ULL << pt->gshift;
+	uint64_t lo = base & ~(g - 1), hi = (base + size + g - 1) & ~(g - 1);
+	uint64_t ap1 = e2h ? 0 : S1_AP1;
+	uint64_t xn = e2h ? (S1_XN | S1_PXN) : S1_XN;
+
+	if (size == 0 || hi <= lo || hi < base)
+		return -1;
+	if (hi > (1ULL << pt->va_bits))
+		return -1;
+	if (lo < ram->end)                          /* inside the RAM map (cacheable), or below RAM base where the
+						 * Device map of [0, RAM base) would be remapped: refused */
+		return -1;
+	/* Normal non-cacheable (S1_ATTR_NC); for Non-cacheable memory the shareability field is ignored by the
+	 * hardware (treated as Outer Shareable), set to Outer Shareable (0b10) for clarity. */
+	return map_clamped(pt, lo, hi, S1_AF | S1_SH_OSH | S1_ATTR(S1_ATTR_NC) | ap1 | xn);
 }
 
 int wel2_s1_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_s1_layout *l, bool e2h)
