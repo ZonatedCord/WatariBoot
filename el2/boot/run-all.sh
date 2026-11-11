@@ -19,7 +19,7 @@ run() {   # name, env assignments..., script
 }
 make -s -C .. test >/tmp/wel2-run-all.$$ 2>&1 && echo "PASS  host tests (make -C el2 test)" || { echo "FAIL  host tests"; tail -20 /tmp/wel2-run-all.$$; fail=1; }
 for mode in hw trap; do
-    for t in run-qemu run-m1 run-m1-2 run-m1-3 run-m1-5; do
+    for t in run-qemu run-m1 run-m1-2 run-m1-3 run-m1-5 run-m1guest; do
         run "$t [$mode]" CPUIF=$mode ./$t.sh
     done
     run "run-m1-5 [$mode, noeoi]" CPUIF=$mode NOEOI=1 ./run-m1-5.sh
