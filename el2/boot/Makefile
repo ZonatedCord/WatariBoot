@@ -89,6 +89,13 @@ $(OUT):
 check:
 	$(MAKE) -s all
 	$(MAKE) -s chain
+	$(MAKE) -s build/fdt_m1.o
+
+# T6b: fdt_m1.c is not linked into the image yet (TODO(T6c): the platform switch calls it). It is compiled here with
+# the layer's flags (-mstrict-align, -fno-builtin, no libc) so it stays MMU-off safe.
+build/fdt_m1.o: fdt_m1.c fdt_m1.h fdt.h ../include/wel2_fb.h | build
+	$(CC) $(CFLAGS) -mstrict-align -c $< -o $@
+	@if $(LLVM)/llvm-nm $@ | grep -E ' U (memcpy|memset|memcmp|strlen)$$'; then echo "fdt_m1.o needs libc"; exit 1; fi
 
 clean:
 	rm -rf build build-chain

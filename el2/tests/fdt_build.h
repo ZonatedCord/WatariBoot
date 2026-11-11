@@ -8,10 +8,12 @@
 #include <string.h>
 
 struct fdtb {
-	uint8_t buf[4096];
+	uint8_t buf[8192];
 	uint32_t st, st_len;            /* structure block offset and length (bytes) */
 	char strs[1024];
 	uint32_t str_len;
+	uint64_t rsv[8][2];             /* memory reservation entries (fb_init_rsv reserves room for them) */
+	unsigned nrsv, rsv_cap;
 };
 
 static inline void fb_put32(uint8_t *p, uint32_t v)
@@ -37,6 +39,21 @@ static inline void fb_init(struct fdtb *b)
 {
 	memset(b, 0, sizeof(*b));
 	b->st = 64;                     /* header (40) + empty reservation map (16 zero bytes), 8-aligned */
+}
+
+/* As fb_init, with room for `cap` (<= 8) /memreserve/ entries, added with fb_rsv before fb_finish. */
+static inline void fb_init_rsv(struct fdtb *b, unsigned cap)
+{
+	fb_init(b);
+	b->rsv_cap = cap;
+	b->st = (40 + 16 * (cap + 1) + 7) & ~7u;
+}
+
+static inline void fb_rsv(struct fdtb *b, uint64_t addr, uint64_t size)
+{
+	b->rsv[b->nrsv][0] = addr;
+	b->rsv[b->nrsv][1] = size;
+	b->nrsv++;
 }
 
 static inline void fb_begin(struct fdtb *b, const char *name)
@@ -88,6 +105,36 @@ static inline void fb_reg(struct fdtb *b, unsigned ac, unsigned sc, uint64_t add
 	fb_prop(b, "reg", t, n);
 }
 
+/* reg with several pairs */
+static inline void fb_regs(struct fdtb *b, unsigned ac, unsigned sc, unsigned n, const uint64_t (*pairs)[2])
+{
+	uint8_t t[256];
+	uint32_t o = 0;
+
+	for (unsigned k = 0; k < n; k++) {
+		for (unsigned i = 0; i < ac; i++, o += 4)
+			fb_put32(t + o, (uint32_t)(pairs[k][0] >> (32 * (ac - 1 - i))));
+		for (unsigned i = 0; i < sc; i++, o += 4)
+			fb_put32(t + o, (uint32_t)(pairs[k][1] >> (32 * (sc - 1 - i))));
+	}
+	fb_prop(b, "reg", t, o);
+}
+
+static inline void fb_str(struct fdtb *b, const char *name, const char *v)
+{
+	fb_prop(b, name, v, (uint32_t)strlen(v) + 1);
+}
+
+/* 64-bit value as two cells */
+static inline void fb_u64(struct fdtb *b, const char *name, uint64_t v)
+{
+	uint8_t t[8];
+
+	fb_put32(t, (uint32_t)(v >> 32));
+	fb_put32(t + 4, (uint32_t)v);
+	fb_prop(b, name, t, 8);
+}
+
 /* `list` is a NUL-separated list with the final NUL included in `len` ("a\0b\0"). */
 static inline void fb_strs(struct fdtb *b, const char *name, const char *list, uint32_t len)
 {
@@ -107,6 +154,12 @@ static inline void *fb_finish(struct fdtb *b)
 	fb_put32(b->buf + 8, b->st);
 	fb_put32(b->buf + 12, str_off);
 	fb_put32(b->buf + 16, 40);
+	for (unsigned i = 0; i < b->nrsv; i++) {
+		fb_put32(b->buf + 40 + 16 * i, (uint32_t)(b->rsv[i][0] >> 32));
+		fb_put32(b->buf + 44 + 16 * i, (uint32_t)b->rsv[i][0]);
+		fb_put32(b->buf + 48 + 16 * i, (uint32_t)(b->rsv[i][1] >> 32));
+		fb_put32(b->buf + 52 + 16 * i, (uint32_t)b->rsv[i][1]);
+	}
 	fb_put32(b->buf + 20, 17);
 	fb_put32(b->buf + 24, 16);
 	fb_put32(b->buf + 28, 0);
