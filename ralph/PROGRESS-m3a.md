@@ -34,3 +34,19 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Review (Sonnet): no blocking defects; offsets checked against m1n1 v1.6.1; no-copy rule respected. Notes carried to T6b: a property-less parent node leaves stale #address-cells/#size-cells; the first s5l node is taken, ignoring `status`, `/chosen/stdout-path` and the `serial0` alias.
 - Opus verified: `make -C el2 test` ALL PASSED (test_uart_s5l 8 tests / 64 checks); `run-all.sh` 15/15 both configs; Windows boot TAG=t5 (see next entry if it fails).
 - Open: TXBE semantics on the real UART are a [hypothesis] until day 2; the static `g_con` function pointers need relocation in T6a (PIE).
+
+### 2026-11-11 09:30 - T6a Position-independent image: done
+- Commits: 17a7aa7, 7b3792c. Layer linked at 0 as a PIE, self-relocating in `start.S` (41 `R_AARCH64_RELATIVE`, any other type parks), `adr_l` instead of every `ldr =sym`, `DC IVAC` over the whole block with the line size from CTR_EL0, run-time `g_layer_base`/`g_carve_base`/`g_carve_size`, `check-pie.sh` after every link, distinct early park codes `0xBAD0000n` in x0 (README), run-time fit check of the layer in its carve-out, per-core IVAC in `secondary_entry` [hypothesis: insurance].
+- Review (Fable): no blocking defects (relocation loop, IVAC order and range, secondaries, Image header checked on the disassembly). Fixes applied in 7b3792c.
+- Opus verified: `make -C el2 test` ALL PASSED; `run-all.sh` 15/15 both configs; `run-moved.sh` (same binary at 0x40100000) PASS; Windows boot TAG=t6a-t5b desktop reached.
+- Open: the run-time layout is still QEMU-shaped (2 MB carve, `ram.base == g_carve_base`): T6c must do the M1 32 MB block. The layer alone must NOT be taken to the Mac yet. The Makefile does not rebuild when only flags change: `make -C el2/boot clean` after a merge that changes flags (one false `make test` failure seen).
+
+### 2026-11-11 09:30 - T5b Framebuffer output: done
+- Commits: fe5d8e8, 4281fa4. `/chosen/framebuffer@*` (simple-framebuffer) parsed MMU-off, formats x8r8g8b8 and x2r10g10b10 [verified: m1n1 v1.6.1 kboot.c dt_set_fb], original 5x7 font, text console mirrored from `putc_`/`puts_`, `checkpoint(n)` squares usable with the MMU off, `fatal()` paints the current square red, stage-1 map Normal non-cacheable (MAIR Attr2 0x44), stage-2 hole (the guest never sees the fb).
+- Review (Sonnet): no blocking defects; fixes (reg size check, `dsb st`, bounded property names, strict status) in 4281fa4.
+- Opus verified: tests and run-all 15/15 both configs after the merge (Makefile/README conflict with T6a resolved by Opus); Windows boot TAG=t6a-t5b desktop reached.
+- Open: whether the panel keeps the drawing after m1n1's `fb_shutdown` is a [hypothesis] until day 2; EDK2 GOP later needs an explicit fb hand-over (T11).
+
+### 2026-11-11 09:30 - Stop for today (Marco)
+- T6b was started but its agent hit the usage limit before committing anything; it is still `[ ]`. Next: T6b, T6c, T6d, T6e, T6f, T6g, T7, T8, then Part 3/4.
+- The Ralph stop hook never fired in the desktop app: the loop was driven by Opus chaining tasks and by session cron wake-ups.

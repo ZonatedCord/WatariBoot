@@ -18,11 +18,11 @@
           "output": 4437
         },
         "claude-opus-5-5": {
-          "cache_read": 283043260,
-          "cache_write_1h": 9456527,
+          "cache_read": 294686481,
+          "cache_write_1h": 9490610,
           "cache_write_5m": 0,
-          "input": 1556,
-          "output": 527198
+          "input": 1616,
+          "output": 544062
         },
         "claude-sonnet-5-5": {
           "cache_read": 291167199,
@@ -94,6 +94,38 @@
         }
       }
     },
+    "5c750aeeed9f": {
+      "models": {
+        "<synthetic>": {
+          "cache_read": 0,
+          "cache_write_1h": 0,
+          "cache_write_5m": 0,
+          "input": 0,
+          "output": 0
+        },
+        "claude-fable-5-2": {
+          "cache_read": 16783821,
+          "cache_write_1h": 0,
+          "cache_write_5m": 1398529,
+          "input": 180,
+          "output": 215584
+        },
+        "claude-opus-5-5": {
+          "cache_read": 16712990,
+          "cache_write_1h": 784851,
+          "cache_write_5m": 0,
+          "input": 280,
+          "output": 60417
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 35015579,
+          "cache_write_1h": 0,
+          "cache_write_5m": 1641159,
+          "input": 534,
+          "output": 324146
+        }
+      }
+    },
     "679ef2c0a4e0": {
       "models": {
         "claude-sonnet-5-5": {
@@ -156,6 +188,46 @@
           "cache_write_5m": 327329,
           "input": 182,
           "output": 23408
+        }
+      }
+    },
+    "afec92e2ee10": {
+      "models": {
+        "claude-fable-5-2": {
+          "cache_read": 461711,
+          "cache_write_1h": 48441,
+          "cache_write_5m": 0,
+          "input": 12,
+          "output": 3516
+        }
+      }
+    },
+    "c0d6ebddfc57": {
+      "models": {
+        "claude-fable-5-2": {
+          "cache_read": 457871,
+          "cache_write_1h": 45962,
+          "cache_write_5m": 0,
+          "input": 12,
+          "output": 3339
+        }
+      }
+    },
+    "f97f989d843e": {
+      "models": {
+        "claude-fable-5-2": {
+          "cache_read": 6076170,
+          "cache_write_1h": 97263,
+          "cache_write_5m": 277070,
+          "input": 92,
+          "output": 42937
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 10700115,
+          "cache_write_1h": 0,
+          "cache_write_5m": 399390,
+          "input": 188,
+          "output": 63390
         }
       }
     }
