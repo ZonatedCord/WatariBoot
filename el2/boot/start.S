@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MIT
 #include "wel2_coreidx.h"
+
+// adr_l: the run-time address of a symbol, PC-relative (adrp + add), usable before and after the relocation loop.
+    .macro adr_l reg, sym
+    adrp    \reg, \sym
+    add     \reg, \reg, :lo12:\sym
+    .endm
 // Watari EL2 M0-C: entry, arm64 Image header, EL2 exception vectors.
 // Written from the Arm Architecture Reference Manual (ARMv8-A) and the Linux
 // arm64 boot protocol document (header layout only).
@@ -17,6 +23,7 @@ _start:
     .long   0                       // reserved (PE header offset)
 
 reset:
+    msr     daifset, #0xf           // mask D, A, I, F before anything else (the firmware's state is not ours)
     // Only the boot CPU continues; others park (M0 runs with -smp 1).
     mrs     x1, mpidr_el1
     and     x1, x1, #0xffffff
@@ -26,33 +33,66 @@ reset:
     lsr     x1, x1, #2
     cmp     x1, #2
     b.ne    park                    // not at EL2: cannot proceed
-    // x0 (the FDT address QEMU passes) stays untouched until el2_main(fdt)
+    // x0 (the FDT address the loader passes) stays untouched until el2_main(fdt)
 
-    ldr     x1, =__el2_stacks       // core 0 uses the first 16 KB stack
+    // T6a: the image is a PIE linked at 0 and runs wherever the loader put it. x9 = the run-time base (the link
+    // address of _start is 0). Everything up to the end of the relocation loop is position-independent by
+    // construction: only adr/adrp, no literal pool, no GOT (check-pie.sh greps this file for pseudo-loads).
+    adr     x9, _start
+    tst     x9, #0x3fff             // the stage-1 page split and VBAR need a 16 KB aligned load address
+    b.ne    park
+
+    // Self-relocation, MMU and caches off, written from the ELF specification: every dynamic relocation must be
+    // R_AARCH64_RELATIVE (type 1027), which means *(base + r_offset) = base + r_addend (Elf64_Rela: r_offset,
+    // r_info, r_addend, 8 bytes each). Anything else cannot be resolved here: park with x0 = "RELO" (nothing may
+    // be printed yet: the console is not known; check-pie.sh makes this unreachable for a built image).
+    adr_l   x1, __rela_start
+    adr_l   x2, __rela_end
+1:  cmp     x1, x2
+    b.hs    2f
+    ldp     x3, x4, [x1], #16       // r_offset, r_info
+    ldr     x5, [x1], #8            // r_addend
+    cmp     w4, #1027               // R_AARCH64_RELATIVE (low 32 bits of r_info = type)
+    b.ne    reloc_fail
+    lsr     x4, x4, #32
+    cbnz    x4, reloc_fail          // symbol index must be 0
+    add     x3, x3, x9
+    add     x5, x5, x9
+    str     x5, [x3]
+    b       1b
+reloc_fail:
+    movz    x0, #0x4552             // 'RE'
+    movk    x0, #0x4f4c, lsl #16    // 'LO'
+    b       park
+2:
+    dsb     sy
+
+    adr_l   x1, __el2_stacks        // core 0 uses the first 16 KB stack
     add     x1, x1, #WEL2_STACK_SIZE
     mov     sp, x1
 
     // Zero .bss
-    ldr     x1, =__bss_start
-    ldr     x2, =__bss_end
+    adr_l   x1, __bss_start
+    adr_l   x2, __bss_end
 1:  cmp     x1, x2
     b.hs    2f
     str     xzr, [x1], #8
     b       1b
 2:
-    // Cache maintenance for what the MMU-off stores above (and the stack use that follows) wrote: with the MMU
-    // off the accesses go to memory, but stale lines of the same addresses (left by the firmware / a previous
-    // run) may sit in the data cache and would be hit once the stage-1 map makes the memory cacheable.
-    // DC IVAC by VA over .bss and the stacks (Arm ARM D7.5 cache maintenance; instruction ordering by DSB, D7.5.9),
-    // line size from CTR_EL0.DminLine. Nothing dirty is lost: everything here was just zeroed in memory.
+    // Cache maintenance for what the MMU-off stores above (the relocated .data / .data.rel.ro, .bss, and the stack
+    // use that follows) wrote: with the MMU off the accesses go to memory, but stale lines of the same addresses
+    // (left by the firmware / a previous run) may sit in the data cache and would be hit once the stage-1 map makes
+    // the memory cacheable. DC IVAC by VA over the WHOLE layer block (image, .bss, stacks: the relocated data is
+    // written MMU-off too), Arm ARM D7.5 cache maintenance; ordering by DSB, D7.5.9; line size from
+    // CTR_EL0.DminLine. Nothing dirty is lost: the loader leaves the image in memory (m1n1 cleans what it copies),
+    // and everything written here went straight to memory.
     // [hypothesis for the M1: QEMU TCG has no stale lines, so it cannot show the need]
     mrs     x2, ctr_el0
     ubfx    x2, x2, #16, #4
     mov     x3, #4
     lsl     x3, x3, x2              // data cache line size in bytes
-    ldr     x1, =__bss_start
-    ldr     x4, =__el2_stacks
-    add     x4, x4, #(WEL2_NSTACKS * WEL2_STACK_SIZE)
+    mov     x1, x9                  // _start
+    adr_l   x4, __el1_stack_top     // end of the block (the last stack slot)
     sub     x5, x3, #1
     bic     x1, x1, x5
 3:  dc      ivac, x1
@@ -60,7 +100,7 @@ reset:
     cmp     x1, x4
     b.lo    3b
     dsb     sy
-    ldr     x1, =el2_vectors
+    adr_l   x1, el2_vectors
     msr     vbar_el2, x1
     isb
     // #53: EL2 stage-1 identity map. The tables are built by C code that is still MMU-off
@@ -76,7 +116,8 @@ park:
     b       park
 
 // Entry of cores 1..n at EL2, started by the firmware on guest PSCI CPU_ON
-// (M1-3). x0 = context given to the firmware (unused). MMU off, caches off.
+// (M1-3). x0 = context given to the firmware (unused). MMU off, caches off. The image was relocated by the boot core
+// (a CPU_ON comes from a guest the boot core started), so this code only uses PC-relative addressing.
 // Stack: 16 KB slot selected like wel2_core_index() (include/wel2_coreidx.h; keep the formula identical):
 //   idx = Aff1*4 + Aff0, valid iff Aff0 < 4, Aff1 < 2, Aff2 == Aff1, Aff3 == 0.
 // A core outside that range must not touch a stack: it records its MPIDR (bit 63 set) in g_bad_mpidr
@@ -85,6 +126,7 @@ park:
     .text
     .global secondary_entry
 secondary_entry:
+    msr     daifset, #0xf
     mrs     x1, CurrentEL
     lsr     x1, x1, #2
     cmp     x1, #2
@@ -102,11 +144,11 @@ secondary_entry:
     b.ne    bad_core
     cbnz    x5, bad_core
     add     x1, x2, x3, lsl #2      // idx = Aff0 + 4*Aff1 (0..7)
-    ldr     x2, =__el2_stacks
+    adr_l   x2, __el2_stacks
     add     x1, x1, #1
     lsl     x1, x1, #WEL2_STACK_SHIFT   // (idx + 1) * WEL2_STACK_SIZE
     add     sp, x2, x1
-    ldr     x1, =el2_vectors
+    adr_l   x1, el2_vectors
     msr     vbar_el2, x1
     isb
     bl      s1_enable               // same tables as the boot core (#53), then C code
@@ -116,7 +158,7 @@ secondary_entry:
 bad_core:
     // No stack here. MMU off: the store goes straight to memory.
     orr     x1, x1, #(1 << 63)
-    ldr     x2, =g_bad_mpidr
+    adr_l   x2, g_bad_mpidr
     str     x1, [x2]
     dsb     sy
     b       park
@@ -138,7 +180,7 @@ g_bad_mpidr:
     .text
     .global s1_enable
 s1_enable:
-    ldr     x0, =g_s1
+    adr_l   x0, g_s1
     ldp     x1, x2, [x0]            // mair, tcr
     ldr     x3, [x0, #16]           // ttbr
     ldr     x5, [x0, #24]           // e2h (the value that read back on the boot core)
@@ -177,7 +219,8 @@ enter_el1:
     // SCTLR_EL1: MMU/caches off, RES1 bits set (PSCI 6.4.3.4). With HCR_EL2.E2H = 1 (x3 bit 34) an EL2 access to
     // SCTLR_EL1 is redirected to SCTLR_EL2 (Arm ARM D8.13.2): the guest's register is SCTLR_EL12 there
     // (op0 3, op1 5, CRn 1, CRm 0, op2 0; the assembler's default architecture does not know the name).
-    ldr     x5, =0x30d00800
+    movz    x5, #0x0800
+    movk    x5, #0x30d0, lsl #16
     tbnz    x3, #34, 1f
     msr     sctlr_el1, x5
     b       2f

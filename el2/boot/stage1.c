@@ -35,8 +35,9 @@
 //   everything else        unmapped (an EL2 access faults; the vectors dump it)
 // "Where RAM exists" (#60): the range comes from the FDT /memory node (wel2_ram.h), read here with the
 // MMU still off. Without a usable node the old fixed map applies (0x40000000-0x13fffffff).
-// The layer image must lie in the first 2 MB of RAM (linker ASSERT); its text/rodata boundaries are
-// 16 KB aligned (linker.ld), so the page permissions are the same for both granules.
+// The layer image (a PIE, T6a) must lie in the carve-out block that contains its run-time start (QEMU: the first 2 MB
+// of RAM; linker ASSERT on the size); its text/rodata boundaries are 16 KB aligned (linker.ld) and so is the load
+// address (start.S), so the page permissions are the same for both granules.
 
 #include "boot.h"
 #include "fdt.h"
@@ -44,11 +45,12 @@
 #include "wel2_maps.h"
 #include "wel2_uart.h"
 
-extern uint8_t __image_start[], __text_end[], __rodata_end[];
+extern uint8_t _start[], __image_start[], __text_end[], __rodata_end[];
 
 /* The RAM the maps cover; written once by the boot core with the MMU off, read by everyone after. */
-uint64_t g_ram_base = GUEST_RAM_BASE;
-uint64_t g_ram_end = GUEST_RAM_BASE + 0x100000000ULL;
+uint64_t g_ram_base, g_ram_end;      /* default (no usable FDT /memory): the carve-out block up to 4 GB above it */
+uint64_t g_layer_base;               /* T6a: run-time address of _start */
+uint64_t g_carve_base, g_carve_size; /* T6a: the block the layer keeps for itself, see boot.h */
 bool g_ram_from_fdt;
 
 /* The S5L console UART window found in the FDT (0 = none: PL011). Read by stage2_init to keep it from the guest. */
@@ -135,6 +137,15 @@ void stage1_build(uint64_t fdt)
     unsigned want_gran = WEL2_DEF_GRAN;
     bool want_e2h = WEL2_DEF_E2H;
 
+    /* T6a: the run-time layout. The image is a PIE (start.S relocated it): everything that used to be the fixed link
+     * address 0x40080000 derives from where _start actually is. The carve-out is the g_carve_size aligned block that
+     * holds the image (QEMU: the 2 MB block at the RAM base); RAM defaults to 4 GB from its start. */
+    g_layer_base = (uint64_t)(uintptr_t)_start;
+    g_carve_size = WEL2_CARVE_SIZE_QEMU;
+    g_carve_base = g_layer_base & ~(g_carve_size - 1);
+    g_ram_base = g_carve_base;
+    g_ram_end = g_carve_base + 0x100000000ULL;
+
     /* Console first: a node compatible with "apple,s5l-uart" (the M1 under m1n1) switches putc_/puts_ from the
      * QEMU PL011 to it, so that every message below, and every core after, goes to the right UART. No such node
      * (QEMU): nothing changes. Written with the MMU off, cleaned to memory below with the other globals. */
@@ -182,8 +193,8 @@ void stage1_build(uint64_t fdt)
     ram.base = g_ram_base;
     ram.end = g_ram_end;
     if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
-        !fdt_get_memory((void *)fdt, &ram, GUEST_RAM_BASE, 1ULL << va_bits) &&
-        ram.base == GUEST_RAM_BASE && ram.end - ram.base >= WEL2_CARVE_SIZE) {
+        !fdt_get_memory((void *)fdt, &ram, g_carve_base, 1ULL << va_bits) &&
+        ram.base == g_carve_base && ram.end - ram.base >= g_carve_size) {
         g_ram_base = ram.base;
         g_ram_end = ram.end;
         g_ram_from_fdt = true;
@@ -229,6 +240,9 @@ void stage1_build(uint64_t fdt)
     clean_inval(&g_con, sizeof(g_con));
     clean_inval(&g_con_s5l_base, sizeof(g_con_s5l_base));
     clean_inval(&g_con_s5l_size, sizeof(g_con_s5l_size));
+    clean_inval(&g_layer_base, sizeof(g_layer_base));
+    clean_inval(&g_carve_base, sizeof(g_carve_base));
+    clean_inval(&g_carve_size, sizeof(g_carve_size));
     clean_inval(&g_ram_base, sizeof(g_ram_base));
     clean_inval(&g_ram_end, sizeof(g_ram_end));
     clean_inval(&g_ram_from_fdt, sizeof(g_ram_from_fdt));

@@ -318,6 +318,65 @@ static void check_uart_maps(unsigned gshift)
 	CHECK_EQ(wel2_s2_add_hole(holes, &n, 8, 0x2b0000000ULL, 0x4000, gshift), -1);
 }
 
+/* T6a: the layer is a position-independent image, so its carve-out is wherever the loader put it. The M1 case: RAM
+ * at 0x8_0000_0000, the layer loaded high inside it, the carve-out the 32 MB aligned block holding the layer (design
+ * D 2.3). Stage 1 maps the RAM, with the layer's text read-only executable and the rodata read-only at that address;
+ * stage 2 unmaps [layer, carve end) (main.c: hide_lo = layer rounded down to the granule, size to the carve end),
+ * the FDT hand-off area below the layer stays mapped, and the 32 MB block next to it too. */
+static void check_high_carve(unsigned gshift, uint64_t layer)
+{
+	const uint64_t rb = 0x800000000ULL, re = rb + 0x200000000ULL, csize = 0x2000000ULL;
+	const uint64_t cbase = layer & ~(csize - 1), cend = cbase + csize, g = 1ULL << gshift;
+	const uint64_t text_lo = layer, text_hi = layer + 0x14000, ro_hi = text_hi + 0x8000;   /* 16 KB multiples */
+	struct wel2_range holes[8] = { { GICD_P, 0x10000 }, { GICR_P, 8 * 0x20000 } };
+	unsigned n = 2;
+	struct wel2_pt pt;
+	struct wel2_ram ram;
+	struct wel2_s1_layout lay = { text_lo, text_hi, ro_hi };
+	uint64_t pa, at;
+	unsigned lv;
+
+	CHECK_EQ(cbase % csize, 0);
+	CHECK(cbase >= rb && cend <= re);
+	CHECK_EQ(wel2_ram_set(&ram, rb, re - rb, rb, 1ULL << 36), 0);
+	/* stage 1 */
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), gshift, wel2_s1_va_bits(gshift)), 0);
+	CHECK_EQ(wel2_s1_build(&pt, &ram, &lay, true), 0);
+	CHECK(wel2_pt_walk(&pt, layer, &pa, &at, &lv));
+	CHECK_EQ(pa, layer);
+	CHECK(wel2_pt_walk(&pt, text_hi - 8, &pa, &at, NULL));
+	CHECK(attrs_of(&pt, text_lo) != attrs_of(&pt, text_hi));             /* code RO+X, rodata RO+XN */
+	CHECK(attrs_of(&pt, text_hi) != attrs_of(&pt, ro_hi));               /* rodata RO, data RW */
+	CHECK_EQ(attrs_of(&pt, ro_hi), attrs_of(&pt, rb));                   /* RW data = the plain RAM attributes */
+	CHECK_EQ(attrs_of(&pt, cbase), attrs_of(&pt, rb));                   /* the FDT hand-off area below the layer */
+	/* stage 2 */
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 8, layer & ~(g - 1), cend - (layer & ~(g - 1)), gshift), 0);
+	CHECK_EQ(n, 3);
+	CHECK_EQ(wel2_pt_init(&pt, pool_s2, sizeof(pool_s2), gshift, WEL2_S2_IPA_BITS), 0);
+	CHECK_EQ(wel2_s2_build(&pt, &ram, holes, n), 0);
+	for (uint64_t a = layer & ~(g - 1); a < cend; a += 0x1000)
+		CHECK(!wel2_pt_walk(&pt, a, NULL, NULL, NULL));
+	CHECK(wel2_pt_walk(&pt, (layer & ~(g - 1)) - 1, NULL, NULL, NULL));      /* the byte before: guest RAM */
+	CHECK(wel2_pt_walk(&pt, cbase, &pa, &at, &lv));                           /* FDT hand-off buffer */
+	CHECK_EQ(pa, cbase); CHECK_EQ(at, ATTR_NORMAL_S2);
+	CHECK(wel2_pt_walk(&pt, cend, &pa, &at, &lv));                            /* the block after the carve-out */
+	CHECK_EQ(pa, cend); CHECK_EQ(at, ATTR_NORMAL_S2);
+	CHECK(wel2_pt_walk(&pt, cend + csize, &pa, &at, &lv));
+	CHECK_EQ(at, ATTR_NORMAL_S2);
+	CHECK(wel2_pt_walk(&pt, rb, &pa, &at, &lv));                              /* RAM base: untouched */
+	CHECK_EQ(at, ATTR_NORMAL_S2);
+	CHECK(pt.max_used * (1ULL << gshift) <= WEL2_S2_POOL_BYTES);
+}
+
+static void t_high_carve(void)
+{
+	/* aligned 32 MB block inside the RAM, the layer at 0x80000 into it (QEMU text_offset) and 1 MB into it */
+	check_high_carve(WEL2_GRAN_16K, 0x810000000ULL + 0x80000);
+	check_high_carve(WEL2_GRAN_4K, 0x810000000ULL + 0x80000);
+	check_high_carve(WEL2_GRAN_16K, 0x81a000000ULL + 0x100000);
+	check_high_carve(WEL2_GRAN_4K, 0x81a000000ULL + 0x100000);
+}
+
 static void t_s5l_uart_maps(void)
 {
 	check_uart_maps(WEL2_GRAN_16K);
@@ -482,6 +541,7 @@ int main(void)
 	RUN(t_s2_aic_hole);
 	RUN(t_s2_v2m_hole);
 	RUN(t_s5l_uart_maps);
+	RUN(t_high_carve);
 	RUN(t_s2_add_hole_rules);
 	RUN(t_s2_odd_ram_end);
 	RUN(t_s1_map);

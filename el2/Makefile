@@ -10,7 +10,10 @@ TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif i
 
 .PHONY: test clean
 test: $(addprefix $(BUILD)/test_,$(TESTS))
-	@set -e; for t in $^; do ./$$t; done; echo "ALL TESTS PASSED"
+	@set -e; for t in $^; do ./$$t; done
+	@# T6a: position-independence checks of both layer images (needs the Homebrew LLVM; skipped without it)
+	@if [ -x /opt/homebrew/opt/llvm/bin/clang ]; then $(MAKE) -s -C boot check; else echo "SKIP: pie check (no cross toolchain)"; fi
+	@echo "ALL TESTS PASSED"
 
 # The model itself is built freestanding; tests use the host libc.
 $(BUILD)/vgic.o: vgic/vgic.c include/wel2_vgic.h | $(BUILD)

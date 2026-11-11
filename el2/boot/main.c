@@ -244,7 +244,7 @@ static void stage2_init(void)
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
 
-    if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, hide_lo, GUEST_RAM_BASE + WEL2_CARVE_SIZE - hide_lo, g_gran))
+    if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, hide_lo, g_carve_base + g_carve_size - hide_lo, g_gran))
         fatal_msg("stage-2 holes: layer carve-out does not fit");
 #endif
     if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, WEL2_S2_IPA_BITS) ||
@@ -528,7 +528,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
     put_kv("Watari EL2: FDT from QEMU at ", fdt);
     if (!fdt || (fdt & 7) || fdt_check((void *)fdt))
         fatal_msg("x0 does not point to a valid FDT (is QEMU -kernel used?)");
-    if (fdt_patch_for_guest((void *)fdt, GUEST_RAM_BASE, WEL2_CARVE_SIZE, g_ram_from_fdt ? g_ram_end : 0, &pi))
+    if (fdt_patch_for_guest((void *)fdt, g_carve_base, g_carve_size, g_ram_from_fdt ? g_ram_end : 0, &pi))
         fatal_msg("FDT is malformed, cannot patch it");
     if (!pi.mem_found || !pi.mem_patched)
         fatal_msg("FDT /memory not found or does not start at the layer's carve-out");
@@ -560,7 +560,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
     if (magic != 0x644d5241) {               /* "ARM\x64" */
         put_kv("Watari EL2: no arm64 Image header at EDK2 entry ", EDK2_ENTRY);
         put_kv("Watari EL2: found ", magic);
-        fatal_msg("EDK2 image missing: add -device loader,file=QEMU_EFI-kernel.fd,addr=0x40280000,force-raw=on");
+        fatal_msg("EDK2 image missing: add -device loader,file=QEMU_EFI-kernel.fd,addr=<carve end + 0x80000, 0x40280000 on QEMU>,force-raw=on");
     }
     put_kv("Watari EL2: eret to EDK2 at EL1, entry = ", EDK2_ENTRY);
     enter_el1(EDK2_ENTRY, 0, SPSR_EL1H_MASKED, g_hcr, EDK2_FDT_ADDR);
@@ -651,6 +651,9 @@ static void stage1_report(void)
         puts_("Watari EL2:   E2H = 0 was requested but the bit is stuck at 1 (the M1 case): running with E2H = 1\n");
     if (g_gran_fallback)
         puts_("Watari EL2:   the requested translation granule is not implemented: using the other one\n");
+    put_kv("Watari EL2: layer image (PIE, relocated) at ", g_layer_base);
+    put_kv("Watari EL2:   carve-out base = ", g_carve_base);
+    put_kv("Watari EL2:   carve-out size = ", g_carve_size);
     put_kv(g_ram_from_fdt ? "Watari EL2: RAM from the FDT /memory node, base " : "Watari EL2: no usable FDT /memory node: default RAM, base ", g_ram_base);
     put_kv("Watari EL2:   RAM end = ", g_ram_end);
 }

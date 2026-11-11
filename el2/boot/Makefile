@@ -11,13 +11,17 @@ XFLAGS ?=
 PAYLOAD_OBJS ?= $(OUT)/payload_s.o $(OUT)/payload.o
 
 CFLAGS := -I../include --target=aarch64-none-elf -std=c11 -Wall -Wextra -Werror -O2 -g \
-          -ffreestanding -nostdlib -mgeneral-regs-only -fno-pic -fno-stack-protector \
+          -ffreestanding -nostdlib -mgeneral-regs-only -fpie -fvisibility=hidden -fdirect-access-external-data -include pie.h -fno-stack-protector \
           -mno-outline-atomics -fno-builtin $(XFLAGS)
 ASFLAGS := --target=aarch64-none-elf -g -I../include
 
 OBJS := $(OUT)/start.o $(OUT)/util.o $(OUT)/stage1.o $(OUT)/main.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o \
         $(OUT)/pirq_qemu.o $(OUT)/fdt.o $(OUT)/vgic.o $(OUT)/vcif.o $(OUT)/intr_map.o $(OUT)/pirq.o $(OUT)/pirq_aic.o $(OUT)/v2m.o $(OUT)/ram_map.o $(OUT)/pt.o $(OUT)/maps.o $(OUT)/uart.o $(PAYLOAD_OBJS)
 
+# The image is a PIE linked at 0 (linker.ld) and relocated by start.S: -fpie with hidden visibility and direct access
+# to external data keeps every reference PC-relative (adrp/add), so the code needs no GOT before the relocation.
+# check-pie.sh (run after every link) verifies it.
+#
 # Code that runs with the MMU off (stage1.c: table build before the MMU is on; util.c and
 # payload.c: also run by the EL1 test payload, MMU off = Device memory) keeps -mstrict-align
 # (F-18). Everything else runs at EL2 on Normal memory and is built without it (#53).
@@ -29,7 +33,7 @@ all: build/wel2.bin
 chain:
 	$(MAKE) OUT=build-chain XFLAGS=-DWEL2_CHAIN=1 PAYLOAD_OBJS= build-chain/wel2.bin
 
-$(OUT)/%.o: %.c boot.h fdt.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_ram.h ../include/wel2_aic.h ../include/wel2_coreidx.h ../include/wel2_uart.h | $(OUT)
+$(OUT)/%.o: %.c pie.h boot.h fdt.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_ram.h ../include/wel2_aic.h ../include/wel2_coreidx.h ../include/wel2_uart.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/vgic.o: ../vgic/vgic.c ../include/wel2_vgic.h | $(OUT)
@@ -69,7 +73,8 @@ $(OUT)/payload_s.o: payload.S | $(OUT)
 	$(CC) $(ASFLAGS) -c $< -o $@
 
 $(OUT)/wel2.elf: $(OBJS) linker.ld
-	$(LD) -T linker.ld -nostdlib -z norelro --no-dynamic-linker -o $@ $(OBJS)
+	$(LD) -T linker.ld -pie -nostdlib -z norelro --no-dynamic-linker -z max-page-size=16384 --no-rosegment -o $@ $(OBJS)
+	sh ./check-pie.sh $@
 
 $(OUT)/wel2.bin: $(OUT)/wel2.elf
 	$(OBJCOPY) -O binary $< $@
@@ -77,7 +82,12 @@ $(OUT)/wel2.bin: $(OUT)/wel2.elf
 $(OUT):
 	mkdir -p $@
 
+# Position independence checks (T6a) on both images, run by `make -C el2 test` and run-all.sh.
+check:
+	$(MAKE) -s all
+	$(MAKE) -s chain
+
 clean:
 	rm -rf build build-chain
 
-.PHONY: all chain clean
+.PHONY: all chain check clean

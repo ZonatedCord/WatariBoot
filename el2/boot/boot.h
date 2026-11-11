@@ -17,7 +17,7 @@
 #define MAX_CPUS    VGIC_MAX_VCPUS
 _Static_assert(MAX_CPUS == WEL2_NSTACKS, "one EL2 stack slot per vCPU/core (wel2_coreidx.h)");
 /* Guest RAM (QEMU virt, up to -m 2G) and, in the M1-4 chain build, the part of it
- * the layer keeps for itself: the first WEL2_CARVE_SIZE of RAM, cut off the FDT
+ * the layer keeps for itself: the first g_carve_size of RAM, cut off the FDT
  * /memory node (INTERFACES 3.2). Inside it, [RAM base, layer image) is the FDT
  * hand-off buffer (mapped, read by the guest) and [layer image, carve end) is the
  * layer (image + stacks, unmapped in stage 2).
@@ -25,10 +25,14 @@ _Static_assert(MAX_CPUS == WEL2_NSTACKS, "one EL2 stack slot per vCPU/core (wel2
  * PcdDeviceTreeInitialBaseAddress = 0x40000000 (F-21). EDK2 itself is loaded right
  * after the carve-out, at the address an arm64 Image with text_offset 0x80000 would
  * have there. */
-#define GUEST_RAM_BASE   0x40000000ULL
-#define WEL2_CARVE_SIZE  0x200000ULL
-#define EDK2_FDT_ADDR    GUEST_RAM_BASE
-#define EDK2_ENTRY       (GUEST_RAM_BASE + WEL2_CARVE_SIZE + 0x80000ULL)
+/* T6a: the image is position independent, so nothing here is a link-time constant any more. stage1_build() (MMU off,
+ * boot core) fills these from the run-time address of _start; read by everyone after. QEMU: the layer is loaded at
+ * RAM base + 0x80000, the carve-out is the 2 MB block that contains it. The M1 uses a larger block (design D 2.3). */
+#define WEL2_CARVE_SIZE_QEMU 0x200000ULL    /* default g_carve_size */
+extern uint64_t g_layer_base;               /* run-time address of _start (16 KB aligned) */
+extern uint64_t g_carve_base, g_carve_size; /* [g_carve_base, +g_carve_size): FDT hand-off buffer + the layer */
+#define EDK2_FDT_ADDR    (g_carve_base)
+#define EDK2_ENTRY       (g_carve_base + g_carve_size + 0x80000ULL)
 #define PL031_PHYS  0x09010000UL   /* QEMU virt RTC, SPI 2 = INTID 34 */
 
 /* Exception frame saved by start.S (layout fixed there). */
