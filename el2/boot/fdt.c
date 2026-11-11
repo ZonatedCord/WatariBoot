@@ -365,3 +365,86 @@ int fdt_find_aic(void *fdt, struct fdt_aic_info *info)
     info->found = c.compat && info->has_reg && info->nr_irq != 0;
     return 0;
 }
+
+/* ---- First node compatible with a given string, and its "reg" (console UART) ----------------------
+ * The walk only reports properties, so a node is recognised by the address of its name in the blob (unique
+ * per node) and the state is reset when it changes. Properties precede sub-nodes (Devicetree Specification
+ * 2.2.1), so a parent's #address-cells/#size-cells are known before any child's reg. The cells are kept per
+ * depth; a depth entry is reset to the specification defaults (2 and 1) when a new node opens at that depth.
+ * "reg" of a node at depth d is decoded with the cells of depth d-1. Ranges/address translation is not
+ * applied: the nodes asked for (/soc children of the Apple SoC, "ranges;" identity) need none
+ * [verified: t8103 /soc has ranges and #address-cells = 2, DESIGN section 4.2; hypothesis for other SoCs]. */
+struct compat_ctx {
+    const char *compat;
+    struct fdt_reg_info *info;
+    bool match, has_reg;
+    unsigned ac, sc;                    /* cells of the parent of the current node, as seen at its opening */
+    unsigned a[MAX_DEPTH], s[MAX_DEPTH];
+    const char *open[MAX_DEPTH];
+};
+
+static bool stringlist_has(const uint8_t *val, uint32_t len, const char *s)
+{
+    uint32_t i = 0;
+
+    while (i < len) {
+        uint32_t j = i;
+
+        while (j < len && val[j])
+            j++;
+        if (j >= len)                   /* not terminated: malformed */
+            return false;
+        if (str_eq((const char *)val + i, s))
+            return true;
+        i = j + 1;
+    }
+    return false;
+}
+
+static bool compat_cb(void *vctx, unsigned depth, const char *node, const char *prop,
+                      uint8_t *val, uint32_t len)
+{
+    struct compat_ctx *c = vctx;
+
+    if (depth >= MAX_DEPTH)
+        return true;
+    if (c->open[depth] != node) {       /* a new node opened at this depth */
+        c->open[depth] = node;
+        c->a[depth] = 2;
+        c->s[depth] = 1;
+        c->match = false;
+        c->has_reg = false;
+        c->ac = depth ? c->a[depth - 1] : 2;
+        c->sc = depth ? c->s[depth - 1] : 1;
+    }
+    if (len == 4 && str_eq(prop, "#address-cells"))
+        c->a[depth] = be32(val);
+    else if (len == 4 && str_eq(prop, "#size-cells"))
+        c->s[depth] = be32(val);
+    else if (depth >= 1 && str_eq(prop, "compatible"))
+        c->match = stringlist_has(val, len, c->compat);
+    else if (depth >= 1 && str_eq(prop, "reg")) {
+        if (c->ac >= 1 && c->ac <= 2 && c->sc <= 2 && len >= 4 * (c->ac + c->sc)) {
+            c->has_reg = true;
+            c->info->base = be_cells(val, c->ac);
+            c->info->size = c->sc ? be_cells(val + 4 * c->ac, c->sc) : 0;
+        }
+    }
+    if (c->match && c->has_reg) {
+        c->info->found = true;
+        return true;
+    }
+    return false;
+}
+
+int fdt_find_compatible_reg(void *fdt, const char *compat, struct fdt_reg_info *info)
+{
+    struct compat_ctx c = { 0 };
+
+    *info = (struct fdt_reg_info){ 0 };
+    c.compat = compat;
+    c.info = info;
+    if (fdt_walk_props(fdt, compat_cb, &c))
+        return -1;
+    return 0;
+}

@@ -203,10 +203,14 @@ static void v2m_bell_log(void *ctx, uint32_t val)
     put_kv("Watari EL2: MSI doorbell write outside the pool, value ", val);
 }
 
+/* Capacity of the stage-2 hole list: GICD, GICR, MSI frame, AIC, console UART and the chain carve-out are six; two
+ * spare for the M1 devices T6 adds (WDT, ...). */
+#define HOLES_MAX 8
+
 static void stage2_init(void)
 {
     struct wel2_ram ram = { g_ram_base, g_ram_end };
-    struct wel2_range holes[6] = {
+    struct wel2_range holes[HOLES_MAX] = {
         { GICD_PHYS, GICD_SIZE },
         { GICR_PHYS, 8ULL * VGIC_GICR_FRAME_SIZE },
     };
@@ -221,20 +225,26 @@ static void stage2_init(void)
     g_v2m.log_stray = v2m_stray_log;
     /* QEMU virt with -m 4G or more has RAM at 0xFFFFC000: then there is no hole and no frame. */
     g_v2m_on = v2m_page_free(&g_v2m, g_ram_base, g_ram_end);
-    if (g_v2m_on && v2m_add_hole(&g_v2m, holes, &nholes, 6, g_gran))
+    if (g_v2m_on && v2m_add_hole(&g_v2m, holes, &nholes, HOLES_MAX, g_gran))
         fatal_msg("stage-2 holes: MSI frame page does not fit");
     if (!g_v2m_on)
         puts_("Watari EL2: MSI frame page 0xFFFFC000 is guest RAM here: not emulated\n");
 
     if (g_aic_on) {                     /* #42: the AIC belongs to the layer, the guest faults there */
-        if (wel2_s2_add_hole(holes, &nholes, 6, g_aic_info.base, g_aic_info.size, g_gran))
+        if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_aic_info.base, g_aic_info.size, g_gran))
             fatal_msg("stage-2 holes: AIC window does not fit");
     }
+
+    /* The layer's console UART (Apple S5L, from the FDT) is not the guest's: stage 2 maps every address Device by
+     * default, so without this hole the guest could read and write the layer's log UART. (QEMU: the PL011 is the
+     * guest's too and stays mapped: no S5L node, no hole.) */
+    if (g_con_s5l_base && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_con_s5l_base, g_con_s5l_size, g_gran))
+        fatal_msg("stage-2 holes: console UART window does not fit");
 
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
 
-    if (wel2_s2_add_hole(holes, &nholes, 6, hide_lo, GUEST_RAM_BASE + WEL2_CARVE_SIZE - hide_lo, g_gran))
+    if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, hide_lo, GUEST_RAM_BASE + WEL2_CARVE_SIZE - hide_lo, g_gran))
         fatal_msg("stage-2 holes: layer carve-out does not fit");
 #endif
     if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, WEL2_S2_IPA_BITS) ||
@@ -653,6 +663,10 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     __asm__ volatile("mrs %0, vbar_el2" : "=r"(vbar));
 
     puts_("Watari EL2: hello from EL2\n");
+    if (g_con_s5l_base) {
+        put_kv("Watari EL2: console = Apple S5L UART at ", g_con_s5l_base);
+        put_kv("Watari EL2:   window size = ", g_con_s5l_size);
+    }
     stage1_report();
     put_kv("Watari EL2: CurrentEL = ", el >> 2);
     put_kv("Watari EL2: VBAR_EL2  = ", vbar);

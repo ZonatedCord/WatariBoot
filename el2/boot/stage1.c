@@ -42,6 +42,7 @@
 #include "fdt.h"
 #include "wel2_ram.h"
 #include "wel2_maps.h"
+#include "wel2_uart.h"
 
 extern uint8_t __image_start[], __text_end[], __rodata_end[];
 
@@ -49,6 +50,9 @@ extern uint8_t __image_start[], __text_end[], __rodata_end[];
 uint64_t g_ram_base = GUEST_RAM_BASE;
 uint64_t g_ram_end = GUEST_RAM_BASE + 0x100000000ULL;
 bool g_ram_from_fdt;
+
+/* The S5L console UART window found in the FDT (0 = none: PL011). Read by stage2_init to keep it from the guest. */
+uint64_t g_con_s5l_base, g_con_s5l_size;
 
 /* What stage1_build decided (MMU off, boot core), read by everyone after. */
 unsigned g_gran = WEL2_DEF_GRAN;     /* granule shift of the stage-1 and stage-2 maps: 12 or 14 */
@@ -131,6 +135,18 @@ void stage1_build(uint64_t fdt)
     unsigned want_gran = WEL2_DEF_GRAN;
     bool want_e2h = WEL2_DEF_E2H;
 
+    /* Console first: a node compatible with "apple,s5l-uart" (the M1 under m1n1) switches putc_/puts_ from the
+     * QEMU PL011 to it, so that every message below, and every core after, goes to the right UART. No such node
+     * (QEMU): nothing changes. Written with the MMU off, cleaned to memory below with the other globals. */
+    struct fdt_reg_info uart = { 0 };
+
+    if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
+        fdt_find_compatible_reg((void *)fdt, FDT_COMPAT_S5L_UART, &uart) == 0 && uart.found) {
+        con_select_s5l(uart.base);
+        g_con_s5l_base = uart.base;
+        g_con_s5l_size = uart.size ? uart.size : 0x1000;
+    }
+
     /* Options from /chosen/bootargs (QEMU -append); the FDT is read-only here and the MMU is off. */
     args[0] = 0;
     if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) && fdt_get_bootargs((void *)fdt, args, sizeof(args)) >= 0) {
@@ -189,6 +205,16 @@ void stage1_build(uint64_t fdt)
             __asm__ volatile("wfe");
     }
 
+    /* The S5L UART: below the RAM it is covered by the Device map of [0, RAM base) (the M1: 0x2_3520_0000 under
+     * the RAM at 0x8_0000_0000); above it, it is added here. A window the map cannot take falls back to the
+     * (unreachable on the M1) PL011: the first output would fault otherwise, with nothing to say why. */
+    if (g_con_s5l_base && wel2_s1_map_device(&s1_pt, &ram, g_con_s5l_base, g_con_s5l_size, g_e2h)) {
+        g_con_s5l_base = 0;
+        g_con = (struct wel2_uart){ WEL2_UART_PL011, g_con.io, 0, 0, 0, 0 };
+        g_con.io.ctx = (void *)0x09000000UL;
+        s1_msg("Watari EL2: WARNING: the S5L UART window does not fit the stage-1 map, console back on the PL011\n");
+    }
+
     /* TCR_EL2 physical size = min(PARange, 40 bit). */
     uint64_t parange = mmfr0 & 0xf, ps = parange < 2 ? parange : 2;
 
@@ -200,6 +226,9 @@ void stage1_build(uint64_t fdt)
      * (g_s1 is read by s1_enable with the MMU off; g_ram_*, g_gran, g_e2h by everyone after the MMU is on). */
     clean_inval(s1_pool, (unsigned long)s1_pt.used << g_gran);
     clean_inval(&g_s1, sizeof(g_s1));
+    clean_inval(&g_con, sizeof(g_con));
+    clean_inval(&g_con_s5l_base, sizeof(g_con_s5l_base));
+    clean_inval(&g_con_s5l_size, sizeof(g_con_s5l_size));
     clean_inval(&g_ram_base, sizeof(g_ram_base));
     clean_inval(&g_ram_end, sizeof(g_ram_end));
     clean_inval(&g_ram_from_fdt, sizeof(g_ram_from_fdt));

@@ -262,6 +262,68 @@ static void t_s2_aic_hole(void)
 	check_aic_maps(WEL2_GRAN_4K);
 }
 
+/* T5: the Apple S5L console UART (0x2_3520_0000, 16 KB window on the t8103) is the layer's: it sits below the M1
+ * RAM, so the EL2 stage 1 already maps it Device (nothing added); the guest stage 2 gets a hole for it, next to the
+ * five other windows, and the table pool still suffices with either granule. A UART above the RAM is added by
+ * wel2_s1_map_device. */
+#define UART_S5L 0x235200000ULL
+
+static void check_uart_maps(unsigned gshift)
+{
+	const uint64_t rb = 0x800000000ULL, re = rb + 0x200000000ULL;
+	struct wel2_range holes[8] = { { GICD_P, 0x10000 }, { GICR_P, 8 * 0x20000 } };
+	unsigned n = 2;
+	struct v2m m;
+	struct wel2_pt pt;
+	struct wel2_ram ram;
+	struct wel2_s1_layout lay = { 0, 0, 0 };
+
+	CHECK_EQ(wel2_ram_set(&ram, rb, re - rb, rb, 1ULL << 36), 0);
+	/* stage 1: below the RAM -> already Device; the helper adds nothing and does not fail */
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), gshift, wel2_s1_va_bits(gshift)), 0);
+	CHECK_EQ(wel2_s1_build(&pt, &ram, &lay, true), 0);
+	unsigned used = pt.used;
+	CHECK_EQ(wel2_s1_map_device(&pt, &ram, UART_S5L, 0x4000, true), 0);
+	CHECK_EQ(pt.used, used);
+	CHECK(wel2_pt_walk(&pt, UART_S5L, NULL, NULL, NULL));
+	CHECK(wel2_pt_walk(&pt, UART_S5L + 0x3000, NULL, NULL, NULL));
+	/* a window overlapping the RAM is refused, a window above it is mapped Device */
+	CHECK_EQ(wel2_s1_map_device(&pt, &ram, rb + 0x1000, 0x4000, true), -1);
+	CHECK_EQ(wel2_s1_map_device(&pt, &ram, 1ULL << 40, 0x4000, true), -1);   /* beyond the 36/39-bit input range */
+	CHECK_EQ(wel2_s1_map_device(&pt, &ram, 0, 0, true), 0);
+	CHECK_EQ(wel2_s1_map_device(&pt, &ram, re + 0x10000000ULL, 0x4000, true), 0);
+	CHECK_EQ(attrs_of(&pt, re + 0x10000000ULL), attrs_of(&pt, UART_S5L));        /* the same Device attributes */
+
+	/* stage 2: all six windows of the M1 layer (GICD, GICR, MSI page, AIC, console UART, carve-out) */
+	CHECK_EQ(v2m_init(&m, V2M_T8103_BASE, 928, 32, NULL), 0);
+	CHECK_EQ(v2m_add_hole(&m, holes, &n, 8, gshift), 0);
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 8, AIC_T8103_BASE, AIC_T8103_SIZE0, gshift), 0);
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 8, UART_S5L, 0x4000, gshift), 0);
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 8, rb + 0x10000000ULL, 0x2000000ULL, gshift), 0);
+	CHECK_EQ(n, 6);
+	CHECK_EQ(wel2_pt_init(&pt, pool_s2, sizeof(pool_s2), gshift, WEL2_S2_IPA_BITS), 0);
+	CHECK_EQ(wel2_s2_build(&pt, &ram, holes, n), 0);
+	printf("    s2 six holes, granule %u KB: %u tables of %u\n", 1u << (gshift - 10), pt.used, WEL2_S2_POOL_BYTES >> gshift);
+	for (uint64_t a = UART_S5L; a < UART_S5L + 0x4000; a += 0x1000)
+		CHECK(!wel2_pt_walk(&pt, a, NULL, NULL, NULL));
+	CHECK_EQ(attrs_of(&pt, UART_S5L - 0x4000), ATTR_DEV_S2);          /* the neighbours stay device */
+	CHECK_EQ(attrs_of(&pt, UART_S5L + 0x4000), ATTR_DEV_S2);
+	CHECK(!wel2_pt_walk(&pt, AIC_T8103_BASE, NULL, NULL, NULL));
+	CHECK(!wel2_pt_walk(&pt, 0xFFFFC000ULL, NULL, NULL, NULL));
+	CHECK_EQ(attrs_of(&pt, rb), ATTR_NORMAL_S2);
+	/* a seventh and an eighth window still fit the list of eight */
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 8, 0x23d280000ULL, 0x4000, gshift), 0);
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 8, 0x2a0000000ULL, 0x4000, gshift), 0);
+	CHECK_EQ(n, 8);
+	CHECK_EQ(wel2_s2_add_hole(holes, &n, 8, 0x2b0000000ULL, 0x4000, gshift), -1);
+}
+
+static void t_s5l_uart_maps(void)
+{
+	check_uart_maps(WEL2_GRAN_16K);
+	check_uart_maps(WEL2_GRAN_4K);
+}
+
 /* #74: the GICv2m frame (4 KB at 0xFFFFF000) is trapped as the whole 16 KB page 0xFFFFC000-0xFFFFFFFF with
  * either granule. The RAM is the M1 layout (above 4 GB), so the page is plain device space around the hole. */
 static void check_v2m_hole(unsigned gshift)
@@ -419,6 +481,7 @@ int main(void)
 	RUN(t_s2_map);
 	RUN(t_s2_aic_hole);
 	RUN(t_s2_v2m_hole);
+	RUN(t_s5l_uart_maps);
 	RUN(t_s2_add_hole_rules);
 	RUN(t_s2_odd_ram_end);
 	RUN(t_s1_map);
