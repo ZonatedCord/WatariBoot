@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include "wel2_vgic.h"
 #include "wel2_pirq.h"
+#include "wel2_fb.h"
 
 /* QEMU virt GICv3 windows (hw/arm/virt.c memmap). */
 #define GICD_PHYS   0x08000000UL
@@ -64,6 +65,14 @@ extern struct wel2_uart g_con;       /* util.c: the console (PL011 until con_sel
 void con_select_s5l(uint64_t base);
 extern uint64_t g_con_s5l_base, g_con_s5l_size;   /* stage1.c: S5L UART window from the FDT, 0 = none */  /* switch the console to the Apple S5L UART at base (MMU may be off) */
 void puts_(const char *s);
+/* Framebuffer output (T5b, util.c): g_fb is set by stage1_build from the FDT (fmt NONE = no framebuffer, every call
+ * a no-op). putc_/puts_ mirror to it. checkpoint(n) paints square n green (reached), checkpoint_state(n, s) with
+ * s = 0 running / 1 pass / 2 fail, checkpoint_fail() repaints the current one red. All use aligned 32-bit stores
+ * only and need no stack-heavy or lock-taking code, so they run with the MMU off. */
+extern struct wel2_fb g_fb;
+void checkpoint(unsigned n);
+void checkpoint_state(unsigned n, unsigned state);
+void checkpoint_fail(void);
 void *memcpy(void *d, const void *s, unsigned long n);
 void *memset(void *d, int c, unsigned long n);
 void dcache_clean_range(const void *p, unsigned long n);

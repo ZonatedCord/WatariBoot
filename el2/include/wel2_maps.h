@@ -43,6 +43,18 @@ int wel2_s1_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct w
  * refused. Call after wel2_s1_build. 0, or -1 (overlaps RAM, pool exhausted, beyond the input range). */
 int wel2_s1_map_device(struct wel2_pt *pt, const struct wel2_ram *ram, uint64_t base, uint64_t size, bool e2h);
 
+/* MAIR_EL2: Attr0 = 0x00 Device-nGnRnE, Attr1 = 0xff Normal WB RW allocate, Attr2 = 0x44 Normal Inner and Outer
+ * Non-cacheable [verified: Arm ARM D24.2.127 MAIR_EL2 Attr encoding, 0b0100_0100 = Normal, Outer NC, Inner NC]. */
+#define WEL2_S1_ATTR_NC      2
+#define WEL2_MAIR_EL2_VALUE  0x44ff00ULL
+
+/* Maps the framebuffer [base, base+size) (rounded outwards to the granule) Normal non-cacheable XN in the EL2
+ * stage 1 (Device memory would fault on merged or unaligned stores, cacheable memory would need flushing). It must
+ * lie wholly above the RAM range (on the j293: base 0x9e2570000, RAM top 0x9df610000); a framebuffer that overlaps
+ * or sits below the RAM, or beyond the input range, is refused. Call after
+ * wel2_s1_build. 0, or -1 (refused, pool exhausted). */
+int wel2_s1_map_fb(struct wel2_pt *pt, const struct wel2_ram *ram, uint64_t base, uint64_t size, bool e2h);
+
 /* Add [base, base+size) to holes[0..*n) (capacity cap) for the granule 1 << gshift. The range is rounded
  * OUTWARDS to the granule (a stage-2 hole cannot be smaller than a page; the guest losing the rest of that page is
  * the safe direction for a device window). A range inside an existing hole is dropped (the t8103 AIC lists reg[1]

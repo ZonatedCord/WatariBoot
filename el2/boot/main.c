@@ -57,6 +57,7 @@ static const char *const vec_names[16] = {
 
 void __attribute__((noreturn)) fatal_msg(const char *why)
 {
+    checkpoint_fail();                  /* red square on the panel, even if the text path is the broken part */
     puts_("Watari EL2: FATAL: ");
     puts_(why);
     puts_("\nWatari EL2: halted\n");
@@ -67,6 +68,7 @@ void __attribute__((noreturn)) fatal_msg(const char *why)
 /* Never hang silently (lesson F-14): dump state, then halt. */
 static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
 {
+    checkpoint_fail();
     put_kn("Watari EL2: cpu ", this_cpu(), " UNEXPECTED EXCEPTION: \n");
     puts_(vec_names[idx & 15]);
     puts_("\n");
@@ -240,6 +242,11 @@ static void stage2_init(void)
      * guest's too and stays mapped: no S5L node, no hole.) */
     if (g_con_s5l_base && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_con_s5l_base, g_con_s5l_size, g_gran))
         fatal_msg("stage-2 holes: console UART window does not fit");
+
+    /* The framebuffer is the layer's too (checkpoints and log text): never given to the guest. The guest's stage 2
+     * is RAM plus these holes; unmapping the framebuffer pages makes a guest access fault to EL2 and be reported. */
+    if (g_fb.fmt && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, wel2_fb_bytes(&g_fb), g_gran))
+        fatal_msg("stage-2 holes: framebuffer does not fit");
 
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
@@ -666,6 +673,14 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     if (g_con_s5l_base) {
         put_kv("Watari EL2: console = Apple S5L UART at ", g_con_s5l_base);
         put_kv("Watari EL2:   window size = ", g_con_s5l_size);
+    }
+    if (g_fb.fmt) {                     /* geometry only; nothing else of the FDT is ever printed */
+        put_kv("Watari EL2: framebuffer at ", g_fb.base);
+        put_kn("Watari EL2:   width  = ", g_fb.width, " pixels\n");
+        put_kn("Watari EL2:   height = ", g_fb.height, " pixels\n");
+        put_kn("Watari EL2:   stride = ", g_fb.stride, " bytes\n");
+        puts_(g_fb.fmt == WEL2_FB_X2R10G10B10 ? "Watari EL2:   format = x2r10g10b10\n"
+                                               : "Watari EL2:   format = x8r8g8b8\n");
     }
     stage1_report();
     put_kv("Watari EL2: CurrentEL = ", el >> 2);
