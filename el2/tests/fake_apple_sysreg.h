@@ -22,7 +22,18 @@ struct fake_sysreg {
 	unsigned ipi_rr_writes;
 	uint64_t ipi_rr_last;
 	unsigned nwr[APPLE_SR_COUNT];
+	/* knobs: a source that does not go away when it is acknowledged / switched off */
+	bool stuck_ipi, stuck_pmcr0;
+	/* ICH_MISR model: when misr_cond is non-zero, MISR follows ICH_HCR: bit 0 (EOI) is unconditional (it has no
+	 * enable), bits [7:1] need their enable bit in ICH_HCR. Otherwise MISR is whatever the test presets. */
+	uint64_t misr_cond;
 };
+
+static inline void fs_misr_refresh(struct fake_sysreg *f)
+{
+	if (f->misr_cond)
+		f->r[APPLE_SR_ICH_MISR] = (f->misr_cond & 1) | (f->misr_cond & f->r[APPLE_SR_ICH_HCR] & ICH_HCR_MAINT_EN);
+}
 
 static uint64_t fs_rd(void *ctx, enum apple_sr id)
 {
@@ -42,7 +53,8 @@ static void fs_wr(void *ctx, enum apple_sr id, uint64_t v)
 	f->nwr[id]++;
 	switch (id) {
 	case APPLE_SR_IPI_SR:
-		f->r[id] &= ~(v & IPI_SR_PENDING);          /* write 1 to clear */
+		if (!f->stuck_ipi)
+			f->r[id] &= ~(v & IPI_SR_PENDING);  /* write 1 to clear */
 		break;
 	case APPLE_SR_IPI_RR_GLOBAL:
 		f->ipi_rr_writes++;
@@ -51,6 +63,14 @@ static void fs_wr(void *ctx, enum apple_sr id, uint64_t v)
 	case APPLE_SR_UPMSR:
 	case APPLE_SR_ICH_MISR:
 		break;                                       /* read-only */
+	case APPLE_SR_PMCR0:
+		if (!f->stuck_pmcr0)
+			f->r[id] = v;
+		break;
+	case APPLE_SR_ICH_HCR:
+		f->r[id] = v;
+		fs_misr_refresh(f);
+		break;
 	default:
 		f->r[id] = v;
 	}

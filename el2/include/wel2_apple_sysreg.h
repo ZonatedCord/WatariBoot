@@ -58,6 +58,7 @@ enum apple_sr {
 
 #define PMCR0_IMODE_SHIFT 8
 #define PMCR0_IMODE_MASK  (7ull << PMCR0_IMODE_SHIFT)
+#define PMCR0_IMODE_FIQ   4ull
 #define PMCR0_IACT        (1ull << 11)
 #define UPMCR0_IMODE_SHIFT 16
 #define UPMCR0_IMODE_MASK (7ull << UPMCR0_IMODE_SHIFT)

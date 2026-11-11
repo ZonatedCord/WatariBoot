@@ -19,7 +19,7 @@ uint64_t apple_ipi_value(uint64_t target_mpidr)
 
 	/* Aff2 is not used: on the j293 the P cores have Aff2 = 1 only because of the MPIDR layout
 	 * [verified: R:re/m3a-ehw0-measurements.md "Every core, measured"], and the cluster field is Aff1
-	 * [verified: Linux v6.12 irq-apple-aic.c:765-772]. Type [29:28] = 0 = immediate. */
+	 * [verified: Linux v6.12 irq-apple-aic.c:203-204 (MPIDR_CLUSTER = affinity level 1), 765-772]. Type [29:28] = 0 = immediate. */
 	return aff0 | (aff1 << 16);
 }
 
@@ -53,7 +53,19 @@ void apple_timer_unmask(struct apple_fiq_cpu *c, unsigned ppi)
 void apple_fiq_close_gates(struct apple_fiq_cpu *c)
 {
 	wr(c, APPLE_SR_VM_TMR_FIQ_ENA, 0);
-	c->vmasked = c->pmasked = false;       /* closed on purpose: resync must not reopen them */
+	c->vmasked = c->pmasked = false;
+	c->closed = true;                      /* closed on purpose: resync must not touch or reopen them */
+}
+
+static bool pmcr0_fiq_active(uint64_t v)
+{
+	/* a PMU FIQ needs IMODE = FIQ together with IACT (IACT alone is not an FIQ source) */
+	return ((v & PMCR0_IMODE_MASK) >> PMCR0_IMODE_SHIFT) == PMCR0_IMODE_FIQ && (v & PMCR0_IACT);
+}
+
+static bool upmcr0_fiq_mode(uint64_t v)
+{
+	return ((v & UPMCR0_IMODE_MASK) >> UPMCR0_IMODE_SHIFT) == UPMCR0_IMODE_FIQ;
 }
 
 static void quiesce_pmu(struct apple_fiq_cpu *c)
@@ -75,6 +87,7 @@ void apple_fiq_init_cpu(struct apple_fiq_cpu *c)
 {
 	/* Close the gates first: whatever state the core was left in, no guest-timer FIQ can be raised while the
 	 * controls below are rewritten. */
+	wr(c, APPLE_SR_ICH_HCR, 0);                      /* virtual interface off until cpuif_init() enables it */
 	wr(c, APPLE_SR_VM_TMR_FIQ_ENA, 0);
 	quiesce_pmu(c);
 	wr(c, APPLE_SR_IPI_SR, IPI_SR_PENDING);          /* write 1 clears a pending fast IPI */
@@ -86,7 +99,9 @@ void apple_fiq_init_cpu(struct apple_fiq_cpu *c)
 	wr(c, APPLE_SR_CNTP_CTL_EL02, 0);
 	wr(c, APPLE_SR_VM_TMR_FIQ_ENA, VM_TMR_FIQ_V | VM_TMR_FIQ_P);
 	c->vmasked = c->pmasked = false;
-	c->spurious_run = 0;
+	c->closed = false;
+	c->spurious_run = c->same_run = c->stuck_run = 0;
+	c->last_nontimer = 0;
 }
 
 static void storm_mask_everything(struct apple_fiq_cpu *c)
@@ -96,6 +111,13 @@ static void storm_mask_everything(struct apple_fiq_cpu *c)
 	wr(c, APPLE_SR_IPI_SR, IPI_SR_PENDING);
 	mask_own_timers(c);
 	wr(c, APPLE_SR_ICH_HCR, rd(c, APPLE_SR_ICH_HCR) & ~(ICH_HCR_EN | ICH_HCR_MAINT_EN));
+}
+
+static unsigned storm(struct apple_fiq_cpu *c)
+{
+	c->st.storms++;
+	storm_mask_everything(c);
+	return APPLE_FIQ_STORM;
 }
 
 static unsigned guest_timer(struct apple_fiq_cpu *c, uint64_t gate, uint64_t gate_bit, enum apple_sr ctl_id,
@@ -113,6 +135,8 @@ unsigned apple_fiq_handle(struct apple_fiq_cpu *c)
 	unsigned causes = 0;
 	uint64_t gate = rd(c, APPLE_SR_VM_TMR_FIQ_ENA);
 	uint64_t v;
+	bool stuck = false;
+	unsigned nt;
 	unsigned budget = c->spurious_budget ? c->spurious_budget : APPLE_FIQ_SPURIOUS_BUDGET;
 
 	c->st.fiq++;
@@ -121,28 +145,43 @@ unsigned apple_fiq_handle(struct apple_fiq_cpu *c)
 	causes |= guest_timer(c, gate, VM_TMR_FIQ_V, APPLE_SR_CNTV_CTL_EL02, APPLE_PPI_VTIMER, APPLE_FIQ_VTIMER);
 	causes |= guest_timer(c, gate, VM_TMR_FIQ_P, APPLE_SR_CNTP_CTL_EL02, APPLE_PPI_PTIMER, APPLE_FIQ_PTIMER);
 
-	/* 2. Fast IPI: acknowledge before the work, so an IPI sent meanwhile stays pending. */
+	/* 2. Fast IPI: acknowledge before the work, so an IPI sent meanwhile stays pending. Read back: a source
+	 * that stays asserted after the ack is stuck and is counted (D-3). */
 	if (rd(c, APPLE_SR_IPI_SR) & IPI_SR_PENDING) {
 		wr(c, APPLE_SR_IPI_SR, IPI_SR_PENDING);
 		if (c->on_ipi)
 			c->on_ipi(c->ctx);
 		causes |= APPLE_FIQ_IPI;
+		if (rd(c, APPLE_SR_IPI_SR) & IPI_SR_PENDING) {
+			c->st.ipi_stuck++;
+			stuck = true;
+		}
 	}
 
-	/* 3. vGIC maintenance: the flush the caller runs next harvests it; apple_fiq_after_flush() is the backstop. */
-	if ((rd(c, APPLE_SR_ICH_HCR) & ICH_HCR_EN) && rd(c, APPLE_SR_ICH_MISR) != 0)
+	/* 3. vGIC maintenance. On Linux v6.12 this is checked in the IRQ handler, not the FIQ handler, so the signal
+	 * type on the M1 is [hypothesis] until measured (DESIGN 5.1): the same check runs here and, through
+	 * apple_maint_check(), from the IRQ tail. */
+	if (apple_maint_pending(c))
 		causes |= APPLE_FIQ_MAINT;
 
-	/* 4. PMU sources are never wanted: switch the source off. */
+	/* 4. PMU sources are never wanted: switch the source off (IMODE = FIQ together with IACT, as m1n1 tests). */
 	v = rd(c, APPLE_SR_PMCR0);
-	if (v & PMCR0_IACT) {
+	if (pmcr0_fiq_active(v)) {
 		wr(c, APPLE_SR_PMCR0, v & ~(PMCR0_IMODE_MASK | PMCR0_IACT));
 		causes |= APPLE_FIQ_PMU;
+		if (pmcr0_fiq_active(rd(c, APPLE_SR_PMCR0))) {
+			c->st.pmu_stuck++;
+			stuck = true;
+		}
 	}
 	v = rd(c, APPLE_SR_UPMCR0);
-	if ((((v & UPMCR0_IMODE_MASK) >> UPMCR0_IMODE_SHIFT) == UPMCR0_IMODE_FIQ) && (rd(c, APPLE_SR_UPMSR) & UPMSR_IACT)) {
+	if (upmcr0_fiq_mode(v) && (rd(c, APPLE_SR_UPMSR) & UPMSR_IACT)) {
 		wr(c, APPLE_SR_UPMCR0, v & ~UPMCR0_IMODE_MASK);
 		causes |= APPLE_FIQ_UPMU;
+		if (upmcr0_fiq_mode(rd(c, APPLE_SR_UPMCR0)) && (rd(c, APPLE_SR_UPMSR) & UPMSR_IACT)) {
+			c->st.pmu_stuck++;
+			stuck = true;
+		}
 	}
 
 	/* 5. EL2's own timers: not used, write IMASK. */
@@ -171,32 +210,62 @@ unsigned apple_fiq_handle(struct apple_fiq_cpu *c)
 		c->st.spurious++;
 		if (++c->spurious_run > c->st.spurious_max_run)
 			c->st.spurious_max_run = c->spurious_run;
-		if (c->spurious_run > budget) {
-			c->st.storms++;
-			storm_mask_everything(c);
-			return APPLE_FIQ_STORM;
-		}
+		if (c->spurious_run > budget)
+			return storm(c);
 	} else {
 		c->spurious_run = 0;
 	}
+
+	/* D-3: a recognised source that does not go away. (a) read-back said it is still asserted: after more
+	 * than `budget` such FIQs in a row the module gives up. (b) The same non-timer cause set again and again:
+	 * the timers are excluded (they re-fire legitimately, gated), and so is an IPI-only set (a busy kick
+	 * stream is legitimate; a stuck IPI is caught by (a)). */
+	if (stuck) {
+		if (++c->stuck_run > budget)
+			return storm(c);
+	} else {
+		c->stuck_run = 0;
+	}
+	nt = causes & ~(APPLE_FIQ_VTIMER | APPLE_FIQ_PTIMER | APPLE_FIQ_IPI);
+	if (nt && nt == c->last_nontimer) {
+		if (++c->same_run > (c->same_budget ? c->same_budget : APPLE_FIQ_SAME_BUDGET))
+			return storm(c);
+	} else {
+		c->same_run = nt ? 1 : 0;
+	}
+	c->last_nontimer = nt;
 	return causes;
 }
 
-bool apple_fiq_after_flush(struct apple_fiq_cpu *c)
+bool apple_maint_pending(struct apple_fiq_cpu *c)
+{
+	return (rd(c, APPLE_SR_ICH_HCR) & ICH_HCR_EN) && rd(c, APPLE_SR_ICH_MISR) != 0;
+}
+
+enum apple_maint apple_maint_backstop(struct apple_fiq_cpu *c)
 {
 	uint64_t h = rd(c, APPLE_SR_ICH_HCR);
 
 	if (!(h & ICH_HCR_EN) || rd(c, APPLE_SR_ICH_MISR) == 0)
-		return false;
-	/* The flush could not remove the cause: drop the enables that produce it (never loop). */
-	wr(c, APPLE_SR_ICH_HCR, h & ~ICH_HCR_MAINT_EN);
+		return APPLE_MAINT_OK;
+	/* The flush could not remove the cause: drop the enables that produce it, once. */
+	h &= ~ICH_HCR_MAINT_EN;
+	wr(c, APPLE_SR_ICH_HCR, h);
 	c->st.maint_quenched++;
-	return true;
+	if (rd(c, APPLE_SR_ICH_MISR) == 0)
+		return APPLE_MAINT_QUENCHED;
+	/* Still asserted (bit 0, EOI, follows the list registers' EOI bits and has no enable): last resort, as
+	 * Linux does, is En = 0. The guest then has no virtual interface: the caller reports it as fatal. */
+	wr(c, APPLE_SR_ICH_HCR, h & ~ICH_HCR_EN);
+	c->st.maint_fatal++;
+	return APPLE_MAINT_FATAL;
 }
 
 static void resync_one(struct apple_fiq_cpu *c, unsigned ppi, enum apple_sr ctl_id, bool *masked)
 {
-	bool line = CNT_CTL_FIRING(rd(c, ctl_id));
+	bool line;
+
+	line = CNT_CTL_FIRING(rd(c, ctl_id));
 
 	vgic_set_irq_level(c->vgic, c->vcpu, ppi, line);
 	if (line && !*masked)
@@ -207,6 +276,8 @@ static void resync_one(struct apple_fiq_cpu *c, unsigned ppi, enum apple_sr ctl_
 
 void apple_timer_resync(struct apple_fiq_cpu *c)
 {
+	if (c->closed)
+		return;                          /* gates closed on purpose (park): leave them alone */
 	resync_one(c, APPLE_PPI_VTIMER, APPLE_SR_CNTV_CTL_EL02, &c->vmasked);
 	resync_one(c, APPLE_PPI_PTIMER, APPLE_SR_CNTP_CTL_EL02, &c->pmasked);
 }

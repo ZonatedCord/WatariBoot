@@ -200,23 +200,43 @@ static void t_cause_maintenance(void)
 	fresh();
 	ready();
 	FS.r[APPLE_SR_ICH_HCR] = ICH_HCR_EN | 0x6;          /* En | UIE | LRENPIE */
-	FS.r[APPLE_SR_ICH_MISR] = 0x2;
+	FS.misr_cond = 0x2;                                 /* an underflow condition the flush could not remove */
+	fs_misr_refresh(&FS);
+	CHECK(apple_maint_pending(&C));
 	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_MAINT);
 	CHECK_EQ(C.st.maint, 1);
-	/* the flush did not remove it: enables are cleared once, En stays, no loop */
-	CHECK(apple_fiq_after_flush(&C));
+	/* the enables are cleared once, MISR follows, En stays, no loop */
+	CHECK_EQ(apple_maint_backstop(&C), APPLE_MAINT_QUENCHED);
 	CHECK_EQ(FS.r[APPLE_SR_ICH_HCR] & ICH_HCR_MAINT_EN, 0);
 	CHECK(FS.r[APPLE_SR_ICH_HCR] & ICH_HCR_EN);
 	CHECK_EQ(C.st.maint_quenched, 1);
 	unsigned w = fs_writes_to(&FS, APPLE_SR_ICH_HCR);
-	FS.r[APPLE_SR_ICH_MISR] = 0;                        /* the cause is gone */
-	CHECK(!apple_fiq_after_flush(&C));
+	CHECK_EQ(apple_maint_backstop(&C), APPLE_MAINT_OK);   /* nothing left */
 	CHECK_EQ(fs_writes_to(&FS, APPLE_SR_ICH_HCR), w);
 	/* En clear: MISR is not looked at as a cause */
 	FS.r[APPLE_SR_ICH_HCR] = 0;
+	FS.misr_cond = 0;
 	FS.r[APPLE_SR_ICH_MISR] = 0x2;
+	CHECK(!apple_maint_pending(&C));
 	CHECK_EQ(apple_fiq_handle(&C), 0);
-	CHECK(!apple_fiq_after_flush(&C));
+	CHECK_EQ(apple_maint_backstop(&C), APPLE_MAINT_OK);
+}
+
+/* D-2: MISR.EOI (bit 0) is driven by the list registers and has no enable: clearing [7:1] cannot silence it. */
+static void t_maintenance_eoi_only_is_fatal_not_a_loop(void)
+{
+	fresh();
+	ready();
+	FS.r[APPLE_SR_ICH_HCR] = ICH_HCR_EN | 0xFE | 0x400;   /* En | all enables | TC */
+	FS.misr_cond = 0x1;                                 /* EOI only */
+	fs_misr_refresh(&FS);
+	CHECK_EQ(FS.r[APPLE_SR_ICH_MISR], 1);
+	CHECK_EQ(apple_maint_backstop(&C), APPLE_MAINT_FATAL);
+	CHECK_EQ(FS.r[APPLE_SR_ICH_HCR] & (ICH_HCR_EN | ICH_HCR_MAINT_EN), 0);   /* En = 0 as the last resort */
+	CHECK(FS.r[APPLE_SR_ICH_HCR] & 0x400);              /* the trap bits are left alone */
+	CHECK_EQ(C.st.maint_fatal, 1);
+	CHECK_EQ(fs_writes_to(&FS, APPLE_SR_ICH_HCR), 2);   /* exactly: clear enables, then clear En; no loop */
+	CHECK_EQ(apple_maint_backstop(&C), APPLE_MAINT_OK); /* En is off now: nothing more to do */
 }
 
 static void t_maintenance_resolved_by_flush(void)
@@ -227,8 +247,23 @@ static void t_maintenance_resolved_by_flush(void)
 	FS.r[APPLE_SR_ICH_MISR] = 0x2;
 	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_MAINT);
 	FS.r[APPLE_SR_ICH_MISR] = 0;                        /* the flush harvested */
-	CHECK(!apple_fiq_after_flush(&C));
+	CHECK_EQ(apple_maint_backstop(&C), APPLE_MAINT_OK);
 	CHECK_EQ(FS.r[APPLE_SR_ICH_HCR], ICH_HCR_EN | 0x2); /* untouched */
+}
+
+/* D-1: the same check from the IRQ tail (vector 9): no FIQ handler involved. */
+static void t_maintenance_from_irq_tail(void)
+{
+	fresh();
+	ready();
+	FS.r[APPLE_SR_ICH_HCR] = ICH_HCR_EN | 0x8;
+	FS.misr_cond = 0x8;
+	fs_misr_refresh(&FS);
+	CHECK(apple_maint_pending(&C));
+	CHECK_EQ(C.st.fiq, 0);
+	CHECK_EQ(apple_maint_backstop(&C), APPLE_MAINT_QUENCHED);
+	CHECK(!apple_maint_pending(&C));
+	CHECK_EQ(C.st.fiq, 0);
 }
 
 static void t_cause_pmu(void)
@@ -282,7 +317,7 @@ static void t_combined_causes(void)
 	FS.r[APPLE_SR_CNTV_CTL_EL02] = 5;
 	FS.r[APPLE_SR_CNTP_CTL_EL02] = 5;
 	FS.r[APPLE_SR_IPI_SR] = IPI_SR_PENDING;
-	FS.r[APPLE_SR_PMCR0] = PMCR0_IACT;
+	FS.r[APPLE_SR_PMCR0] = (4ull << PMCR0_IMODE_SHIFT) | PMCR0_IACT;
 	FS.r[APPLE_SR_ICH_HCR] = ICH_HCR_EN | 0x2;
 	FS.r[APPLE_SR_ICH_MISR] = 2;
 	FS.r[APPLE_SR_CNTHP_CTL] = 5;
@@ -436,6 +471,111 @@ static void t_spurious_default_budget(void)
 	CHECK_EQ(apple_fiq_handle(&C), 0);
 }
 
+static void t_pmu_needs_imode_fiq(void)
+{
+	fresh();
+	ready();
+	FS.r[APPLE_SR_PMCR0] = PMCR0_IACT;                  /* IACT without IMODE = FIQ: not an FIQ source */
+	CHECK_EQ(apple_fiq_handle(&C), 0);
+	FS.r[APPLE_SR_PMCR0] = 4ull << PMCR0_IMODE_SHIFT;   /* IMODE = FIQ without IACT: nothing pending */
+	CHECK_EQ(apple_fiq_handle(&C), 0);
+	FS.r[APPLE_SR_PMCR0] = (2ull << PMCR0_IMODE_SHIFT) | PMCR0_IACT;   /* IMODE = AIC */
+	CHECK_EQ(apple_fiq_handle(&C), 0);
+}
+
+static void t_stuck_ipi_is_a_storm(void)
+{
+	fresh();
+	ready();
+	C.spurious_budget = 3;
+	FS.stuck_ipi = true;
+	FS.r[APPLE_SR_IPI_SR] = IPI_SR_PENDING;             /* the ack does not clear it */
+	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_IPI);
+	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_IPI);
+	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_IPI);
+	CHECK_EQ(C.st.ipi_stuck, 3);
+	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_STORM);    /* the fourth in a row */
+	CHECK_EQ(FS.r[APPLE_SR_VM_TMR_FIQ_ENA], 0);
+	/* a healthy IPI stream is not a storm, however long */
+	fresh();
+	ready();
+	C.spurious_budget = 3;
+	for (int i = 0; i < 500; i++) {
+		FS.r[APPLE_SR_IPI_SR] = IPI_SR_PENDING;
+		CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_IPI);
+	}
+	CHECK_EQ(C.st.storms, 0);
+	CHECK_EQ(C.st.ipi_stuck, 0);
+}
+
+static void t_stuck_pmu_is_a_storm(void)
+{
+	fresh();
+	ready();
+	C.spurious_budget = 2;
+	FS.stuck_pmcr0 = true;
+	FS.r[APPLE_SR_PMCR0] = (4ull << PMCR0_IMODE_SHIFT) | PMCR0_IACT;   /* switching it off does not stick */
+	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_PMU);
+	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_PMU);
+	CHECK_EQ(C.st.pmu_stuck, 2);
+	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_STORM);
+	CHECK_EQ(C.st.storms, 1);
+}
+
+static void t_same_cause_budget(void)
+{
+	fresh();
+	ready();
+	C.same_budget = 4;
+	/* EL2's own timer "fires" again after every IMASK write (a model of a source that cannot be quieted) */
+	for (int i = 0; i < 4; i++) {
+		FS.r[APPLE_SR_CNTHP_CTL] = 5;
+		CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_HPTIMER);
+	}
+	FS.r[APPLE_SR_CNTHP_CTL] = 5;
+	CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_STORM);
+	/* a different cause in between restarts the count */
+	fresh();
+	ready();
+	C.same_budget = 4;
+	for (int i = 0; i < 20; i++) {
+		FS.r[APPLE_SR_CNTHP_CTL] = 5;
+		CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_HPTIMER);
+		FS.r[APPLE_SR_CNTHV_CTL] = 5;
+		CHECK_EQ(apple_fiq_handle(&C), APPLE_FIQ_HVTIMER);
+	}
+	CHECK_EQ(C.st.storms, 0);
+}
+
+static void t_closed_gates_stay_closed(void)
+{
+	fresh();
+	ready();
+	apple_fiq_close_gates(&C);                          /* park */
+	unsigned gw = fs_writes_to(&FS, APPLE_SR_VM_TMR_FIQ_ENA);
+	FS.r[APPLE_SR_CNTV_CTL_EL02] = 5;                   /* a running timer on the parked core */
+	apple_timer_resync(&C);
+	CHECK_EQ(FS.r[APPLE_SR_VM_TMR_FIQ_ENA], 0);
+	CHECK_EQ(fs_writes_to(&FS, APPLE_SR_VM_TMR_FIQ_ENA), gw);   /* resync wrote nothing */
+	FS.r[APPLE_SR_CNTV_CTL_EL02] = 0;                   /* ... and silenced: still must not reopen */
+	apple_timer_resync(&C);
+	CHECK_EQ(FS.r[APPLE_SR_VM_TMR_FIQ_ENA], 0);
+	CHECK(!any_deliverable());
+	apple_fiq_init_cpu(&C);                             /* only the re-entry init reopens them */
+	CHECK_EQ(FS.r[APPLE_SR_VM_TMR_FIQ_ENA], 3);
+}
+
+static void t_init_ich_hcr_off_first(void)
+{
+	fresh();
+	FS.r[APPLE_SR_ICH_HCR] = ICH_HCR_EN | 0x6;
+	apple_fiq_init_cpu(&C);
+	CHECK_EQ(FS.r[APPLE_SR_ICH_HCR], 0);
+	CHECK_EQ(FS.log[0].id, APPLE_SR_ICH_HCR);            /* the very first access is the write of 0 */
+	CHECK(FS.log[0].write);
+	CHECK_EQ(FS.log[0].val, 0);
+}
+
 int main(void)
 {
 	RUN(t_ipi_value);
@@ -447,7 +587,15 @@ int main(void)
 	RUN(t_timer_not_a_cause);
 	RUN(t_cause_ipi);
 	RUN(t_cause_maintenance);
+	RUN(t_maintenance_eoi_only_is_fatal_not_a_loop);
 	RUN(t_maintenance_resolved_by_flush);
+	RUN(t_maintenance_from_irq_tail);
+	RUN(t_pmu_needs_imode_fiq);
+	RUN(t_stuck_ipi_is_a_storm);
+	RUN(t_stuck_pmu_is_a_storm);
+	RUN(t_same_cause_budget);
+	RUN(t_closed_gates_stay_closed);
+	RUN(t_init_ich_hcr_off_first);
 	RUN(t_cause_pmu);
 	RUN(t_cause_uncore_pmu);
 	RUN(t_cause_own_timers);

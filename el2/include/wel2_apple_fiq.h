@@ -38,9 +38,11 @@
 #define APPLE_FIQ_STORM    (1u << 31)   /* spurious budget exhausted: everything is masked, caller must report */
 
 #define APPLE_FIQ_SPURIOUS_BUDGET 16u
+#define APPLE_FIQ_SAME_BUDGET     64u   /* consecutive FIQs with the same non-timer, non-IPI cause set */
 
 struct apple_fiq_stats {
-	unsigned fiq, vtimer, ptimer, ipi, maint, maint_quenched, pmu, upmu, hvtimer, hptimer;
+	unsigned fiq, vtimer, ptimer, ipi, maint, maint_quenched, maint_fatal, pmu, upmu, hvtimer, hptimer;
+	unsigned ipi_stuck, pmu_stuck;
 	unsigned spurious, spurious_max_run, storms;
 };
 
@@ -50,15 +52,17 @@ struct apple_fiq_cpu {
 	unsigned vcpu;                       /* index of this core's vCPU in the vGIC model */
 	void (*on_ipi)(void *ctx);           /* the layer's IPI work (kick); the flush that follows delivers */
 	void *ctx;
-	unsigned spurious_budget;            /* consecutive spurious FIQs tolerated; 0 = APPLE_FIQ_SPURIOUS_BUDGET */
+	unsigned spurious_budget;            /* consecutive spurious (and stuck-source) FIQs tolerated; 0 = APPLE_FIQ_SPURIOUS_BUDGET */
+	unsigned same_budget;                /* 0 = APPLE_FIQ_SAME_BUDGET */
 	/* state */
 	bool vmasked, pmasked;               /* gate closed because the line is high */
-	unsigned spurious_run;
+	bool closed;                         /* gates closed on purpose (park / fatal): resync leaves them alone */
+	unsigned spurious_run, same_run, stuck_run, last_nontimer;
 	struct apple_fiq_stats st;
 };
 
 /* IPI_RR_GLOBAL_EL1 value for a target MPIDR: core = Aff0 in [7:0], cluster = Aff1 in [23:16], type 0 (immediate)
- * [verified: Linux v6.12 irq-apple-aic.c:168-176, 765-772 (cluster = MPIDR affinity level 1)]. */
+ * [verified: Linux v6.12 irq-apple-aic.c:168-176, 765-772 (MPIDR_CLUSTER = affinity level 1 at 203-204)]. */
 uint64_t apple_ipi_value(uint64_t target_mpidr);
 /* One write to IPI_RR_GLOBAL_EL1 (the local form is not used; review L-4). */
 void apple_ipi_send(struct apple_fiq_cpu *c, uint64_t target_mpidr);
@@ -71,11 +75,18 @@ void apple_fiq_close_gates(struct apple_fiq_cpu *c);
 
 /* FIQ taken at EL2 from the guest (vector index 10). Returns the causes found; APPLE_FIQ_STORM means the
  * module has masked every source and the caller must report with a register dump. Caller runs cpuif_flush()
- * afterwards (always), then apple_fiq_after_flush(). */
+ * afterwards (always), then apple_maint_backstop(). */
 unsigned apple_fiq_handle(struct apple_fiq_cpu *c);
-/* After the flush: if the maintenance condition is still asserted, clear the maintenance enables (never loops).
- * Returns true if it had to. */
-bool apple_fiq_after_flush(struct apple_fiq_cpu *c);
+/* vGIC maintenance (ICH_HCR_EL2.En and ICH_MISR_EL2 != 0). On Linux v6.12 the check lives in the IRQ handler
+ * (irq-apple-aic.c:406-421), not in the FIQ handler; which signal the M1 uses is [hypothesis] until measured, so
+ * both exit tails call these (IRQ vector 9 and FIQ vector 10), after cpuif_flush(). */
+bool apple_maint_pending(struct apple_fiq_cpu *c);   /* pure read */
+enum apple_maint { APPLE_MAINT_OK = 0, APPLE_MAINT_QUENCHED = 1, APPLE_MAINT_FATAL = 2 };
+/* Backstop, never loops: if the condition is still asserted after the flush, clear ICH_HCR[7:1] and re-read
+ * ICH_MISR_EL2; if it is still non-zero (e.g. EOI, bit 0, which follows the list registers' EOI bits), clear
+ * ICH_HCR.En as well and return FATAL (the caller reports). QUENCHED = the enables were cleared and it worked;
+ * the caller must then invalidate its cached ICH_HCR copy. */
+enum apple_maint apple_maint_backstop(struct apple_fiq_cpu *c);
 
 /* Make the vGIC timer lines follow the guest timer controls and reopen a closed gate whose line went low.
  * Replaces vtimer_line() + gic_phys_ppi_enable(PPI_VTIMER, true) in cpuif_flush() on the M1. */
