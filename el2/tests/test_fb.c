@@ -392,7 +392,7 @@ static void t_ppm_sample(void)
 }
 
 /* ---- FDT lookup ------------------------------------------------------------------------------------------------- */
-enum { FB_OK, FB_DISABLED, FB_NO_COMPAT, FB_NO_REG, FB_NO_FORMAT, FB_BAD_FORMAT, FB_UNDER_SOC, FB_NO_CHOSEN };
+enum { FB_OK, FB_DISABLED, FB_NO_COMPAT, FB_NO_REG, FB_NO_FORMAT, FB_BAD_FORMAT, FB_UNDER_SOC, FB_NO_CHOSEN, FB_SMALL_REG, FB_RESERVED, FB_OKAY };
 
 /* j293-shaped: root cells 2/2, /chosen with the node m1n1 fills. `serial` adds the property the code must never
  * look at. */
@@ -433,7 +433,13 @@ static void *fb_tree(struct fdtb *b, int variant, const char *format, bool seria
 			fb_strs(b, "compatible", "simple-bus\0", 11);
 		if (variant == FB_DISABLED)
 			fb_strs(b, "status", "disabled\0", 9);
-		if (variant != FB_NO_REG) {
+		if (variant == FB_RESERVED)
+			fb_strs(b, "status", "reserved\0", 9);
+		if (variant == FB_OKAY)
+			fb_strs(b, "status", "okay\0", 5);
+		if (variant == FB_SMALL_REG) {
+			fb_reg(b, 2, 2, 0x9e2570000ull, 0xfa0000 - 4);      /* one word short of the screen */
+		} else if (variant != FB_NO_REG) {
 			if (chosen_cells == 1)
 				fb_reg(b, 1, 1, 0xe2570000ull, 0xfa0000);
 			else
@@ -470,6 +476,10 @@ static void t_fdt_present(void)
 	CHECK_EQ(fdt_get_framebuffer(fdt, &f), 0);
 	CHECK_EQ(f.fmt, WEL2_FB_X8R8G8B8);
 
+	fdt = fb_tree(&b, FB_OKAY, "x8r8g8b8", false, 0);              /* status "okay" is usable */
+	CHECK_EQ(fdt_get_framebuffer(fdt, &f), 0);
+	CHECK_EQ(f.fmt, WEL2_FB_X8R8G8B8);
+
 	/* /chosen with its own 1/1 cells: reg is <0xe2570000 0xfa0000> */
 	fdt = fb_tree(&b, FB_OK, "x8r8g8b8", false, 1);
 	CHECK_EQ(fdt_get_framebuffer(fdt, &f), 0);
@@ -478,7 +488,7 @@ static void t_fdt_present(void)
 
 static void t_fdt_absent_or_unusable(void)
 {
-	static const int variants[] = { FB_DISABLED, FB_NO_COMPAT, FB_NO_REG, FB_NO_FORMAT, FB_BAD_FORMAT, FB_UNDER_SOC,
+	static const int variants[] = { FB_DISABLED, FB_NO_COMPAT, FB_NO_REG, FB_NO_FORMAT, FB_BAD_FORMAT, FB_UNDER_SOC, FB_SMALL_REG, FB_RESERVED,
 					FB_NO_CHOSEN };
 	struct fdtb b;
 	struct wel2_fb f;

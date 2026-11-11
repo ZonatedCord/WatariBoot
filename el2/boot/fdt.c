@@ -458,7 +458,7 @@ int fdt_find_compatible_reg(void *fdt, const char *compat, struct fdt_reg_info *
  * defaults). The first usable node wins; later ones are ignored. Only these properties are read: nothing else of the
  * blob (serial number, MAC addresses...) is looked at, let alone kept. */
 struct fbnode {
-    bool compat, disabled, has_reg, has_w, has_h, has_s, has_f;
+    bool compat, disabled, sized, has_reg, has_w, has_h, has_s, has_f;
     uint64_t base, size;
     uint32_t w, h, s;
     const char *fmt;
@@ -470,11 +470,14 @@ static void fb_prop(struct fbnode *n, unsigned ac, unsigned sc, const char *prop
     if (str_eq(prop, "compatible")) {
         n->compat = stringlist_has(val, len, "simple-framebuffer");
     } else if (str_eq(prop, "status")) {
-        n->disabled = len >= 9 && val[len - 1] == 0 && str_eq((const char *)val, "disabled");
+        /* absent or "okay"/"ok" = usable; anything else (disabled, reserved, fail, garbage) = not */
+        n->disabled = !(len >= 1 && val[len - 1] == 0 &&
+                        (str_eq((const char *)val, "okay") || str_eq((const char *)val, "ok")));
     } else if (str_eq(prop, "reg")) {
         if (ac >= 1 && ac <= 2 && sc <= 2 && len >= 4 * (ac + sc)) {
             n->base = be_cells(val, ac);
             n->size = sc ? be_cells(val + 4 * ac, sc) : 0;
+            n->sized = sc > 0;
             n->has_reg = true;
         }
     } else if (str_eq(prop, "width") && len == 4) {
@@ -533,7 +536,9 @@ int fdt_get_framebuffer(void *fdt, struct wel2_fb *fb)
             if (depth < 0)
                 return -1;
             if (in_fb && depth == 2 && n.compat && !n.disabled && n.has_reg && n.has_w && n.has_h && n.has_s &&
-                n.has_f && wel2_fb_setup(fb, n.base, n.w, n.h, n.s, n.fmt, n.flen) == 0)
+                n.has_f &&
+                (!n.sized || n.size >= (uint64_t)n.h * n.s) &&      /* reg must cover the whole screen */
+                wel2_fb_setup(fb, n.base, n.w, n.h, n.s, n.fmt, n.flen) == 0)
                 return 0;                       /* the first usable node wins */
             in_fb = false;
             depth--;
@@ -545,7 +550,16 @@ int fdt_get_framebuffer(void *fdt, struct wel2_fb *fb)
             off += 8;
             if (len > end - off || nameoff >= str_size)
                 return -1;
-            const char *prop = strs + nameoff;
+            /* the property name, copied with a bound by the strings block (a name not terminated inside it is
+             * cut at 23 characters, which matches none of the names looked for) */
+            char prop[24];
+            uint32_t pn = 0;
+
+            while (pn < sizeof(prop) - 1 && nameoff + pn < str_size && strs[nameoff + pn]) {
+                prop[pn] = strs[nameoff + pn];
+                pn++;
+            }
+            prop[pn] = 0;
 
             if (len == 4 && str_eq(prop, "#address-cells"))
                 a[depth] = be32(h + off);

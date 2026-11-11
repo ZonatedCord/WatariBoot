@@ -5,6 +5,14 @@
 #include "wel2_fb.h"
 #include "font5x7.h"
 
+/* Make the stores above reach the panel's memory before anything else happens (a halt right after a red square). */
+static void sync_stores(void)
+{
+#if defined(__aarch64__)
+	__asm__ volatile("dsb st" ::: "memory");
+#endif
+}
+
 /* `s` (len bytes, from the FDT) equals the literal including its terminating NUL. */
 static bool str_is(const char *s, uint32_t len, const char *lit)
 {
@@ -95,6 +103,7 @@ void wel2_fb_checkpoint(struct wel2_fb *fb, unsigned index, uint32_t rgb)
 		return;
 	fill(fb, (uint32_t)x, 0, WEL2_FB_CP_SIZE, WEL2_FB_CP_SIZE, wel2_fb_pixel(fb, rgb));
 	fb->cp = (int32_t)index;
+	sync_stores();
 }
 
 void wel2_fb_checkpoint_fail(struct wel2_fb *fb)
@@ -153,6 +162,7 @@ void wel2_fb_putc(struct wel2_fb *fb, char c)
 		return;
 	if (c == '\n') {
 		newline(fb);
+		sync_stores();
 		return;
 	}
 	draw_cell(fb, fb->cx, fb->cy, c);
@@ -166,4 +176,5 @@ void wel2_fb_puts(struct wel2_fb *fb, const char *s)
 		return;
 	while (*s)
 		wel2_fb_putc(fb, *s++);
+	sync_stores();
 }
