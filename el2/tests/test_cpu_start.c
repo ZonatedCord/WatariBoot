@@ -4,7 +4,7 @@
 #include "test.h"
 #include "wel2_cpu_start.h"
 
-enum { O_W64 = 1, O_CVAC, O_DSB, O_SEV, O_WFE, O_WSET, O_TIMERS, O_MMIO };
+enum { O_W64 = 1, O_CVAC, O_DSB, O_SEV, O_WFE, O_WSET, O_TIMERS, O_MMIO, O_LOG };
 struct rec { int op; uint64_t a, b; };
 static struct rec log_[256];
 static unsigned nlog;
@@ -29,7 +29,9 @@ static uint32_t f_wget(void *c, unsigned i) { (void)c; return wake[i]; }
 static void f_timers(void *c) { (void)c; rec(O_TIMERS, 0, 0); }
 static void f_mmio(void *c, uint64_t pa, uint32_t v) { (void)c; rec(O_MMIO, pa, v); }
 
-static const struct wel2_cs_ops OPS = { f_w64, f_cvac, f_dsb, f_sev, f_wfe, f_wset, f_wget, f_timers, f_mmio, NULL };
+static void f_log(void *c, int ev, unsigned i, uint64_t a) { (void)c; rec(O_LOG, ((uint64_t)ev << 8) | i, a); }
+
+static const struct wel2_cs_ops OPS = { f_w64, f_cvac, f_dsb, f_sev, f_wfe, f_wset, f_wget, f_timers, f_mmio, f_log, NULL };
 static const uint64_t SECENTRY = 0x900000234000ull;
 static const struct wel2_cs_cpu M1CPUS[8] = {
 	{ 0x80000000, 0x1000 }, { 0x80000001, 0x1008 }, { 0x80000002, 0x1010 }, { 0x80000003, 0x1018 },
@@ -54,6 +56,8 @@ static void init_checks(void)
 	CHECK_EQ(wel2_cs_init(&c, NULL, SECENTRY, M1CPUS, 4, 0), -1);
 	struct wel2_cs_ops bad = OPS; bad.sev = NULL;
 	CHECK_EQ(wel2_cs_init(&c, &bad, SECENTRY, M1CPUS, 4, 0), -1);
+	bad = OPS; bad.log = NULL;
+	CHECK_EQ(wel2_cs_init(&c, &bad, SECENTRY, M1CPUS, 4, 0), -1);
 	struct wel2_cs_cpu dup[2] = { { 0x80000000, 0x1000 }, { 0x80000000, 0x1008 } };
 	CHECK_EQ(wel2_cs_init(&c, &OPS, SECENTRY, dup, 2, 0), -1);
 	fresh(8);
@@ -68,17 +72,23 @@ static void first_start_order(void)
 	uint64_t e, x;
 	fresh(8);
 	CHECK_EQ(wel2_cs_cpu_on(&CS, 0x00010101, 0x40200000, 77), WEL2_CS_SUCCESS);
-	CHECK_EQ(nlog, 4);
+	CHECK_EQ(nlog, 5);
+	CHECK_EQ(log_[4].op, O_LOG); CHECK_EQ(log_[4].a, (WEL2_CS_EV_ON_ACCEPT << 8) | 5); CHECK_EQ(log_[4].b, 0);
 	CHECK_EQ(log_[0].op, O_W64); CHECK_EQ(log_[0].a, 0x1048); CHECK_EQ(log_[0].b, SECENTRY);
 	CHECK_EQ(log_[1].op, O_CVAC); CHECK_EQ(log_[1].a, 0x1048);
 	CHECK_EQ(log_[2].op, O_DSB);
 	CHECK_EQ(log_[3].op, O_SEV);
 	CHECK_EQ(mem[(0x1048 - 0x1000) / 8], SECENTRY);
 	CHECK_EQ(wel2_cs_affinity(&CS, 0x00010101), WEL2_CS_AFF_PENDING);
+	nlog = 0;
 	CHECK(wel2_cs_enter(&CS, 5, &e, &x));
+	CHECK_EQ(nlog, 1);                           /* arrival is logged */
+	CHECK_EQ(log_[0].op, O_LOG); CHECK_EQ(log_[0].a, (WEL2_CS_EV_ARRIVE << 8) | 5); CHECK_EQ(log_[0].b, 0x40200000);
 	CHECK_EQ(e, 0x40200000); CHECK_EQ(x, 77);
 	CHECK_EQ(wel2_cs_affinity(&CS, 0x00010101), WEL2_CS_AFF_ON);
-	CHECK(!wel2_cs_enter(&CS, 5, &e, &x));       /* not PENDING any more */
+	nlog = 0;
+	CHECK(!wel2_cs_enter(&CS, 5, &e, &x));       /* not PENDING any more: no log, caller must not eret */
+	CHECK_EQ(nlog, 0);
 	CHECK(!wel2_cs_enter(&CS, 7, &e, &x));       /* never started */
 }
 
@@ -111,6 +121,7 @@ static void double_on(void)
 	CHECK_EQ(wel2_cs_cpu_on(&CS, 0x00000001, 0x40000100, 2), WEL2_CS_ON_PENDING);
 	CHECK(wel2_cs_enter(&CS, 1, &e, &x));
 	CHECK_EQ(e, 0x40000000);                     /* the second call changed nothing */
+	nlog = 0;
 	CHECK_EQ(wel2_cs_cpu_on(&CS, 0x00000001, 0x40000100, 2), WEL2_CS_ALREADY_ON);
 	CHECK_EQ(nlog, 0);                           /* neither refused call touched memory or events */
 }
@@ -127,7 +138,8 @@ static void off_then_on(void)
 	nlog = 0;
 	CHECK_EQ(wel2_cs_cpu_on(&CS, 0x00000001, 0x40300000, 9), WEL2_CS_SUCCESS);
 	for (unsigned i = 0; i < nlog; i++) { CHECK(log_[i].op != O_W64); CHECK(log_[i].op != O_CVAC); }
-	CHECK_EQ(nlog, 4);
+	CHECK_EQ(nlog, 5);
+	CHECK_EQ(log_[4].op, O_LOG); CHECK_EQ(log_[4].b, 1);
 	CHECK_EQ(log_[0].op, O_DSB);
 	CHECK_EQ(log_[1].op, O_WSET); CHECK_EQ(log_[1].a, 1); CHECK_EQ(log_[1].b, 1);
 	CHECK_EQ(log_[2].op, O_DSB);
@@ -136,13 +148,14 @@ static void off_then_on(void)
 	/* the parked core: flag already set -> no wfe, flag cleared, timers reset, then enter */
 	nlog = 0;
 	CHECK(wel2_cs_park(&CS, 1, 5));
-	CHECK_EQ(nlog, 2);
-	CHECK_EQ(log_[0].op, O_WSET); CHECK_EQ(log_[0].b, 0);
-	CHECK_EQ(log_[1].op, O_TIMERS);
+	CHECK_EQ(nlog, 3);
+	CHECK_EQ(log_[0].op, O_TIMERS);              /* at park entry */
+	CHECK_EQ(log_[1].op, O_WSET); CHECK_EQ(log_[1].b, 0);
+	CHECK_EQ(log_[2].op, O_TIMERS);              /* after the wake */
 	CHECK_EQ(wake[1], 0);
 	nlog = 0;
 	CHECK(wel2_cs_enter(&CS, 1, &e, &x));
-	CHECK_EQ(nlog, 0);
+	CHECK_EQ(nlog, 1);
 	CHECK_EQ(e, 0x40300000); CHECK_EQ(x, 9);
 	CHECK_EQ(wel2_cs_affinity(&CS, 0x00000001), WEL2_CS_AFF_ON);
 	/* a second round works the same */
@@ -163,8 +176,9 @@ static void park_waits(void)
 	CHECK_EQ(wel2_cs_cpu_off(&CS, 2), WEL2_CS_SUCCESS);
 	nlog = 0;
 	CHECK(!wel2_cs_park(&CS, 2, 3));             /* nobody wakes it */
-	CHECK_EQ(nlog, 3);
-	for (unsigned i = 0; i < nlog; i++) CHECK_EQ(log_[i].op, O_WFE);   /* wfe only while parked */
+	CHECK_EQ(nlog, 4);
+	CHECK_EQ(log_[0].op, O_TIMERS);              /* gates closed before the first wfe */
+	for (unsigned i = 1; i < nlog; i++) CHECK_EQ(log_[i].op, O_WFE);   /* wfe only while parked */
 	nlog = 0; wfe_cnt = 0; wfe_until_wake = 4; wake_idx_to_set = 2;
 	CHECK(wel2_cs_park(&CS, 2, 100));
 	CHECK_EQ(wfe_cnt, 4);
@@ -191,11 +205,49 @@ static void last_core_denied(void)
 	fresh(2);
 	CHECK_EQ(wel2_cs_cpu_off(&CS, 0), WEL2_CS_DENIED);                           /* only core 0 is on */
 	CHECK_EQ(wel2_cs_cpu_on(&CS, 0x00000001, 0x40000000, 0), WEL2_CS_SUCCESS);
-	CHECK_EQ(wel2_cs_cpu_off(&CS, 0), WEL2_CS_SUCCESS);                          /* core 1 pending: not last */
+	CHECK_EQ(wel2_cs_cpu_off(&CS, 0), WEL2_CS_DENIED);                           /* core 1 only PENDING: does not count */
 	CHECK(wel2_cs_enter(&CS, 1, &e, &x));
+	CHECK_EQ(wel2_cs_can_off(&CS, 0), WEL2_CS_SUCCESS);
+	CHECK_EQ(wel2_cs_affinity(&CS, 0x00000000), WEL2_CS_AFF_ON);                 /* can_off changed nothing */
+	CHECK_EQ(wel2_cs_cpu_off(&CS, 0), WEL2_CS_SUCCESS);                          /* core 1 is ON */
 	CHECK_EQ(wel2_cs_cpu_off(&CS, 1), WEL2_CS_DENIED);                           /* now core 1 is the last */
 	CHECK_EQ(wel2_cs_cpu_off(&CS, 0), WEL2_CS_INVALID_PARAMETERS);               /* already off */
 	CHECK_EQ(wel2_cs_cpu_off(&CS, 5), WEL2_CS_INVALID_PARAMETERS);
+}
+
+/* The boot core can be switched off and back on through the wake path (it was never in the spin table). */
+static void boot_core_cycle(void)
+{
+	uint64_t e, x;
+	fresh(2);
+	CHECK_EQ(wel2_cs_cpu_on(&CS, 0x00000001, 0x40000000, 0), WEL2_CS_SUCCESS);
+	CHECK(wel2_cs_enter(&CS, 1, &e, &x));
+	CHECK_EQ(wel2_cs_cpu_off(&CS, 0), WEL2_CS_SUCCESS);
+	nlog = 0;
+	CHECK_EQ(wel2_cs_cpu_on(&CS, 0x00000000, 0x40600000, 4), WEL2_CS_SUCCESS);
+	for (unsigned i = 0; i < nlog; i++) CHECK(log_[i].op != O_W64 && log_[i].op != O_CVAC);
+	CHECK(wel2_cs_park(&CS, 0, 2));
+	CHECK(wel2_cs_enter(&CS, 0, &e, &x));
+	CHECK_EQ(e, 0x40600000); CHECK_EQ(x, 4);
+}
+
+static void off_on_pending_core(void)
+{
+	fresh(2);
+	CHECK_EQ(wel2_cs_cpu_on(&CS, 0x00000001, 0x40000000, 0), WEL2_CS_SUCCESS);
+	CHECK_EQ(wel2_cs_cpu_off(&CS, 1), WEL2_CS_INVALID_PARAMETERS);   /* PENDING is not ON */
+	CHECK_EQ(wel2_cs_affinity(&CS, 0x00000001), WEL2_CS_AFF_PENDING);
+}
+
+/* OFF + released + not parked cannot be reached through the API; force it: a second spin-table start is refused. */
+static void off_released_not_parked(void)
+{
+	fresh(2);
+	CS.core[1].released = true;
+	nlog = 0;
+	CHECK_EQ(wel2_cs_cpu_on(&CS, 0x00000001, 0x40000000, 0), WEL2_CS_INTERNAL_FAILURE);
+	CHECK_EQ(nlog, 0);
+	CHECK_EQ(wel2_cs_affinity(&CS, 0x00000001), WEL2_CS_AFF_OFF);
 }
 
 static void watchdog(void)
@@ -211,8 +263,9 @@ static void watchdog(void)
 	CHECK_EQ(log_[3].op, O_DSB);
 	nlog = 0;
 	wel2_cs_wait_forever(&OPS, 5);
-	CHECK_EQ(nlog, 5);
-	for (unsigned i = 0; i < nlog; i++) CHECK_EQ(log_[i].op, O_WFE);
+	CHECK_EQ(nlog, 6);
+	CHECK_EQ(log_[0].op, O_TIMERS);              /* a pending timer FIQ must not make the halt spin */
+	for (unsigned i = 1; i < nlog; i++) CHECK_EQ(log_[i].op, O_WFE);
 }
 
 int main(void)
@@ -225,6 +278,9 @@ int main(void)
 	RUN(park_waits);
 	RUN(wake_before_park);
 	RUN(last_core_denied);
+	RUN(boot_core_cycle);
+	RUN(off_on_pending_core);
+	RUN(off_released_not_parked);
 	RUN(watchdog);
 	TESTS_DONE();
 }

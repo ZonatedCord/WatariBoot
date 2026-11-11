@@ -63,8 +63,14 @@ struct wel2_cs_ops {
 	void (*timers_reset)(void *ctx);
 	/* 32-bit MMIO store (watchdog). */
 	void (*mmio_write32)(void *ctx, uint64_t pa, uint32_t v);
+	/* Diagnostics: one line / checkpoint per event (WEL2_CS_EV_*), idx = core index, arg = event specific. */
+	void (*log)(void *ctx, int event, unsigned idx, uint64_t arg);
 	void *ctx;
 };
+
+/* Events passed to ops->log */
+#define WEL2_CS_EV_ON_ACCEPT 1   /* CPU_ON accepted for core idx; arg = 0 spin-table start, 1 wake of a parked core */
+#define WEL2_CS_EV_ARRIVE    2   /* core idx reached wel2_cs_enter() and is about to eret; arg = entry */
 
 enum wel2_cs_state { WEL2_CS_OFF = 0, WEL2_CS_PENDING, WEL2_CS_ON };
 
@@ -90,7 +96,13 @@ struct wel2_cs_cpu {
 	uint64_t release_addr;
 };
 
-/* boot_idx = the core that is already running the layer (state ON). Returns 0, or -1 for bad arguments
+/*
+ * LOCKING (every function below): called with the layer's big lock held, except wel2_cs_park() (the core has
+ * released the lock; it touches only its own wake flag through the ops), wel2_cs_wait_forever() and
+ * wel2_cs_system_reset() (see their comments). wel2_cs_find/affinity only read state: the lock is held too, so
+ * they never see a half-updated core.
+ *
+ * boot_idx = the core that is already running the layer (state ON). Returns 0, or -1 for bad arguments
  * (n = 0 or > WEL2_CS_MAX, missing ops, secondary_entry = 0, boot_idx out of range, duplicate MPIDR). */
 int wel2_cs_init(struct wel2_cs *cs, const struct wel2_cs_ops *ops, uint64_t secondary_entry,
 		 const struct wel2_cs_cpu *cpus, unsigned n, unsigned boot_idx);
@@ -107,14 +119,25 @@ unsigned wel2_cs_find(const struct wel2_cs *cs, uint64_t mpidr);
  */
 int wel2_cs_cpu_on(struct wel2_cs *cs, uint64_t target_mpidr, uint64_t entry, uint64_t ctx);
 
-/* CPU_OFF bookkeeping for the calling core `me`: DENIED if it is the last core that is not OFF; else the core
- * becomes OFF and parked, and the caller must then call wel2_cs_park(). The vGIC / pirq / cpuif teardown stays
- * in psci.c, before this call. */
+/* Would CPU_OFF succeed for `me`? SUCCESS, DENIED (no other core is ON: only cores in state ON count, a PENDING
+ * core has not arrived yet and cannot wake anybody; nothing would ever wake the last core, F-14) or
+ * INVALID_PARAMETERS (me out of range or not ON). No state change. */
+int wel2_cs_can_off(const struct wel2_cs *cs, unsigned me);
+
+/*
+ * CPU_OFF bookkeeping for the calling core `me`. CONTRACT: psci.c calls this FIRST, under the big lock, and
+ * tears the core down (vGIC reset, pirq_vcpu_off, cpuif_cpu_down, gic_phys_cpu_down) ONLY when it returns
+ * SUCCESS; on DENIED / INVALID_PARAMETERS nothing was changed and nothing must be torn down. After SUCCESS the
+ * core is OFF and parked: the caller finishes the teardown, releases the big lock, and calls wel2_cs_park().
+ * A CPU_ON arriving between the unlock and the park is safe (see wel2_cs_park).
+ */
 int wel2_cs_cpu_off(struct wel2_cs *cs, unsigned me);
 
 /*
- * The park loop of core `me`: `while (wake flag == 0) wfe`, then the flag is cleared and the per-core timers
- * are reset (CNTV_CTL_EL02 = CNTP_CTL_EL02 = 0) before anything else. Returns true once woken.
+ * The park loop of core `me` (big lock NOT held). Per-core timers are reset FIRST (CNTV_CTL_EL02 =
+ * CNTP_CTL_EL02 = 0, via ops->timers_reset) so that a pending timer FIQ cannot turn wfe into a busy spin, then
+ * `while (wake flag == 0) wfe`, then the flag is cleared and the per-core timers
+ * are reset again before anything else (the guest context of the previous run may have left a timer on, M-3). Returns true once woken.
  * max_wfe = 0 means wait forever (the real call); a bound exists for tests and returns false when reached.
  * The woken core continues with wel2_cs_enter().
  * Lost wake-ups: the flag is read before every wfe, SEV sets the event register of a core that is not yet in
@@ -123,18 +146,22 @@ int wel2_cs_cpu_off(struct wel2_cs *cs, unsigned me);
  */
 bool wel2_cs_park(struct wel2_cs *cs, unsigned me, unsigned max_wfe);
 
-/* The core is about to eret to the guest: take the entry point and context, state ON. Also used for the first
- * start (called from el2_secondary_main). Returns false if the core was not PENDING. */
+/* The core is about to eret to the guest: take the entry point and context, state ON, ops->log(ARRIVE).
+ * Also used for the first start (called from el2_secondary_main), big lock held. A false return (core not
+ * PENDING: stray start) means the core must NOT eret: it paints a checkpoint, logs, and parks/fatal()s. */
 bool wel2_cs_enter(struct wel2_cs *cs, unsigned me, uint64_t *entry, uint64_t *ctx);
 
 /* AFFINITY_INFO: WEL2_CS_AFF_*; INVALID_PARAMETERS for an unknown MPIDR. */
 int wel2_cs_affinity(const struct wel2_cs *cs, uint64_t mpidr);
 
-/* SYSTEM_RESET: three watchdog stores (alarm, count, ctl), DSB; then the caller waits (wel2_cs_wait_forever).
+/* SYSTEM_RESET (big lock held on entry; recommended: keep it, other cores are going away anyway, but the
+ * caller masks DAIF first and does not return): three watchdog stores (alarm, count, ctl), DSB; then the caller waits (wel2_cs_wait_forever).
  * Returns -1 if wdt_base is 0 (no watchdog node: the caller must report and halt). */
 int wel2_cs_system_reset(const struct wel2_cs_ops *ops, uint64_t wdt_base);
 
-/* wfe loop; max = 0 forever (reset and SYSTEM_OFF halt), a bound for tests. */
+/* Halt: resets the timers first (a pending timer FIQ would make wfe spin), then a wfe loop; max = 0 forever
+ * (reset wait and SYSTEM_OFF halt), a bound for tests. For SYSTEM_OFF release the big lock BEFORE calling, so
+ * other cores that trap can still print their diagnostics; for SYSTEM_RESET either way. */
 void wel2_cs_wait_forever(const struct wel2_cs_ops *ops, unsigned max);
 
 #endif

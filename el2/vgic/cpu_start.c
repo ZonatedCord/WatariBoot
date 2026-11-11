@@ -20,7 +20,7 @@ int wel2_cs_init(struct wel2_cs *cs, const struct wel2_cs_ops *ops, uint64_t sec
 	if (!cs || !ops || !cpus || !secondary_entry || n == 0 || n > WEL2_CS_MAX || boot_idx >= n)
 		return -1;
 	if (!ops->write64 || !ops->dc_cvac || !ops->dsb || !ops->sev || !ops->wfe || !ops->wake_store ||
-	    !ops->wake_load || !ops->timers_reset || !ops->mmio_write32)
+	    !ops->wake_load || !ops->timers_reset || !ops->mmio_write32 || !ops->log)
 		return -1;
 	cs->ops = ops;
 	cs->secondary_entry = secondary_entry;
@@ -68,6 +68,7 @@ int wel2_cs_cpu_on(struct wel2_cs *cs, uint64_t target_mpidr, uint64_t entry, ui
 		o->wake_store(o->ctx, idx, 1);
 		o->dsb(o->ctx);
 		o->sev(o->ctx);
+		o->log(o->ctx, WEL2_CS_EV_ON_ACCEPT, idx, 1);
 		return WEL2_CS_SUCCESS;
 	}
 
@@ -82,20 +83,30 @@ int wel2_cs_cpu_on(struct wel2_cs *cs, uint64_t target_mpidr, uint64_t entry, ui
 	o->dc_cvac(o->ctx, c->release_addr);
 	o->dsb(o->ctx);
 	o->sev(o->ctx);
+	o->log(o->ctx, WEL2_CS_EV_ON_ACCEPT, idx, 0);
 	return WEL2_CS_SUCCESS;
 }
 
-int wel2_cs_cpu_off(struct wel2_cs *cs, unsigned me)
+int wel2_cs_can_off(const struct wel2_cs *cs, unsigned me)
 {
 	unsigned others = 0;
 
 	if (me >= cs->n || cs->core[me].state != WEL2_CS_ON)
 		return WEL2_CS_INVALID_PARAMETERS;
 	for (unsigned i = 0; i < cs->n; i++)
-		if (i != me && cs->core[i].state != WEL2_CS_OFF)
+		if (i != me && cs->core[i].state == WEL2_CS_ON)
 			others++;
 	if (!others)
 		return WEL2_CS_DENIED;   /* nothing would ever wake the last core (F-14) */
+	return WEL2_CS_SUCCESS;
+}
+
+int wel2_cs_cpu_off(struct wel2_cs *cs, unsigned me)
+{
+	int r = wel2_cs_can_off(cs, me);
+
+	if (r != WEL2_CS_SUCCESS)
+		return r;
 	cs->core[me].state = WEL2_CS_OFF;
 	cs->core[me].parked = true;
 	return WEL2_CS_SUCCESS;
@@ -106,6 +117,7 @@ bool wel2_cs_park(struct wel2_cs *cs, unsigned me, unsigned max_wfe)
 	const struct wel2_cs_ops *o = cs->ops;
 	unsigned n = 0;
 
+	o->timers_reset(o->ctx);       /* gates closed before the first wfe */
 	while (!o->wake_load(o->ctx, me)) {
 		if (max_wfe && n++ >= max_wfe)
 			return false;
@@ -128,6 +140,7 @@ bool wel2_cs_enter(struct wel2_cs *cs, unsigned me, uint64_t *entry, uint64_t *c
 	*entry = c->entry;
 	*ctx = c->ctx;
 	c->state = WEL2_CS_ON;
+	cs->ops->log(cs->ops->ctx, WEL2_CS_EV_ARRIVE, me, c->entry);
 	return true;
 }
 
@@ -160,6 +173,7 @@ int wel2_cs_system_reset(const struct wel2_cs_ops *o, uint64_t wdt_base)
 
 void wel2_cs_wait_forever(const struct wel2_cs_ops *o, unsigned max)
 {
+	o->timers_reset(o->ctx);
 	for (unsigned n = 0; !max || n < max; n++)
 		o->wfe(o->ctx);
 }
