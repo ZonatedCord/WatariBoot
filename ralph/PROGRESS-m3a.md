@@ -50,3 +50,8 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 ### 2026-11-11 09:30 - Stop for today (Marco)
 - T6b was started but its agent hit the usage limit before committing anything; it is still `[ ]`. Next: T6b, T6c, T6d, T6e, T6f, T6g, T7, T8, then Part 3/4.
 - The Ralph stop hook never fired in the desktop app: the loop was driven by Opus chaining tasks and by session cron wake-ups.
+
+### 2026-11-11 22:15 - T6b FDT queries for the M1: done
+- Commits: c5e7a3a, d144527. `el2/boot/fdt_m1.c` `fdt_m1_parse()` -> `struct m1_platform`: cpus (MPIDR, spin-table release address, 0 = none), `/memory` pairs, `/reserved-memory` + `/memreserve/` subtracted into `usable[]`, AIC, UART (stdout-path -> serial0 -> first enabled), watchdog, framebuffer; per-node parent cells with DT defaults; `fdt_find_compatible_reg` rewritten (respects `status`, fixes the T5 cells note); `tools/m3a/fdt_m1_dump` for rung L0 (prints no identifying property); fuzz test. Not linked into the image yet (T6c).
+- Review (Sonnet): compatibles and cell shapes checked against Linux v6.12 t8103.dtsi and m1n1 v1.6.1 kboot.c. One medium defect fixed in d144527: an overflowing or wrapping reservation now fails the parse (could otherwise have made m1n1's memory "usable").
+- Opus verified: `make -C el2 test` ALL PASSED (test_fdt_m1 11 tests / 14985 checks); `run-all.sh` 15/15 both configs. No Windows boot: the boot path is unchanged.

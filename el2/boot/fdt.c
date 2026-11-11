@@ -366,21 +366,18 @@ int fdt_find_aic(void *fdt, struct fdt_aic_info *info)
     return 0;
 }
 
-/* ---- First node compatible with a given string, and its "reg" (console UART) ----------------------
- * The walk only reports properties, so a node is recognised by the address of its name in the blob (unique
- * per node) and the state is reset when it changes. Properties precede sub-nodes (Devicetree Specification
- * 2.2.1), so a parent's #address-cells/#size-cells are known before any child's reg. The cells are kept per
- * depth; a depth entry is reset to the specification defaults (2 and 1) when a new node opens at that depth.
- * "reg" of a node at depth d is decoded with the cells of depth d-1. Ranges/address translation is not
- * applied: the nodes asked for (/soc children of the Apple SoC, "ranges;" identity) need none
+/* ---- First node compatible with a given string, and its "reg" -------------------------------------------------
+ * Own structure walk, so that the cells of every parent are known when a node OPENS, whether or not the node (or its
+ * ancestors) carries any property of its own (T5 review note: the former callback-based version only reset its
+ * per-depth state when a property was seen). Per depth: the cells the node declares for its children (defaults 2 and
+ * 1, Devicetree Specification 2.3.5) and the cells its own reg is decoded with (the parent's, final at the opening
+ * because properties precede sub-nodes, 2.2.1). A node with a status other than okay/ok is skipped. A node is
+ * evaluated when its first child opens or when it ends. Ranges/address translation is not applied: the nodes asked
+ * for (/soc children of the Apple SoC, "ranges;" identity) need none
  * [verified: t8103 /soc has ranges and #address-cells = 2, DESIGN section 4.2; hypothesis for other SoCs]. */
-struct compat_ctx {
-    const char *compat;
-    struct fdt_reg_info *info;
-    bool match, has_reg;
-    unsigned ac, sc;                    /* cells of the parent of the current node, as seen at its opening */
-    unsigned a[MAX_DEPTH], s[MAX_DEPTH];
-    const char *open[MAX_DEPTH];
+struct compat_node {
+    bool match, has_reg, disabled;
+    uint64_t base, size;
 };
 
 static bool stringlist_has(const uint8_t *val, uint32_t len, const char *s)
@@ -401,52 +398,99 @@ static bool stringlist_has(const uint8_t *val, uint32_t len, const char *s)
     return false;
 }
 
-static bool compat_cb(void *vctx, unsigned depth, const char *node, const char *prop,
-                      uint8_t *val, uint32_t len)
-{
-    struct compat_ctx *c = vctx;
-
-    if (depth >= MAX_DEPTH)
-        return true;
-    if (c->open[depth] != node) {       /* a new node opened at this depth */
-        c->open[depth] = node;
-        c->a[depth] = 2;
-        c->s[depth] = 1;
-        c->match = false;
-        c->has_reg = false;
-        c->ac = depth ? c->a[depth - 1] : 2;
-        c->sc = depth ? c->s[depth - 1] : 1;
-    }
-    if (len == 4 && str_eq(prop, "#address-cells"))
-        c->a[depth] = be32(val);
-    else if (len == 4 && str_eq(prop, "#size-cells"))
-        c->s[depth] = be32(val);
-    else if (depth >= 1 && str_eq(prop, "compatible"))
-        c->match = stringlist_has(val, len, c->compat);
-    else if (depth >= 1 && str_eq(prop, "reg")) {
-        if (c->ac >= 1 && c->ac <= 2 && c->sc <= 2 && len >= 4 * (c->ac + c->sc)) {
-            c->has_reg = true;
-            c->info->base = be_cells(val, c->ac);
-            c->info->size = c->sc ? be_cells(val + 4 * c->ac, c->sc) : 0;
-        }
-    }
-    if (c->match && c->has_reg) {
-        c->info->found = true;
-        return true;
-    }
-    return false;
-}
-
 int fdt_find_compatible_reg(void *fdt, const char *compat, struct fdt_reg_info *info)
 {
-    struct compat_ctx c = { 0 };
+    uint8_t *h = fdt;
+    struct compat_node n = { 0 };
+    uint32_t a[MAX_DEPTH], s[MAX_DEPTH], ra[MAX_DEPTH], rs[MAX_DEPTH];
+    int depth = -1;
+    bool pending = false;               /* the node at `depth` has not been evaluated yet */
 
-    *info = (struct fdt_reg_info){ 0 };
-    c.compat = compat;
-    c.info = info;
-    if (fdt_walk_props(fdt, compat_cb, &c))
+    info->found = false;
+    info->base = info->size = 0;
+    if (fdt_check(fdt))
         return -1;
-    return 0;
+    uint32_t off = be32(h + 8), end = off + be32(h + 36);
+    const char *strs = (const char *)h + be32(h + 12);
+    uint32_t str_size = be32(h + 32);
+
+    while (off + 4 <= end) {
+        uint32_t tok = be32(h + off);
+
+        off += 4;
+        if (tok == FDT_BEGIN_NODE || tok == FDT_END_NODE) {
+            if (pending && depth >= 1 && n.match && n.has_reg && !n.disabled) {
+                info->found = true;             /* the first usable node wins */
+                info->base = n.base;
+                info->size = n.size;
+                return 0;
+            }
+            pending = false;
+        }
+        if (tok == FDT_BEGIN_NODE) {
+            const char *name = (const char *)h + off;
+            uint32_t len = 0;
+
+            while (off + len < end && name[len])
+                len++;
+            if (off + len >= end || depth + 1 >= MAX_DEPTH)
+                return -1;
+            depth++;
+            a[depth] = 2;                               /* defaults for this node's children */
+            s[depth] = 1;
+            ra[depth] = depth ? a[depth - 1] : 2;       /* cells for this node's own reg: the parent's */
+            rs[depth] = depth ? s[depth - 1] : 1;
+            n = (struct compat_node){ 0 };
+            pending = true;
+            off += align4(len + 1);
+        } else if (tok == FDT_END_NODE) {
+            if (depth < 0)
+                return -1;
+            depth--;
+        } else if (tok == FDT_PROP) {
+            if (off + 8 > end || depth < 0)
+                return -1;
+            uint32_t len = be32(h + off), nameoff = be32(h + off + 4);
+
+            off += 8;
+            if (len > end - off || nameoff >= str_size)
+                return -1;
+            char prop[24];
+            uint32_t pn = 0;
+
+            while (pn < sizeof(prop) - 1 && nameoff + pn < str_size && strs[nameoff + pn]) {
+                prop[pn] = strs[nameoff + pn];
+                pn++;
+            }
+            prop[pn] = 0;
+            const uint8_t *v = h + off;
+
+            if (len == 4 && str_eq(prop, "#address-cells")) {
+                a[depth] = be32(v);
+            } else if (len == 4 && str_eq(prop, "#size-cells")) {
+                s[depth] = be32(v);
+            } else if (pending && depth >= 1 && str_eq(prop, "compatible")) {
+                n.match = stringlist_has(v, len, compat);
+            } else if (pending && depth >= 1 && str_eq(prop, "status")) {
+                n.disabled = !(len >= 1 && v[len - 1] == 0 &&
+                               (str_eq((const char *)v, "okay") || str_eq((const char *)v, "ok")));
+            } else if (pending && depth >= 1 && str_eq(prop, "reg")) {
+                if (ra[depth] >= 1 && ra[depth] <= 2 && rs[depth] <= 2 && len >= 4 * (ra[depth] + rs[depth])) {
+                    n.has_reg = true;
+                    n.base = be_cells(v, ra[depth]);
+                    n.size = rs[depth] ? be_cells(v + 4 * ra[depth], rs[depth]) : 0;
+                }
+            }
+            off += align4(len);
+        } else if (tok == FDT_NOP) {
+            continue;
+        } else if (tok == FDT_END) {
+            return 0;
+        } else {
+            return -1;
+        }
+    }
+    return -1;
 }
 
 /* ---- /chosen/framebuffer@*: the simple-framebuffer node the loader (m1n1) fills ----------------------------
