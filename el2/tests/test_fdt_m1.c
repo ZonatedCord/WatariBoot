@@ -208,7 +208,7 @@ static void t_j293(void)
 	for (unsigned i = 0; i < 8; i++) {
 		CHECK_EQ(p.cpu[i].reg, CPU_REG[i]);
 		CHECK(p.cpu[i].spin_table);
-		CHECK(p.cpu[i].has_release);
+		CHECK_EQ(p.cpu[i].has_release, i == 5);       /* <0 0> is the placeholder: no release address */
 		CHECK_EQ(p.cpu[i].release_addr, i == 5 ? 0x800123450ull : 0);
 	}
 	check_j293_ranges(&p);
@@ -519,49 +519,137 @@ static void t_subtract_precise(void)
 	CHECK_EQ(n, 0); CHECK_EQ(w, 1);
 }
 
+static void ovf_header(struct fdtb *b)
+{
+	fb_init(b);
+	fb_begin(b, "");
+	fb_u32(b, "#address-cells", 2);
+	fb_u32(b, "#size-cells", 2);
+}
+
+static void ovf_mem(struct fdtb *b, const char *name, unsigned n, uint64_t first)
+{
+	uint64_t pairs[12][2];
+
+	for (unsigned i = 0; i < n; i++) {
+		pairs[i][0] = first + 0x10000000ull * i;
+		pairs[i][1] = 0x1000000;
+	}
+	fb_begin(b, name);
+	fb_str(b, "device_type", "memory");
+	fb_regs(b, 2, 2, n, pairs);
+	fb_end(b);
+}
+
+static void ovf_resv_child(struct fdtb *b, unsigned i, uint64_t base, uint64_t size)
+{
+	char nm[24];
+
+	snprintf(nm, sizeof(nm), "r@%x", i);
+	fb_begin(b, nm);
+	fb_reg(b, 2, 2, base, size);
+	fb_end(b);
+}
+
 static void t_overflow_lists(void)
 {
 	struct fdtb b;
 	struct m1_platform p;
-	uint64_t pairs[M1_MAX_MEM + 4][2];
-	char nm[24];
 
-	for (unsigned i = 0; i < M1_MAX_MEM + 4; i++) {
-		pairs[i][0] = 0x800000000ull + 0x10000000ull * i;
-		pairs[i][1] = 0x1000000;
+	/* more /memory pairs than kept: safe (less RAM), flagged */
+	ovf_header(&b);
+	ovf_mem(&b, "memory@800000000", 12, 0x800000000ull);
+	ovf_mem(&b, "memory@900000000", 12, 0x900000000ull);
+	fb_end(&b);
+	CHECK_EQ(fdt_m1_parse(fb_finish(&b), &p), 0);
+	CHECK_EQ(p.nmem, M1_MAX_MEM);
+	CHECK(p.lists_truncated);
+
+	/* exactly M1_MAX_RESV children: fine; one more: the parse fails (reserved RAM must never become usable) */
+	for (unsigned extra = 0; extra < 2; extra++) {
+		ovf_header(&b);
+		ovf_mem(&b, "memory@800000000", 1, 0x800000000ull);
+		fb_begin(&b, "reserved-memory");
+		fb_u32(&b, "#address-cells", 2);
+		fb_u32(&b, "#size-cells", 2);
+		for (unsigned i = 0; i < M1_MAX_RESV + extra; i++)
+			ovf_resv_child(&b, i, 0x100000000ull + 0x1000ull * i, 0x1000);
+		fb_end(&b);
+		fb_end(&b);
+		CHECK_EQ(fdt_m1_parse(fb_finish(&b), &p), extra ? -1 : 0);
+		if (!extra)
+			CHECK_EQ(p.nresv, M1_MAX_RESV);
+		else
+			CHECK_EQ(p.nresv, 0);
 	}
-	fb_init(&b);
+
+	/* one child with more reg pairs than fit */
+	{
+		uint64_t pairs[12][2];
+
+		for (unsigned i = 0; i < 12; i++) {
+			pairs[i][0] = 0x100000000ull + 0x1000ull * i;
+			pairs[i][1] = 0x1000;
+		}
+		ovf_header(&b);
+		fb_begin(&b, "reserved-memory");
+		fb_u32(&b, "#address-cells", 2);
+		fb_u32(&b, "#size-cells", 2);
+		for (unsigned c = 0; c < 6; c++) {
+			char nm[16];
+
+			snprintf(nm, sizeof(nm), "m@%x", c);
+			fb_begin(&b, nm);
+			fb_regs(&b, 2, 2, 12, pairs);
+			fb_end(&b);
+		}
+		fb_end(&b);
+		fb_end(&b);
+		CHECK_EQ(fdt_m1_parse(fb_finish(&b), &p), -1);   /* 72 pairs > 64 */
+	}
+
+	/* a wrapping reservation fails; a zero-sized one is ignored and counted */
+	for (unsigned k = 0; k < 2; k++) {
+		ovf_header(&b);
+		ovf_mem(&b, "memory@800000000", 1, 0x800000000ull);
+		fb_begin(&b, "reserved-memory");
+		fb_u32(&b, "#address-cells", 2);
+		fb_u32(&b, "#size-cells", 2);
+		ovf_resv_child(&b, 0, k ? 0x5000 : ~0ull - 0x10, k ? 0 : 0x1000);
+		fb_end(&b);
+		fb_end(&b);
+		CHECK_EQ(fdt_m1_parse(fb_finish(&b), &p), k ? 0 : -1);
+		if (k) {
+			CHECK_EQ(p.bad_ranges, 1);
+			CHECK_EQ(p.nresv, 0);
+		}
+	}
+
+	/* a wrapping /memreserve/ entry fails */
+	fb_init_rsv(&b, 1);
+	fb_rsv(&b, ~0ull - 0x10, 0x1000);
 	fb_begin(&b, "");
 	fb_u32(&b, "#address-cells", 2);
 	fb_u32(&b, "#size-cells", 2);
-	fb_begin(&b, "memory");
-	fb_str(&b, "device_type", "memory");
-	fb_regs(&b, 2, 2, 5, pairs);                             /* 5 pairs fit the 256-byte helper buffer */
 	fb_end(&b);
+	CHECK_EQ(fdt_m1_parse(fb_finish(&b), &p), -1);
+
+	/* a reserved-memory child whose reg cannot be decoded (3 address cells) fails */
+	fb_init(&b);
+	fb_begin(&b, "");
 	fb_begin(&b, "reserved-memory");
-	fb_u32(&b, "#address-cells", 2);
-	fb_u32(&b, "#size-cells", 2);
-	for (unsigned i = 0; i < M1_MAX_RESV + 3; i++) {
-		snprintf(nm, sizeof(nm), "r@%x", i);
-		fb_begin(&b, nm);
-		fb_reg(&b, 2, 2, 0x100000000ull + 0x1000ull * i, 0x1000);
-		fb_end(&b);
+	fb_u32(&b, "#address-cells", 3);
+	fb_u32(&b, "#size-cells", 1);
+	fb_begin(&b, "x@0");
+	{
+		uint32_t cells[4] = { 0, 0, 0x1000, 0x1000 };
+
+		u32cells(&b, "reg", 4, cells);
 	}
-	/* and two bad ranges: zero size and a wrapping one */
-	fb_begin(&b, "zero");
-	fb_reg(&b, 2, 2, 0x5000, 0);
-	fb_end(&b);
-	fb_begin(&b, "wrap");
-	fb_reg(&b, 2, 2, ~0ull - 0x10, 0x1000);
 	fb_end(&b);
 	fb_end(&b);
 	fb_end(&b);
-	CHECK_EQ(fdt_m1_parse(fb_finish(&b), &p), 0);
-	CHECK_EQ(p.nmem, 5);
-	CHECK_EQ(p.nresv, M1_MAX_RESV);
-	CHECK(p.lists_truncated);
-	CHECK_EQ(p.bad_ranges, 2);
-	CHECK_EQ(p.nusable, 5);
+	CHECK_EQ(fdt_m1_parse(fb_finish(&b), &p), -1);
 }
 
 /* ---- malformed blobs --------------------------------------------------------------------------------------- */

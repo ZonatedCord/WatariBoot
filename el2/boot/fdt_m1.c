@@ -291,6 +291,7 @@ struct ctx {
 	char stdout_path[M1_PATH_MAX];
 	bool have_stdout;
 	bool aic_done, wdt_done;
+	bool resv_err;              /* a reservation could not be recorded exactly: the parse fails */
 };
 
 static void add_range(struct m1_platform *p, struct m1_range *arr, unsigned *n, unsigned max, uint64_t base,
@@ -307,6 +308,24 @@ static void add_range(struct m1_platform *p, struct m1_range *arr, unsigned *n, 
 	arr[*n].base = base;
 	arr[*n].size = size;
 	(*n)++;
+}
+
+/* A reservation: only a zero size is ignorable (it reserves nothing). Wrap, overflow of resv[]: error. */
+static void add_resv(struct ctx *x, uint64_t base, uint64_t size)
+{
+	struct m1_platform *p = x->p;
+
+	if (size == 0) {
+		p->bad_ranges++;
+		return;
+	}
+	if (base + size < base || p->nresv >= M1_MAX_RESV) {
+		x->resv_err = true;
+		return;
+	}
+	p->resv[p->nresv].base = base;
+	p->resv[p->nresv].size = size;
+	p->nresv++;
 }
 
 /* copy a string property (must be NUL-terminated inside len) bounded to max-1 characters; false if not */
@@ -379,7 +398,7 @@ static void finalize(struct ctx *x, int d)
 	if (d < 1 || !status_ok(c->has_status, c->status, c->status_len))
 		return;
 
-	struct m1_range pr[M1_MAX_MEM > M1_MAX_RESV ? M1_MAX_MEM : M1_MAX_RESV];
+	struct m1_range pr[(M1_MAX_MEM > M1_MAX_RESV ? M1_MAX_MEM : M1_MAX_RESV) + 1];
 	bool parent_is_cpus = d == 2 && seq(x->l[1].name, "cpus");
 	bool parent_is_resv = d == 2 && seq(x->l[1].name, "reserved-memory");
 
@@ -396,16 +415,20 @@ static void finalize(struct ctx *x, int d)
 				struct m1_cpu *u = &p->cpu[p->ncpu++];
 
 				u->reg = pr[0].base;
-				u->has_release = c->rel && c->rel_len == 8;
-				u->release_addr = u->has_release ? rd64(c->rel) : 0;
+				u->release_addr = c->rel && c->rel_len == 8 ? rd64(c->rel) : 0;
+				u->has_release = u->release_addr != 0;      /* m1n1 leaves <0 0> in the boot CPU's node */
 				u->spin_table = c->spin;
 			}
 		}
 	} else if (parent_is_resv) {
-		unsigned k = reg_pairs(c->reg, c->reg_len, n->rac, n->rsc, pr, M1_MAX_RESV);
+		unsigned k = reg_pairs(c->reg, c->reg_len, n->rac, n->rsc, pr, M1_MAX_RESV + 1);
 
+		/* A reservation that cannot be recorded exactly must not be dropped: it would turn reserved memory into
+		 * usable memory. Undecodable reg, too many pairs, a full list or a wrapping range fail the whole parse. */
+		if (c->reg && k == 0)
+			x->resv_err = true;
 		for (unsigned i = 0; i < k; i++)
-			add_range(p, p->resv, &p->nresv, M1_MAX_RESV, pr[i].base, pr[i].size);
+			add_resv(x, pr[i].base, pr[i].size);
 	}
 
 	if (c->c_aic && !x->aic_done) {
@@ -618,12 +641,10 @@ int fdt_m1_parse(const void *fdt, struct m1_platform *p)
 			goto bad;
 		if (!r)
 			break;
-		add_range(p, p->resv, &p->nresv, M1_MAX_RESV, b, s);
-		if (i > 4 * M1_MAX_RESV) {      /* long list: stop reading, the rest cannot be kept */
-			p->lists_truncated = true;
-			break;
-		}
+		add_resv(&x, b, s);
 	}
+	if (x.resv_err)
+		goto bad;
 	pick_uart(&x);
 	m1_subtract(p->mem, p->nmem, p->resv, p->nresv, p->usable, M1_MAX_USABLE, &p->nusable,
 		    &p->mem_wholly_reserved, &p->lists_truncated);

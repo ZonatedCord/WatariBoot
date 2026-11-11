@@ -11,7 +11,7 @@
 
 #define M1_MAX_CPUS    8
 #define M1_MAX_MEM     16       /* /memory reg pairs kept */
-#define M1_MAX_RESV    32       /* /memreserve/ entries + /reserved-memory children kept */
+#define M1_MAX_RESV    64       /* /memreserve/ entries + /reserved-memory children kept */
 #define M1_MAX_USABLE  64       /* pieces left of /memory after removing the reservations */
 #define M1_MAX_AIC     4        /* reg pairs of the AIC node */
 #define M1_PATH_MAX    80
@@ -22,8 +22,8 @@ struct m1_range {
 
 struct m1_cpu {
 	uint64_t reg;               /* "reg" of /cpus/cpu@*: the MPIDR affinity fields (m1n1 wants reg == MPIDR & 0xFFFFFF) */
-	uint64_t release_addr;      /* "cpu-release-addr" (8 bytes), meaningful when has_release */
-	bool has_release;
+	uint64_t release_addr;      /* "cpu-release-addr" (8 bytes) */
+	bool has_release;           /* present and non-zero (m1n1 leaves the placeholder <0 0> in the boot CPU's node) */
 	bool spin_table;            /* enable-method = "spin-table" */
 };
 
@@ -47,7 +47,7 @@ struct m1_platform {
 	unsigned nusable;
 	struct m1_range usable[M1_MAX_USABLE];  /* mem[] minus resv[], exact bytes */
 	unsigned mem_wholly_reserved;       /* mem[] pairs with nothing left after the subtraction (design S-4) */
-	bool lists_truncated;               /* a list overflowed: what is listed is safe (never extra RAM), not complete */
+	bool lists_truncated;               /* mem[] or usable[] overflowed: what is listed is safe (never extra RAM), not complete */
 	unsigned bad_ranges;                /* zero-sized or wrapping ranges that were ignored */
 
 	unsigned naic;
@@ -57,7 +57,16 @@ struct m1_platform {
 	struct wel2_fb fb;                  /* /chosen/framebuffer@*, fmt NONE when absent */
 };
 
-/* Fills *p. 0 = blob walked (p->is_m1 etc. tell what was there), -1 = malformed or truncated blob (*p zeroed).
+/* Fills *p. 0 = blob walked (p->is_m1 etc. tell what was there), -1 = malformed or truncated blob (*p zeroed), or
+ * a reservation that cannot be recorded exactly (resv[] full at M1_MAX_RESV, a wrapping range, a reserved-memory
+ * reg that is undecodable or has more pairs than fit): reserved memory is never allowed to show up as usable.
+ * (Zero-sized reservations reserve nothing and are only counted in bad_ranges.)
+ *
+ * For consumers (T6c): usable[] holds exact byte ranges; round every piece INWARD to the granule you map with
+ * (2 MB for the EL2 stage 1, 32 MB for the first guest stage 2) and drop what vanishes. Stack: fdt_m1_parse keeps
+ * its working state (about 3 KB: candidates, aliases, a 65-entry scratch array of ranges, stdout path) on the
+ * caller's stack, plus struct m1_platform itself (about 3.5 KB) wherever the caller puts it; the EL2 stacks are
+ * 16 KB.
  * Every access is bounded by the header's totalsize. */
 int fdt_m1_parse(const void *fdt, struct m1_platform *p);
 
