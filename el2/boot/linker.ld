@@ -47,6 +47,6 @@ SECTIONS
     /* image_size of the arm64 Image header: image, .bss and stacks (what the loader must keep free) */
     __image_size = ABSOLUTE(__layer_end - __image_start);
     ASSERT(__el1_stack_top - __el2_stacks == 9 * 0x4000, "stack area must be WEL2_NSTACKS * WEL2_STACK_SIZE (include/wel2_coreidx.h) + the EL1 slot")
-    ASSERT(__layer_end <= 0x180000, "Watari EL2 image and stacks must fit the 2 MB carve-out after the 0x80000 text_offset (stage1.c)")
+    ASSERT(__layer_end <= 0x180000, "Watari EL2 image and stacks must fit the 2 MB QEMU carve-out when loaded at its 0x80000 text_offset (the run-time fit is checked in stage1.c)")
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.dynamic) *(.dynsym) *(.dynstr) *(.hash) *(.gnu.hash) *(.interp) }
 }

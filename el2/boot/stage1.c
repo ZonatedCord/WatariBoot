@@ -45,7 +45,7 @@
 #include "wel2_maps.h"
 #include "wel2_uart.h"
 
-extern uint8_t _start[], __image_start[], __text_end[], __rodata_end[];
+extern uint8_t _start[], __image_start[], __text_end[], __rodata_end[], __layer_end[];
 
 /* The RAM the maps cover; written once by the boot core with the MMU off, read by everyone after. */
 uint64_t g_ram_base, g_ram_end;      /* default (no usable FDT /memory): the carve-out block up to 4 GB above it */
@@ -145,6 +145,14 @@ void stage1_build(uint64_t fdt)
     g_carve_base = g_layer_base & ~(g_carve_size - 1);
     g_ram_base = g_carve_base;
     g_ram_end = g_carve_base + 0x100000000ULL;
+
+    /* The whole layer block (image, .bss, stacks: _start to __layer_end) must lie inside the carve-out, whatever
+     * address the loader chose; the linker only checks the size. MMU off: s1_msg only. */
+    if (g_layer_base + (uint64_t)(uintptr_t)__layer_end - (uint64_t)(uintptr_t)_start > g_carve_base + g_carve_size) {
+        s1_msg("Watari EL2: FATAL: the layer image and stacks do not fit the carve-out block at this load address, halted\n");
+        for (;;)
+            __asm__ volatile("wfe");
+    }
 
     /* Console first: a node compatible with "apple,s5l-uart" (the M1 under m1n1) switches putc_/puts_ from the
      * QEMU PL011 to it, so that every message below, and every core after, goes to the right UART. No such node

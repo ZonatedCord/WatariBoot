@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: MIT
 #include "wel2_coreidx.h"
 
+// park_x0: stop this core with a distinctive code in x0, readable over the m1n1 proxy (README, "Position independence").
+//   0xBAD00001 load address not 16 KB aligned     0xBAD00002 not the boot core (normal for the other cores)
+//   0xBAD00003 not at EL2                         0xBAD00004 bad dynamic relocation (not R_AARCH64_RELATIVE)
+//   0xBAD00005 secondary: not at EL2              0xBAD00006 secondary: MPIDR outside the stack slots (x1 = MPIDR | 1<<63)
+    .macro park_x0 code
+    movz    x0, #\code
+    movk    x0, #0xBAD0, lsl #16
+    b       park
+    .endm
+
 // adr_l: the run-time address of a symbol, PC-relative (adrp + add), usable before and after the relocation loop.
     .macro adr_l reg, sym
     adrp    \reg, \sym
@@ -15,8 +25,8 @@
 _start:
     b       reset                   // code0: branch over the header
     .long   0                       // code1
-    .quad   0x80000                 // text_offset (matches linker.ld)
-    .quad   __image_size          // image_size (linker.ld)
+    .quad   0x80000                 // text_offset: where QEMU loads it (the image itself is position independent)
+    .quad   __image_size            // image_size (linker.ld): image, .bss and stacks
     .quad   0xa                     // flags: LE, 4K pages, any placement
     .quad   0, 0, 0                 // reserved
     .ascii  "ARM\x64"               // magic at offset 56
@@ -27,24 +37,27 @@ reset:
     // Only the boot CPU continues; others park (M0 runs with -smp 1).
     mrs     x1, mpidr_el1
     and     x1, x1, #0xffffff
-    cbnz    x1, park
-
-    mrs     x1, CurrentEL
+    cbz     x1, 1f
+    park_x0 2
+1:  mrs     x1, CurrentEL
     lsr     x1, x1, #2
     cmp     x1, #2
-    b.ne    park                    // not at EL2: cannot proceed
-    // x0 (the FDT address the loader passes) stays untouched until el2_main(fdt)
+    b.eq    1f
+    park_x0 3                       // not at EL2: cannot proceed
+1:  // x0 (the FDT address the loader passes) stays untouched until el2_main(fdt)
 
     // T6a: the image is a PIE linked at 0 and runs wherever the loader put it. x9 = the run-time base (the link
     // address of _start is 0). Everything up to the end of the relocation loop is position-independent by
     // construction: only adr/adrp, no literal pool, no GOT (check-pie.sh greps this file for pseudo-loads).
     adr     x9, _start
     tst     x9, #0x3fff             // the stage-1 page split and VBAR need a 16 KB aligned load address
-    b.ne    park
+    b.eq    1f
+    park_x0 1
+1:
 
     // Self-relocation, MMU and caches off, written from the ELF specification: every dynamic relocation must be
     // R_AARCH64_RELATIVE (type 1027), which means *(base + r_offset) = base + r_addend (Elf64_Rela: r_offset,
-    // r_info, r_addend, 8 bytes each). Anything else cannot be resolved here: park with x0 = "RELO" (nothing may
+    // r_info, r_addend, 8 bytes each). Anything else cannot be resolved here: park with code 4 in x0 (nothing may
     // be printed yet: the console is not known; check-pie.sh makes this unreachable for a built image).
     adr_l   x1, __rela_start
     adr_l   x2, __rela_end
@@ -61,9 +74,7 @@ reset:
     str     x5, [x3]
     b       1b
 reloc_fail:
-    movz    x0, #0x4552             // 'RE'
-    movk    x0, #0x4f4c, lsl #16    // 'LO'
-    b       park
+    park_x0 4
 2:
     dsb     sy
 
@@ -130,8 +141,9 @@ secondary_entry:
     mrs     x1, CurrentEL
     lsr     x1, x1, #2
     cmp     x1, #2
-    b.ne    park                    // started below EL2: cannot continue
-    mrs     x1, mpidr_el1
+    b.eq    1f
+    park_x0 5                       // started below EL2: cannot continue
+1:  mrs     x1, mpidr_el1
     ubfx    x2, x1, #0, #8          // Aff0
     ubfx    x3, x1, #8, #8          // Aff1
     ubfx    x4, x1, #16, #8         // Aff2
@@ -148,6 +160,30 @@ secondary_entry:
     add     x1, x1, #1
     lsl     x1, x1, #WEL2_STACK_SHIFT   // (idx + 1) * WEL2_STACK_SIZE
     add     sp, x2, x1
+    // Insurance, per core [hypothesis: QEMU TCG has no stale lines, so it cannot show the need]: this core's caches may
+    // hold stale lines of its own stack slot and of the stage-1 globals it reads (g_s1) from a previous run; drop
+    // them (DC IVAC by VA, Arm ARM D7.5) before the stage-1 map makes this memory cacheable. The boot core cleaned
+    // g_s1 to memory (stage1.c) and nothing else is dirty here.
+    mrs     x3, ctr_el0
+    ubfx    x3, x3, #16, #4
+    mov     x4, #4
+    lsl     x4, x4, x3              // line size
+    sub     x5, x4, #1
+    sub     x6, sp, #WEL2_STACK_SIZE
+    mov     x7, sp
+    bic     x6, x6, x5
+3:  dc      ivac, x6
+    add     x6, x6, x4
+    cmp     x6, x7
+    b.lo    3b
+    adr_l   x6, g_s1
+    add     x7, x6, #32
+    bic     x6, x6, x5
+4:  dc      ivac, x6
+    add     x6, x6, x4
+    cmp     x6, x7
+    b.lo    4b
+    dsb     sy
     adr_l   x1, el2_vectors
     msr     vbar_el2, x1
     isb
@@ -161,7 +197,7 @@ bad_core:
     adr_l   x2, g_bad_mpidr
     str     x1, [x2]
     dsb     sy
-    b       park
+    park_x0 6
 
     // Own cache-line-sized slot (128 B covers the M1's line [hypothesis: 128 B] and 64 B parts) so that
     // invalidating it never discards neighbouring data.
