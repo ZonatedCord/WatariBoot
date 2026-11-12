@@ -40,6 +40,7 @@
 // address (start.S), so the page permissions are the same for both granules.
 
 #include "boot.h"
+#include "plat.h"
 #include "fdt.h"
 #include "wel2_ram.h"
 #include "wel2_maps.h"
@@ -52,6 +53,22 @@ uint64_t g_ram_base, g_ram_end;      /* default (no usable FDT /memory): the car
 uint64_t g_layer_base;               /* T6a: run-time address of _start */
 uint64_t g_carve_base, g_carve_size; /* T6a: the block the layer keeps for itself, see boot.h */
 bool g_ram_from_fdt;
+
+/* T6c: what the platform switch read (valid for plat_m1) and the guest RAM as ranges (M1). Written once by the boot
+ * core with the MMU off, cleaned to memory below, read by everyone after. */
+struct m1_platform g_m1;
+struct wel2_range g_guest_ram[WEL2_MAX_GUEST_RANGES];
+unsigned g_nguest_ram;
+
+bool guest_ram_contains(uint64_t pa)
+{
+    if (!g_plat->m1_memory)
+        return pa >= g_ram_base && pa < g_ram_end;
+    for (unsigned i = 0; i < g_nguest_ram; i++)
+        if (pa >= g_guest_ram[i].base && pa - g_guest_ram[i].base < g_guest_ram[i].size)
+            return true;
+    return false;
+}
 
 /* The S5L console UART window found in the FDT (0 = none: PL011). Read by stage2_init to keep it from the guest. */
 uint64_t g_con_s5l_base, g_con_s5l_size;
@@ -141,25 +158,35 @@ void stage1_build(uint64_t fdt)
      * address 0x40080000 derives from where _start actually is. The carve-out is the g_carve_size aligned block that
      * holds the image (QEMU: the 2 MB block at the RAM base); RAM defaults to 4 GB from its start. */
     g_layer_base = (uint64_t)(uintptr_t)_start;
-    g_carve_size = WEL2_CARVE_SIZE_QEMU;
+    /* The platform switch (T6c): an enabled "apple,aic" node in the loader's FDT = the M1; anything else (also a blob
+     * the parser rejects) = the QEMU virt machine, exactly as before. The parser works on the stack (about 3 KB of
+     * the 16 KB boot stack, fdt_m1.h) and fills the static g_m1; every access is a byte read or an aligned store, so
+     * it runs with the MMU off. */
+    int m1rc = -1;
+
+    if (fdt && !(fdt & 7) && !fdt_check((void *)fdt))
+        m1rc = fdt_m1_parse((const void *)fdt, &g_m1);
+    g_plat = plat_select(m1rc, &g_m1);
+    bool m1 = g_plat->m1_memory;
+
+    if (m1)
+        con_select_none();      /* T6c: the M1 never touches the PL011 (unmapped there); the S5L UART replaces this below */
+
+    g_carve_size = m1 ? WEL2_CARVE_SIZE_M1 : WEL2_CARVE_SIZE_QEMU;
     g_carve_base = g_layer_base & ~(g_carve_size - 1);
     g_ram_base = g_carve_base;
     g_ram_end = g_carve_base + 0x100000000ULL;
-
-    /* The whole layer block (image, .bss, stacks: _start to __layer_end) must lie inside the carve-out, whatever
-     * address the loader chose; the linker only checks the size. MMU off: s1_msg only. */
-    if (g_layer_base + (uint64_t)(uintptr_t)__layer_end - (uint64_t)(uintptr_t)_start > g_carve_base + g_carve_size) {
-        s1_msg("Watari EL2: FATAL: the layer image and stacks do not fit the carve-out block at this load address, halted\n");
-        for (;;)
-            __asm__ volatile("wfe");
-    }
 
     /* Console first: a node compatible with "apple,s5l-uart" (the M1 under m1n1) switches putc_/puts_ from the
      * QEMU PL011 to it, so that every message below, and every core after, goes to the right UART. No such node
      * (QEMU): nothing changes. Written with the MMU off, cleaned to memory below with the other globals. */
     struct fdt_reg_info uart = { 0 };
 
-    if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
+    if (m1 && g_m1.uart.found) {                /* the M1: stdout-path / serial0 first (fdt_m1.c) */
+        con_select_s5l(g_m1.uart.base);
+        g_con_s5l_base = g_m1.uart.base;
+        g_con_s5l_size = g_m1.uart.size ? g_m1.uart.size : 0x1000;
+    } else if (!m1 && fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
         fdt_find_compatible_reg((void *)fdt, FDT_COMPAT_S5L_UART, &uart) == 0 && uart.found) {
         con_select_s5l(uart.base);
         g_con_s5l_base = uart.base;
@@ -171,6 +198,16 @@ void stage1_build(uint64_t fdt)
      * every call is a no-op. The stage-1 mapping (Normal non-cacheable) follows with the other maps below. */
     if (fdt && !(fdt & 7) && !fdt_check((void *)fdt))
         fdt_get_framebuffer((void *)fdt, &g_fb);
+
+    /* The whole layer block (image, .bss, stacks: _start to __layer_end) must lie inside the carve-out, whatever
+     * address the loader chose; the linker only checks the size. MMU off: s1_msg only; it runs after the console and the
+     * framebuffer are known, so the M1 can still say (or paint red) why it stopped. */
+    if (g_layer_base + (uint64_t)(uintptr_t)__layer_end - (uint64_t)(uintptr_t)_start > g_carve_base + g_carve_size) {
+        s1_msg("Watari EL2: FATAL: the layer image and stacks do not fit the carve-out block at this load address, halted\n");
+        checkpoint_fail();
+        for (;;)
+            __asm__ volatile("wfe");
+    }
 
     /* Options from /chosen/bootargs (QEMU -append); the FDT is read-only here and the MMU is off. */
     args[0] = 0;
@@ -206,7 +243,37 @@ void stage1_build(uint64_t fdt)
     /* RAM range: the FDT /memory node (must start at the layer's RAM base), else the old fixed map. */
     ram.base = g_ram_base;
     ram.end = g_ram_end;
-    if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
+    struct wel2_range ram_in[M1_MAX_USABLE];
+    unsigned nram_in = 0;
+
+    if (m1) {
+        /* The M1 (T6c): RAM is wherever the FDT says (0x8_0000_0000 and up), the layer sits anywhere inside it, so the
+         * "RAM starts at the carve-out" rule of the QEMU path does not apply. The guest gets usable[] minus the
+         * layer's 32 MB block, rounded inward to 32 MB; g_ram_base / g_ram_end are the bounding box of that list. */
+        for (unsigned i = 0; i < g_m1.nusable; i++) {
+            ram_in[i].base = g_m1.usable[i].base;
+            ram_in[i].size = g_m1.usable[i].size;
+        }
+        nram_in = g_m1.nusable;
+        if (wel2_ranges_inward(ram_in, nram_in, WEL2_M1_S2_ALIGN, g_carve_base, g_carve_size, g_guest_ram,
+                               WEL2_MAX_GUEST_RANGES, &g_nguest_ram) || !g_nguest_ram) {
+            s1_msg("Watari EL2: FATAL: the FDT leaves no guest RAM (or too many pieces), halted\n");
+            checkpoint_fail();
+            for (;;)
+                __asm__ volatile("wfe");
+        }
+        g_ram_base = g_guest_ram[0].base;
+        g_ram_end = g_guest_ram[0].base + g_guest_ram[0].size;
+        for (unsigned i = 1; i < g_nguest_ram; i++) {
+            if (g_guest_ram[i].base < g_ram_base)
+                g_ram_base = g_guest_ram[i].base;
+            if (g_guest_ram[i].base + g_guest_ram[i].size > g_ram_end)
+                g_ram_end = g_guest_ram[i].base + g_guest_ram[i].size;
+        }
+        g_ram_from_fdt = true;
+        ram.base = g_ram_base;
+        ram.end = g_ram_end;
+    } else if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
         !fdt_get_memory((void *)fdt, &ram, g_carve_base, 1ULL << va_bits) &&
         ram.base == g_carve_base && ram.end - ram.base >= g_carve_size) {
         g_ram_base = ram.base;
@@ -223,9 +290,51 @@ void stage1_build(uint64_t fdt)
 
     /* Pool exhaustion or a bad layout: the host tests (test_pt.c) size the pool for the QEMU maps; a failure
      * here prints a line on the UART (no lock, MMU off) and parks the core. */
-    if (wel2_pt_init(&s1_pt, s1_pool, sizeof(s1_pool), g_gran, va_bits) ||
-        wel2_s1_build(&s1_pt, &ram, &layout, g_e2h)) {
+    /* The M1 stage 1 (T6c): RAM (usable[] rounded inward to 2 MB), the layer's block, the loader's FDT (still read
+     * with the MMU on), the AIC / UART / watchdog windows as Device, the cores' cpu-release-addr words as Normal
+     * cacheable; the framebuffer follows below. Everything else stays unmapped. */
+    struct wel2_range dev[M1_MAX_AIC + 2], rel[M1_MAX_CPUS];
+    unsigned ndev = 0, nrel = 0;
+    struct wel2_s1_m1 m1in;
+    bool built_bad;
+
+    if (m1) {
+        for (unsigned i = 0; i < g_m1.naic; i++, ndev++) {
+            dev[ndev].base = g_m1.aic[i].base;
+            dev[ndev].size = g_m1.aic[i].size;
+        }
+        if (g_m1.uart.found) {
+            dev[ndev].base = g_m1.uart.base;
+            dev[ndev].size = g_con_s5l_size;
+            ndev++;
+        }
+        if (g_m1.wdt.found) {
+            dev[ndev].base = g_m1.wdt.base;
+            dev[ndev].size = g_m1.wdt.size;
+            ndev++;
+        }
+        for (unsigned i = 0; i < g_m1.ncpu; i++)
+            if (g_m1.cpu[i].has_release) {
+                rel[nrel].base = g_m1.cpu[i].release_addr;
+                rel[nrel].size = 8;
+                nrel++;
+            }
+        m1in = (struct wel2_s1_m1){
+            .ram = ram_in, .nram = nram_in,
+            .carve = { g_carve_base, g_carve_size },
+            .fdt = { fdt, fdt_totalsize((void *)fdt) },
+            .dev = dev, .ndev = ndev, .rel = rel, .nrel = nrel,
+            .layout = layout,
+        };
+        built_bad = wel2_pt_init(&s1_pt, s1_pool, sizeof(s1_pool), g_gran, va_bits) ||
+                    wel2_s1_build_m1(&s1_pt, &m1in, g_e2h);
+    } else {
+        built_bad = wel2_pt_init(&s1_pt, s1_pool, sizeof(s1_pool), g_gran, va_bits) ||
+                    wel2_s1_build(&s1_pt, &ram, &layout, g_e2h);
+    }
+    if (built_bad) {
         s1_msg("Watari EL2: FATAL: stage-1 tables: bad geometry/layout or the table pool is too small, halted\n");
+        checkpoint_fail();
         for (;;)
             __asm__ volatile("wfe");
     }
@@ -233,7 +342,7 @@ void stage1_build(uint64_t fdt)
     /* The S5L UART: below the RAM it is covered by the Device map of [0, RAM base) (the M1: 0x2_3520_0000 under
      * the RAM at 0x8_0000_0000); above it, it is added here. A window the map cannot take falls back to the
      * (unreachable on the M1) PL011: the first output would fault otherwise, with nothing to say why. */
-    if (g_con_s5l_base && wel2_s1_map_device(&s1_pt, &ram, g_con_s5l_base, g_con_s5l_size, g_e2h)) {
+    if (!m1 && g_con_s5l_base && wel2_s1_map_device(&s1_pt, &ram, g_con_s5l_base, g_con_s5l_size, g_e2h)) {
         g_con_s5l_base = 0;
         g_con = (struct wel2_uart){ WEL2_UART_PL011, g_con.io, 0, 0, 0, 0 };
         g_con.io.ctx = (void *)0x09000000UL;
@@ -243,7 +352,8 @@ void stage1_build(uint64_t fdt)
     /* The framebuffer: above the RAM on the M1 (0x9e2570000 vs the RAM top 0x9df610000), mapped Normal non-cacheable
      * (MAIR Attr2). A framebuffer the map cannot take (inside the RAM, beyond the input range, pool full) is
      * switched off: drawing into unmapped or cacheable memory would fault or never reach the panel. */
-    if (g_fb.fmt && wel2_s1_map_fb(&s1_pt, &ram, g_fb.base, wel2_fb_bytes(&g_fb), g_e2h)) {
+    if (g_fb.fmt && (m1 ? wel2_s1_map_fb_free(&s1_pt, g_fb.base, wel2_fb_bytes(&g_fb), g_e2h)
+                        : wel2_s1_map_fb(&s1_pt, &ram, g_fb.base, wel2_fb_bytes(&g_fb), g_e2h))) {
         g_fb = (struct wel2_fb){ 0 };
         g_fb.cp = -1;
         s1_msg("Watari EL2: WARNING: the framebuffer does not fit the stage-1 map, no framebuffer output\n");
@@ -264,6 +374,10 @@ void stage1_build(uint64_t fdt)
     clean_inval(&g_fb, sizeof(g_fb));
     clean_inval(&g_con_s5l_base, sizeof(g_con_s5l_base));
     clean_inval(&g_con_s5l_size, sizeof(g_con_s5l_size));
+    clean_inval(&g_m1, sizeof(g_m1));
+    clean_inval(&g_plat, sizeof(g_plat));
+    clean_inval(g_guest_ram, sizeof(g_guest_ram));
+    clean_inval(&g_nguest_ram, sizeof(g_nguest_ram));
     clean_inval(&g_layer_base, sizeof(g_layer_base));
     clean_inval(&g_carve_base, sizeof(g_carve_base));
     clean_inval(&g_carve_size, sizeof(g_carve_size));

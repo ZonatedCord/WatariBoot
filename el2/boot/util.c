@@ -67,6 +67,12 @@ struct wel2_uart g_con = {
     WEL2_UART_PL011, { mmio_rd, mmio_wr, (void *)UART0_BASE }, 0, 0, 0, 0,
 };
 
+/* T6c: the null console, for the M1 before (or without) a usable S5L UART: no register is ever touched. */
+void con_select_none(void)
+{
+    g_con = (struct wel2_uart){ WEL2_UART_NONE, { mmio_rd, mmio_wr, 0 }, 0, 0, 0, 0 };
+}
+
 void con_select_s5l(uint64_t base)
 {
     g_con = (struct wel2_uart){
@@ -98,16 +104,16 @@ void checkpoint_fail(void)
 
 void putc_(char c)
 {
+    wel2_fb_putc(&g_fb, c);                  /* T6c: the panel first, a stuck UART must not delay or lose it */
     wel2_uart_putc(&g_con, (uint8_t)c);
-    wel2_fb_putc(&g_fb, c);
 }
 
 void puts_(const char *s)
 {
     bool got = spin_lock(&g_uart, 1UL << 24);
 
-    wel2_uart_puts(&g_con, s);
     wel2_fb_puts(&g_fb, s);
+    wel2_uart_puts(&g_con, s);
     if (got)
         spin_unlock(&g_uart);
 }

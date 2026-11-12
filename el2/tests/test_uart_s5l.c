@@ -273,6 +273,21 @@ static void t_fdt_cells_and_edge_cases(void)
 	CHECK(!i.found);
 }
 
+/* T6c: the null console touches no register and counts nothing (the M1 without an S5L UART node) */
+static void t_none_console(void)
+{
+	struct fake f;
+	struct wel2_uart u = mk(&f, WEL2_UART_NONE, 1000);
+
+	CHECK(!wel2_uart_putc(&u, 'x'));
+	wel2_uart_puts(&u, "hello\n");
+	CHECK_EQ(f.reads, 0);
+	CHECK_EQ(f.bad_access, 0);
+	CHECK_EQ(f.n, 0);
+	CHECK_EQ(u.sent, 0);
+	CHECK_EQ(u.dropped, 0);
+}
+
 int main(void)
 {
 	RUN(t_s5l_tx);
@@ -280,6 +295,7 @@ int main(void)
 	RUN(t_s5l_timeout_drops_and_counts);
 	RUN(t_newline_cr_lf);
 	RUN(t_pl011_unchanged);
+	RUN(t_none_console);
 	RUN(t_fdt_finds_s5l);
 	RUN(t_fdt_without_node);
 	RUN(t_fdt_cells_and_edge_cases);

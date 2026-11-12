@@ -16,7 +16,7 @@ CFLAGS := -I../include --target=aarch64-none-elf -std=c11 -Wall -Wextra -Werror 
 ASFLAGS := --target=aarch64-none-elf -g -I../include
 
 OBJS := $(OUT)/start.o $(OUT)/util.o $(OUT)/stage1.o $(OUT)/main.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o \
-        $(OUT)/pirq_qemu.o $(OUT)/fdt.o $(OUT)/vgic.o $(OUT)/vcif.o $(OUT)/intr_map.o $(OUT)/pirq.o $(OUT)/pirq_aic.o $(OUT)/v2m.o $(OUT)/ram_map.o $(OUT)/pt.o $(OUT)/maps.o $(OUT)/uart.o $(OUT)/fb.o $(PAYLOAD_OBJS)
+        $(OUT)/pirq_qemu.o $(OUT)/plat_qemu.o $(OUT)/plat_m1.o $(OUT)/plat_select.o $(OUT)/fdt.o $(OUT)/fdt_m1.o $(OUT)/vgic.o $(OUT)/vcif.o $(OUT)/intr_map.o $(OUT)/pirq.o $(OUT)/pirq_aic.o $(OUT)/v2m.o $(OUT)/ram_map.o $(OUT)/pt.o $(OUT)/maps.o $(OUT)/uart.o $(OUT)/fb.o $(PAYLOAD_OBJS)
 
 # The image is a PIE linked at 0 (linker.ld) and relocated by start.S: -fpie with hidden visibility and direct access
 # to external data keeps every reference PC-relative (adrp/add), so the code needs no GOT before the relocation.
@@ -25,7 +25,7 @@ OBJS := $(OUT)/start.o $(OUT)/util.o $(OUT)/stage1.o $(OUT)/main.o $(OUT)/gic_ph
 # Code that runs with the MMU off (stage1.c: table build before the MMU is on; util.c and
 # payload.c: also run by the EL1 test payload, MMU off = Device memory) keeps -mstrict-align
 # (F-18). Everything else runs at EL2 on Normal memory and is built without it (#53).
-STRICT := util stage1 payload fdt ram_map pt maps uart fb
+STRICT := util stage1 payload fdt fdt_m1 plat_select ram_map pt maps uart fb
 $(foreach o,$(STRICT),$(OUT)/$(o).o): CFLAGS += -mstrict-align
 
 all: build/wel2.bin
@@ -33,7 +33,7 @@ all: build/wel2.bin
 chain:
 	$(MAKE) OUT=build-chain XFLAGS=-DWEL2_CHAIN=1 PAYLOAD_OBJS= build-chain/wel2.bin
 
-$(OUT)/%.o: %.c pie.h boot.h fdt.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_ram.h ../include/wel2_aic.h ../include/wel2_coreidx.h ../include/wel2_uart.h ../include/wel2_fb.h ../include/wel2_maps.h | $(OUT)
+$(OUT)/%.o: %.c pie.h boot.h plat.h gic_phys.h fdt.h fdt_m1.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_ram.h ../include/wel2_aic.h ../include/wel2_coreidx.h ../include/wel2_uart.h ../include/wel2_fb.h ../include/wel2_maps.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/fb.o: ../vgic/fb.c ../vgic/font5x7.h ../include/wel2_fb.h pie.h | $(OUT)
@@ -89,15 +89,13 @@ $(OUT):
 check:
 	$(MAKE) -s all
 	$(MAKE) -s chain
-	$(MAKE) -s build/fdt_m1.o
+	$(MAKE) -s check-fdt-m1
 
-# T6b: fdt_m1.c is not linked into the image yet (TODO(T6c): the platform switch calls it). It is compiled here with
-# the layer's flags (-mstrict-align, -fno-builtin, no libc) so it stays MMU-off safe.
-build/fdt_m1.o: fdt_m1.c fdt_m1.h fdt.h ../include/wel2_fb.h | build
-	$(CC) $(CFLAGS) -mstrict-align -c $< -o $@
-	@if $(LLVM)/llvm-nm $@ | grep -E ' U (memcpy|memset|memcmp|strlen)$$'; then echo "fdt_m1.o needs libc"; exit 1; fi
+# T6b/T6c: fdt_m1.c is linked into the image (stage1_build calls it with the MMU off). It must not need libc.
+check-fdt-m1: $(OUT)/fdt_m1.o
+	@if $(LLVM)/llvm-nm $< | grep -E ' U (memcpy|memset|memcmp|strlen)$$'; then echo "fdt_m1.o needs libc"; exit 1; fi
 
 clean:
 	rm -rf build build-chain
 
-.PHONY: all chain check clean
+.PHONY: all chain check check-fdt-m1 clean

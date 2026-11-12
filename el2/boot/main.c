@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include "wel2_vgic.h"
 #include "boot.h"
+#include "plat.h"
 #include "fdt.h"
 #include "wel2_aic.h"
 #include "wel2_maps.h"
@@ -164,10 +165,12 @@ static void handle_smc(struct frame *f)
  * implement only 16 KB, so 16 KB is the M1 case; the map logic (identity, device attributes, GIC holes) does
  * not depend on the granule.
  *
- * IPA space 40 bits (T0SZ=24; M1-4: EDK2 touches the PCIe high ECAM at 0x4010000000 and may use the high MMIO
+ * IPA space g_plat->s2_ipa_bits: 40 bits on QEMU (T0SZ=24; M1-4: EDK2 touches the PCIe high ECAM at 0x4010000000 and may use the high MMIO
  * window at 0x8000000000). 4 KB: start level 0 (SL0=2, 2 entries of 512 GB), 1 GB / 2 MB blocks. 16 KB: start
  * level 1 (SL0=2, 16 entries of 64 GB; no level-1 blocks without FEAT_LPA2), 32 MB blocks at level 2, 16 KB
- * pages at level 3 (Arm ARM D8.2.9, Table D8-27/D8-31). Contents:
+ * pages at level 3 (Arm ARM D8.2.9, Table D8-27/D8-31). The M1 (36 bits, T0SZ=28): 16 KB start level 2 (SL0=1, one
+ * table of 2048 32 MB entries), 4 KB start level 1 (SL0=1, 64 entries of 1 GB); wel2_vtcr derives both from the table
+ * geometry (tests/test_pt.c). Contents:
  *   everything             : Device-nGnRnE blocks (MMIO, PCIe windows)
  *   RAM (g_ram_base..g_ram_end, from the FDT /memory node, #60; default 0x40000000-0x13fffffff):
  *                            Normal WB blocks, the largest the granule and the alignment allow (the RAM helper
@@ -181,16 +184,16 @@ static void handle_smc(struct frame *f)
  * Note: without the chain build EL2's own image sits in the RAM block, i.e. it is visible to the guest.
  * M1-3: all cores share these tables (one VTTBR value, VMID 0).
  */
-static struct fdt_aic_info g_aic_info;  /* the Watari AIC node (#42), found when g_aic_on */
+struct fdt_aic_info g_aic_info;         /* the Watari AIC node (#42), found when g_aic_on */
 static uint8_t s2_pool[WEL2_S2_POOL_BYTES] __attribute__((aligned(16384)));
 static struct wel2_pt s2_pt;
 static bool g_v2m_on;                   /* the page is a hole (no guest RAM there) */
 static struct v2m g_v2m;                /* #74: the MSI frame at 0xFFFFF000, trapped as one 16 KB page */
 static uint64_t g_vtcr;
 
-/* TODO(T6): the M1 path must also add the real AIC hole to this list, via wel2_s2_add_hole() with
- * AIC_T8103_BASE/SIZE0 (wel2_aic.h; reg[1] is inside reg[0], so one hole). NOT wired yet: today only the
- * QEMU Watari AIC node (g_aic_info) is covered. Until then the guest could reach the real AIC. */
+/* T6c: on the M1 the guest stage 2 is RAM only (wel2_s2_build_ram): the real AIC, the UART, the watchdog and the
+ * framebuffer are simply not mapped for the guest, so no hole list is needed there. The holes below serve the QEMU
+ * map (Device blanket with holes). */
 static void v2m_stray_log(void *ctx, uint32_t page_off, bool write, unsigned size)
 {
     (void)ctx;
@@ -213,8 +216,8 @@ static void stage2_init(void)
 {
     struct wel2_ram ram = { g_ram_base, g_ram_end };
     struct wel2_range holes[HOLES_MAX] = {
-        { GICD_PHYS, GICD_SIZE },
-        { GICR_PHYS, 8ULL * VGIC_GICR_FRAME_SIZE },
+        { g_plat->vgic_gicd_base, GICD_SIZE },
+        { g_plat->vgic_gicr_base, 8ULL * VGIC_GICR_FRAME_SIZE },
     };
     unsigned nholes = 2;
 
@@ -227,12 +230,12 @@ static void stage2_init(void)
     g_v2m.log_stray = v2m_stray_log;
     /* QEMU virt with -m 4G or more has RAM at 0xFFFFC000: then there is no hole and no frame. */
     g_v2m_on = v2m_page_free(&g_v2m, g_ram_base, g_ram_end);
-    if (g_v2m_on && v2m_add_hole(&g_v2m, holes, &nholes, HOLES_MAX, g_gran))
+    if (!g_plat->m1_memory && g_v2m_on && v2m_add_hole(&g_v2m, holes, &nholes, HOLES_MAX, g_gran))
         fatal_msg("stage-2 holes: MSI frame page does not fit");
     if (!g_v2m_on)
         puts_("Watari EL2: MSI frame page 0xFFFFC000 is guest RAM here: not emulated\n");
 
-    if (g_aic_on) {                     /* #42: the AIC belongs to the layer, the guest faults there */
+    if (!g_plat->m1_memory && g_aic_on) {   /* #42: the AIC belongs to the layer, the guest faults there */
         if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_aic_info.base, g_aic_info.size, g_gran))
             fatal_msg("stage-2 holes: AIC window does not fit");
     }
@@ -240,25 +243,27 @@ static void stage2_init(void)
     /* The layer's console UART (Apple S5L, from the FDT) is not the guest's: stage 2 maps every address Device by
      * default, so without this hole the guest could read and write the layer's log UART. (QEMU: the PL011 is the
      * guest's too and stays mapped: no S5L node, no hole.) */
-    if (g_con_s5l_base && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_con_s5l_base, g_con_s5l_size, g_gran))
+    if (!g_plat->m1_memory && g_con_s5l_base && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_con_s5l_base, g_con_s5l_size, g_gran))
         fatal_msg("stage-2 holes: console UART window does not fit");
 
     /* The framebuffer is the layer's too (checkpoints and log text): never given to the guest. The guest's stage 2
      * is RAM plus these holes; unmapping the framebuffer pages makes a guest access fault to EL2 and be reported. */
-    if (g_fb.fmt && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, wel2_fb_bytes(&g_fb), g_gran))
+    if (!g_plat->m1_memory && g_fb.fmt && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, wel2_fb_bytes(&g_fb), g_gran))
         fatal_msg("stage-2 holes: framebuffer does not fit");
 
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
 
-    if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, hide_lo, g_carve_base + g_carve_size - hide_lo, g_gran))
+    if (!g_plat->m1_memory && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, hide_lo, g_carve_base + g_carve_size - hide_lo, g_gran))
         fatal_msg("stage-2 holes: layer carve-out does not fit");
 #endif
-    if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, WEL2_S2_IPA_BITS) ||
-        wel2_s2_build(&s2_pt, &ram, holes, nholes))
+    if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, g_plat->s2_ipa_bits) ||
+        (g_plat->m1_memory ? wel2_s2_build_ram(&s2_pt, g_guest_ram, g_nguest_ram)
+                           : wel2_s2_build(&s2_pt, &ram, holes, nholes)))
         fatal_msg("stage-2 tables: bad geometry or the table pool is too small");
     /* VTCR_EL2.PS = min(ID_AA64MMFR0_EL1.PARange, 0b010 = 40 bit): the M1 may implement fewer physical address
-     * bits than the 40-bit IPA space the guest is given (an output address above PARange is an address size fault). */
+     * bits than the 40-bit IPA space the QEMU guest is given (an output address above PARange is an address size fault);
+     * on the M1 the IPA space is 36 bits itself (g_plat->s2_ipa_bits), the PARange measured on the j293. */
     uint64_t mmfr0;
 
     __asm__ volatile("mrs %0, id_aa64mmfr0_el1" : "=r"(mmfr0));
@@ -269,7 +274,7 @@ static void stage2_init(void)
 }
 
 /* Per core: VTCR_EL2 (Arm ARM D24.2.223) from the builder: RES1 bit31, PS=min(PARange, 40 bit), TG0 (4 KB: 0,
- * 16 KB: 0b10), SH0=3, ORGN0=IRGN0=1 (WB WA), SL0 per granule and start level, T0SZ=24 (40-bit IPA). */
+ * 16 KB: 0b10), SH0=3, ORGN0=IRGN0=1 (WB WA), SL0 per granule and start level, T0SZ = 64 - g_plat->s2_ipa_bits (24 on QEMU, 28 on the M1). */
 void stage2_enable(void)
 {
     __asm__ volatile("msr vtcr_el2, %0" : : "r"(g_vtcr));
@@ -287,7 +292,7 @@ static unsigned g_log_budget = 16;
  * SKIP ones (EDK2 does ~1000 of them), at most 3000 lines. Off by default. */
 bool g_trace_on;
 static bool g_lpi = true;       /* wel2.lpi=off: hide LPIs from the guest (GICD_TYPER.LPIS = 0) */
-static bool g_aic_allowed = true;   /* wel2.aic=off: ignore the AIC node of the QEMU aic=on machine */
+bool g_aic_allowed = true;   /* wel2.aic=off: ignore the AIC node of the QEMU aic=on machine */
 static unsigned g_trace_skip, g_trace_left = 3000;
 
 static unsigned idx_cpu(void)
@@ -342,7 +347,7 @@ static void lpi_reg_cb(void *ctx, unsigned cpu, unsigned off, uint64_t val)
         put_kv("Watari EL2: TR    cpu ", cpu);
         put_kv("Watari EL2: TR    value ", val);
     }
-    gic_phys_lpi_reg(cpu, off, val);
+    g_plat->lpi_reg(cpu, off, val);
 }
 
 static void vgic_setup(uint64_t fdt)
@@ -352,28 +357,15 @@ static void vgic_setup(uint64_t fdt)
     for (unsigned i = 0; i < g_ncpu; i++)
         aff[i] = g_pcpu[i].aff;
     struct vgic_config cfg = {
-        .gicd_base = GICD_PHYS,
-        .gicr_base = GICR_PHYS,
+        .gicd_base = g_plat->vgic_gicd_base,
+        .gicr_base = g_plat->vgic_gicr_base,
         .nr_vcpus = g_ncpu,
         .affinity = aff,
         .hooks = { vgic_log_cb, vgic_effect_cb, 0, lpi_reg_cb },
-        .lpis = g_lpi && gic_phys_has_lpis(),
-        .idbits = gic_phys_idbits(),
+        .lpis = g_lpi && g_plat->has_lpis(),
+        .idbits = g_plat->idbits(),
     };
-    pirq_qemu_init(&g_vgic, g_ncpu);            /* SPI policy first: vGIC effects reach it */
-    /* #42: the QEMU machine with aic=on describes its Apple-style AIC in the FDT; the layer then owns it too. */
-    if (g_aic_allowed && fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
-        fdt_find_aic((void *)fdt, &g_aic_info) == 0 && g_aic_info.found) {
-        const char *why = "";
-
-        if (g_aic_info.nr_cpu != g_ncpu)
-            fatal_msg("AIC node: num-cpu differs from the cores found");
-        if (pirq_qemu_init_aic(&g_vgic, g_ncpu, &g_aic_info, &why))
-            fatal_msg(why);
-        put_kv("Watari EL2: AIC at ", g_aic_info.base);
-        put_kv("Watari EL2:   inputs = ", g_aic.nr_irq);
-        put_kv("Watari EL2:   devices routed to the AIC = ", g_aic_info.n_routed);
-    }
+    g_plat->pirq_init(&g_vgic, g_ncpu, fdt);    /* SPI policy first: vGIC effects reach it */
     if (vgic_init(&g_vgic, &cfg) != 0)
         fatal_msg("vgic_init failed");
 }
@@ -393,8 +385,8 @@ static void handle_dabt(struct frame *f, unsigned idx)
     unsigned srt = (iss >> 16) & 31;
     int wnr = (iss >> 6) & 1;
     uint32_t dfsc = iss & 0x3f;
-    int in_gic = (ipa >= GICD_PHYS && ipa < GICD_PHYS + GICD_SIZE) ||
-                 (ipa >= GICR_PHYS && ipa < GICR_PHYS + 8 * VGIC_GICR_FRAME_SIZE);
+    int in_gic = (ipa >= g_plat->vgic_gicd_base && ipa < g_plat->vgic_gicd_base + GICD_SIZE) ||
+                 (ipa >= g_plat->vgic_gicr_base && ipa < g_plat->vgic_gicr_base + 8 * VGIC_GICR_FRAME_SIZE);
     int in_v2m = g_v2m_on && v2m_contains(&g_v2m, ipa);        /* #74: the whole 16 KB page */
 
     if (!isv || !(in_gic || in_v2m) || (dfsc >> 2) != 1 /* translation fault, any level */) {
@@ -453,11 +445,11 @@ static void handle_dabt(struct frame *f, unsigned idx)
     /* M1-4: progress evidence for a firmware that does thousands of GIC accesses. */
     {
         static unsigned n_gicd, n_gicr;
-        unsigned n = in_v2m ? 0 : ipa < GICD_PHYS + GICD_SIZE ? ++n_gicd : ++n_gicr;   /* v2m: no progress line */
+        unsigned n = in_v2m ? 0 : ipa < g_plat->vgic_gicd_base + GICD_SIZE ? ++n_gicd : ++n_gicr;   /* v2m: no progress line */
 
         for (unsigned p = 1; p <= 1000000; p *= 10) {
             if (n == p) {
-                put_kv(ipa < GICD_PHYS + GICD_SIZE ? "Watari EL2: vGIC GICD traps handled = "
+                put_kv(ipa < g_plat->vgic_gicd_base + GICD_SIZE ? "Watari EL2: vGIC GICD traps handled = "
                                                    : "Watari EL2: vGIC GICR traps handled = ", n);
             }
         }
@@ -478,6 +470,10 @@ void el2_exception(struct frame *f, unsigned idx)
         handle_dabt(f, idx);
     } else if (idx == 8 && ec == EC_SYSREG && cpuif_sysreg_trap(f)) {
         /* ICC_SGI*R_EL1 write: the SGI is now pending in the model */
+    } else if (idx == 10 && g_plat->fiq) {
+        g_plat->fiq(f);                      /* T6e: the Apple FIQ (timer, IPI, PMU); QEMU has none: fatal below */
+        big_unlock();
+        return;
     } else if (idx == 9) {
         cpuif_irq();                         /* physical IRQ: timer / maintenance / kick / SPI */
         big_unlock();
@@ -523,6 +519,10 @@ static void set_virtual_ids(void)
  * and the FDT is patched first (fdt.c): /memory loses the layer's carve-out, the PSCI
  * conduit becomes "hvc". The entry is the start of the EDK2 image, whose header
  * (code0 = "adr x1, .") tells the relocatable PrePi where it was loaded. */
+/* TODO(T10/T11, M1 hand-off): fdt_patch_for_guest(), EDK2_FDT_ADDR (= g_carve_base) and EDK2_ENTRY (= carve end + 0x80000)
+ * are QEMU conventions (RAM starts at the carve-out, the FDT is copied to the RAM base, EDK2 sits behind a 2 MB block).
+ * They do not describe the M1, where the carve-out is a 32 MB block inside the RAM and the guest sees RAM ranges
+ * (g_guest_ram[]); the chain build is not an M1 build until that hand-off is redone. */
 static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
 {
     struct fdt_patch_info pi;
@@ -658,6 +658,8 @@ static void stage1_report(void)
         puts_("Watari EL2:   E2H = 0 was requested but the bit is stuck at 1 (the M1 case): running with E2H = 1\n");
     if (g_gran_fallback)
         puts_("Watari EL2:   the requested translation granule is not implemented: using the other one\n");
+    if (g_plat->m1_memory)
+        put_kv("Watari EL2: platform = M1, guest RAM ranges = ", g_nguest_ram);
     put_kv("Watari EL2: layer image (PIE, relocated) at ", g_layer_base);
     put_kv("Watari EL2:   carve-out base = ", g_carve_base);
     put_kv("Watari EL2:   carve-out size = ", g_carve_size);
@@ -691,7 +693,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
 
     /* Cores = redistributor frames (GICR_TYPER walk); vCPU i = core i. */
     regime_init_cpu();
-    g_ncpu = gic_phys_discover();
+    g_ncpu = g_plat->discover_cpus();
     bind_this_cpu();
     put_kv("Watari EL2: cores (redistributors) = ", g_ncpu);
     for (unsigned i = 0; i < g_ncpu; i++)
@@ -713,9 +715,8 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     stage2_enable();
     set_virtual_ids();
     puts_("Watari EL2: stage-2 on (identity, GICD/GICR unmapped), vGIC ready\n");
-    gic_phys_init_dist();
-    gic_phys_init_cpu();
-    if (g_aic_on && pirq_qemu_init_aic_cpu(this_cpu()))
+    g_plat->init_boot();
+    if (g_plat->init_cpu(this_cpu()))
         fatal_msg("AIC: WHOAMI of the boot core differs from its index");
     cpuif_init(&g_vgic);
     puts_("Watari EL2: physical GIC owned by EL2, virtual CPU interface on\n");
@@ -746,8 +747,7 @@ void __attribute__((noreturn)) el2_secondary_main(void)
     regime_init_cpu();
     stage2_enable();
     set_virtual_ids();
-    gic_phys_init_cpu();
-    if (g_aic_on && pirq_qemu_init_aic_cpu(me))
+    if (g_plat->init_cpu(me))
         fatal_msg("AIC: WHOAMI of a secondary core differs from its index");
     cpuif_init_cpu();
 
