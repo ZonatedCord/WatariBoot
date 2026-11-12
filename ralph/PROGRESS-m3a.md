@@ -68,3 +68,8 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 ### 2026-11-12 02:15 - T6c, T7a merged (ticked after the merged Windows boot)
 - T6c commits bee92f9, b2b812b (Fable review: QEMU refactor pure; fixed M1 null console, 36-bit guest IPA on the M1, FDT RO mapping, a test bug). T7a commits 8657894, 7ca9980 (Fable review: storm bounds, no MMIO without positive QEMU evidence, real PAuth check, G5 counters, reset on fatal). After the merge: `make -C el2 test` ALL PASSED, `run-all.sh` 17/17 both configs (now incl. run-m1guest), run-moved PASS, run-m1guest G1-G11: 10 PASS, G8 SKIP.
 - F-31: the agents' QEMU wait loop `pgrep -f "qemu-system.*win11.qcow2"` matches its own shell and never exits; use `pgrep -x qemu-system-aarch64`.
+
+### 2026-11-12 06:25 - T6c ticked; stop for Marco's morning window
+- Windows boot on the merged branch (TAG=t6c-merged, T6c + T7a + T6e/T6f modules) reached the desktop: T6c done.
+- Not finished, work saved in agent worktrees (resume next time, do not restart): T6d/T6e/T6f/T7 wiring in plat_m1 (`agent-a537b5235260987ab`, uncommitted edits in progress); T11 EDK2-on-M1 design (`agent-aee99778ffe1b20d2`); T14 ANS research (`agent-ae203f2fac7d41989`). All three stopped at the usage limit.
+- Merged but not ticked: T6e and T6f modules (tick when wired), T7a guest (T7 also needs the packaging script).
