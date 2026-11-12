@@ -59,3 +59,12 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 ### 2026-11-11 23:30 - State at the usage limit
 - Merged on BRANCH, not ticked: T6f host module (`el2/vgic/cpu_start.c`, commits ccb4ce5 + 0eafb03, Fable review fixes applied; tests + run-all 15/15 both configs). Ticked when T6c wires it.
 - In progress in worktrees (resume their agents after the reset): T6c seam + M1 maps (agent worktree `agent-a7aa2e060f60185f7`); T6e Apple FIQ (commit cfaf55a, Fable review D-1..D-3 fixes running in `agent-ac030ac3461b5970d`); T7a EL1 test guest (commit 8657894 in `agent-aba0fb822e096a6de`, run-m1guest 10 PASS / 1 SKIP on QEMU, Fable review running).
+
+### 2026-11-12 02:15 - T10 ACPI tables for the real M1: done
+- Commit: c239cb6. `tools/acpigen` model `j293`: MADT (GICD 0xF00000000, 8 GICC E-cores then P-cores matching `wel2_core_index`, MPIDR affinity-only, GICR range 0xF10000000/0x100000, GIC MSI frame 0xFFFFF000 SPI 928/32 cross-checked with `INTR_MAP_T8103`), GTDT (PPIs 27/30), FADT (HW-reduced, PSCI over HVC), PPTT (E and P clusters); no DBG2/SPCR on purpose (framebuffer only; README lists the PL011-emulation option for later).
+- Review (Sonnet): no blocking defects; field layouts checked against ACPI 6.5 (from memory, marked). Open for T11/M3b: the FADT points at no DSDT yet (Windows needs one), PPI 30 is not injected yet, ALWAYS_ON only on the physical timer, a GICv2m frame may be ignored by Windows (ITS path).
+- Opus verified: `make -C tools/acpigen test` TUTTI I TEST OK; `make -C el2 test` ALL PASSED.
+
+### 2026-11-12 02:15 - T6c, T7a merged (ticked after the merged Windows boot)
+- T6c commits bee92f9, b2b812b (Fable review: QEMU refactor pure; fixed M1 null console, 36-bit guest IPA on the M1, FDT RO mapping, a test bug). T7a commits 8657894, 7ca9980 (Fable review: storm bounds, no MMIO without positive QEMU evidence, real PAuth check, G5 counters, reset on fatal). After the merge: `make -C el2 test` ALL PASSED, `run-all.sh` 17/17 both configs (now incl. run-m1guest), run-moved PASS, run-m1guest G1-G11: 10 PASS, G8 SKIP.
+- F-31: the agents' QEMU wait loop `pgrep -f "qemu-system.*win11.qcow2"` matches its own shell and never exits; use `pgrep -x qemu-system-aarch64`.
