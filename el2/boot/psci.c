@@ -13,6 +13,7 @@
 // through to the firmware unchanged once validated.
 
 #include "boot.h"
+#include "plat.h"
 #include "wel2_coreidx.h"
 
 #define PSCI_VERSION          0x84000000u
@@ -44,20 +45,9 @@
  * Aff2 [23:16], Aff1 [15:8], Aff0 [7:0]; all other bits must be zero. */
 #define PSCI_MPIDR_MASK 0x000000ff00ffffffULL
 
-int64_t psci_smc(uint64_t fid, uint64_t a1, uint64_t a2, uint64_t a3)
+static void __attribute__((noreturn)) psci_system_off(void)
 {
-    register uint64_t x0 __asm__("x0") = fid;
-    register uint64_t x1 __asm__("x1") = a1;
-    register uint64_t x2 __asm__("x2") = a2;
-    register uint64_t x3 __asm__("x3") = a3;
-
-    __asm__ volatile("smc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3) : "memory");
-    return (int64_t)x0;
-}
-
-void psci_system_off(void)
-{
-    psci_smc(PSCI_SYSTEM_OFF, 0, 0, 0);
+    g_plat->system_off();
     fatal_msg("SYSTEM_OFF returned");
 }
 
@@ -92,7 +82,7 @@ static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
         return PSCI_INVALID_PARAMETERS;
     /* Entry point: a 4-byte aligned address inside guest RAM, else the
      * implementation knows it is unavailable to the caller (5.6.2). */
-    if ((entry & 3) || entry < g_ram_base || entry >= g_ram_end)
+    if ((entry & 3) || !guest_ram_contains(entry))
         return PSCI_INVALID_ADDRESS;
     if (g_pcpu[idx].state == CPU_ST_ON)
         return PSCI_ALREADY_ON;
@@ -109,7 +99,7 @@ static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
      * firmware's ALREADY_ON. */
     int64_t r = PSCI_ALREADY_ON;
     for (unsigned tries = 0; r == PSCI_ALREADY_ON && tries < 100000; tries++)
-        r = psci_smc(PSCI_CPU_ON_64, target, (uint64_t)(uintptr_t)secondary_entry, 0);
+        r = g_plat->cpu_start(target, idx);
     if (r != PSCI_SUCCESS) {
         g_pcpu[idx].state = CPU_ST_OFF;
         put_kv("Watari EL2: firmware CPU_ON failed, ret = ", (uint64_t)r);
@@ -140,11 +130,11 @@ static int64_t cpu_off(void)
     pirq_vcpu_off(&g_pirq, me);        /* SPIs routed here move to an online core first */
     put_kv("Watari EL2: SPIs re-routed away from the core going off = ", g_pirq.st.retargets - moved);
     cpuif_cpu_down();
-    gic_phys_cpu_down();
+    g_plat->cpu_down();
     g_pcpu[me].state = CPU_ST_OFF;
     big_unlock();                       /* this core never comes back to release it */
     __asm__ volatile("dsb sy" ::: "memory");
-    int64_t r = psci_smc(PSCI_CPU_OFF, 0, 0, 0);
+    int64_t r = g_plat->cpu_off();
     put_kv("Watari EL2: firmware CPU_OFF returned, ret = ", (uint64_t)r);
     fatal_msg("CPU_OFF returned");
 }
@@ -219,7 +209,7 @@ bool psci_handle(struct frame *f, uint32_t fid)
     case PSCI_SYSTEM_RESET:                /* 5.11: EDK2 ResetSystem(); M1-4 */
         cpuif_stats();
         puts_("Watari EL2: PSCI SYSTEM_RESET -> forwarding to QEMU firmware (SMC)\n");
-        psci_smc(PSCI_SYSTEM_RESET, 0, 0, 0);
+        g_plat->system_reset();
         fatal_msg("SYSTEM_RESET returned");
     case PSCI_CPU_SUSPEND_32:
     case PSCI_CPU_SUSPEND_64:

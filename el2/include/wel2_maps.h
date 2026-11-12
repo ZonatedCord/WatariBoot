@@ -18,9 +18,14 @@
 #define WEL2_S2_IPA_BITS 40u
 
 /* Table pools (bytes), enough for the QEMU virt maps with either granule (test_pt.c prints the real use):
- * stage 2 with 16 KB needs a level-2 table per 64 GB of the 1 TB device window, stage 1 three tables. */
-#define WEL2_S1_POOL_BYTES  (8u * 16384u)
-#define WEL2_S2_POOL_BYTES  (32u * 16384u)
+ * stage 2 with 16 KB needs a level-2 table per 64 GB of the 1 TB device window, stage 1 three tables.
+ * T6c: the M1 stage 1 is the larger user. The measured j293 layout (8 GB, ten scattered reserved ranges, framebuffer,
+ * cpu-release page) takes 18 tables with 16 KB (two level-3 tables per odd range edge, 17 with 4 KB); 40 tables
+ * hold about 20 reserved ranges. The guest stage 2 of the M1 (32 MB blocks, RAM only) takes 2 tables with 16 KB and
+ * 9 with 4 KB. The QEMU maps need at most 21 stage-2 tables (six holes, 16 KB), hence 24; the pools make the layer 0x160000 bytes.
+ * A layout that does not fit stops the boot with a message (stage1.c), it never maps less silently. */
+#define WEL2_S1_POOL_BYTES  (40u * 16384u)
+#define WEL2_S2_POOL_BYTES  (24u * 16384u)
 
 struct wel2_range {
 	uint64_t base, size;
@@ -63,6 +68,47 @@ int wel2_s1_map_fb(struct wel2_pt *pt, const struct wel2_ram *ram, uint64_t base
  * the range wraps past 2^64 or the array is full; *n is unchanged on error. */
 int wel2_s2_add_hole(struct wel2_range *holes, unsigned *n, unsigned cap, uint64_t base, uint64_t size,
 		     unsigned gshift);
+
+/* ---- Apple M1 maps (T6c, PLAN S8) -------------------------------------------------------------------------------
+ * The M1 has no blanket Device map and no 4 GB default: both maps are built from explicit range lists (the FDT's
+ * usable[] after the reservations, T6b) and everything else stays unmapped, so a stray access faults to EL2 and is
+ * reported. Pure arithmetic over struct wel2_range arrays: host-tested with the j293 fixture (tests/test_pt.c). */
+
+#define WEL2_MAX_GUEST_RANGES 66              /* M1_MAX_USABLE (fdt_m1.h) + 2 */
+#define WEL2_M1_S1_ALIGN  WEL2_RAM_BLOCK       /* EL2 stage 1: RAM rounded inward to 2 MB (T6b note) */
+#define WEL2_M1_S2_ALIGN  0x2000000ULL         /* guest stage 2: 32 MB = one level-2 block of the 16 KB granule (D 4.3) */
+
+/* out[] = the pieces of in[0..n) rounded INWARD to `align` (a power of two); pieces that vanish are dropped, overlaps
+ * are kept as they are (mapping twice is harmless). If cut_size is non-zero, [cut_base, cut_base+cut_size) rounded
+ * OUTWARD to `align` is then removed from every piece. 0 and *nout, or -1 if out[] (capacity max) is too small or a
+ * range wraps. */
+int wel2_ranges_inward(const struct wel2_range *in, unsigned n, uint64_t align, uint64_t cut_base, uint64_t cut_size,
+		       struct wel2_range *out, unsigned max, unsigned *nout);
+
+struct wel2_s1_m1 {
+	const struct wel2_range *ram;     /* usable RAM, exact (rounded inward to WEL2_M1_S1_ALIGN here) */
+	unsigned nram;
+	struct wel2_range carve;          /* the layer's block: always mapped (image, .bss, stacks, table pools) */
+	struct wel2_range fdt;            /* the loader's FDT, mapped read-only when not already in the RAM map; size 0 = none */
+	const struct wel2_range *dev;     /* device windows (AIC, UART, WDT), rounded outward, Device-nGnRnE XN */
+	unsigned ndev;
+	const struct wel2_range *rel;     /* spin-table cpu-release-addr words (8 bytes each): their pages 1:1 Normal cacheable RW XN
+					   * unless already mapped (T6f: the layer stores there and does DC CVAC by VA) */
+	unsigned nrel;
+	struct wel2_s1_layout layout;     /* code RO X / rodata RO XN inside the carve-out */
+};
+
+/* EL2 stage 1 of the M1: RAM Normal (rounded inward to 2 MB) + the carve-out + the FDT + the devices, nothing else.
+ * A device window that overlaps a non-device page is refused (-1), so is any pool exhaustion or a range outside the
+ * input address space. */
+int wel2_s1_build_m1(struct wel2_pt *pt, const struct wel2_s1_m1 *in, bool e2h);
+
+/* Framebuffer of the M1: Normal non-cacheable, rounded outward, refused (-1) when any of its pages is already mapped
+ * (inside the RAM map) or beyond the input range. Call after wel2_s1_build_m1. */
+int wel2_s1_map_fb_free(struct wel2_pt *pt, uint64_t base, uint64_t size, bool e2h);
+
+/* Guest stage 2 of the M1: exactly the ranges (already rounded) as Normal WB, no device, nothing else. */
+int wel2_s2_build_ram(struct wel2_pt *pt, const struct wel2_range *ranges, unsigned n);
 
 /* 0, or -1 on bad arguments / pool exhausted. */
 int wel2_s2_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_range *holes, unsigned nholes);

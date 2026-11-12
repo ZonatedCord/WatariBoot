@@ -44,6 +44,7 @@
 // unmasked again, so a level interrupt that is still asserted re-fires.
 
 #include "boot.h"
+#include "plat.h"
 #include "wel2_aic.h"
 #include "wel2_vcif.h"
 #include "wel2_ram.h"
@@ -347,7 +348,7 @@ void cpuif_flush(void)
     vgic_set_irq_level(g_v, me, PPI_VTIMER, line);
     if (!line && c->vtimer_masked) {
         c->vtimer_masked = false;
-        gic_phys_ppi_enable(PPI_VTIMER, true);
+        g_plat->ppi_enable(PPI_VTIMER, true);
     }
 
     vcif_fill(v, g_v, me);                   /* priority order, evicting if need be */
@@ -385,7 +386,7 @@ void cpuif_kick_others(void)
             g_cif[me].st_kick++;
             if (!room)
                 g_cif[me].st_kick_evict++;
-            gic_phys_kick(j);
+            g_plat->kick(j);
         }
     }
 }
@@ -443,7 +444,7 @@ void cpuif_irq(void)
     struct cif *c = &g_cif[me];
 
     for (;;) {
-        uint32_t id = gic_phys_ack();
+        uint32_t id = g_plat->irq_ack();
 
         if (id >= 1020 && id <= 1023)
             break;                           /* spurious / none pending */
@@ -452,7 +453,7 @@ void cpuif_irq(void)
              * model line is refreshed from CNTV_CTL in cpuif_flush(). */
             c->st_timer++;
             c->vtimer_masked = true;
-            gic_phys_ppi_enable(PPI_VTIMER, false);
+            g_plat->ppi_enable(PPI_VTIMER, false);
 #ifdef WEL2_CHAIN
             /* M1-4: a firmware ticks every 10 ms; log only the first and every 10x. */
             for (unsigned p = 1; p <= 100000; p *= 10) {
@@ -493,7 +494,7 @@ void cpuif_irq(void)
 
                 /* The table is guest memory: read it only if the byte lies in RAM (a bad PROPBASER
                  * would otherwise data-abort EL2, now that stage 1 maps just the RAM). */
-                if (wel2_ram_contains(&(struct wel2_ram){ g_ram_base, g_ram_end }, a)) {
+                if (guest_ram_contains(a)) {
                     cfg = *(volatile uint8_t *)a;
                     prio = (uint8_t)(cfg & 0xfc);
                 } else {
@@ -531,14 +532,14 @@ void cpuif_irq(void)
         } else {
             put_kv("Watari EL2: unexpected physical INTID ", id);
         }
-        gic_phys_eoi(id);
+        g_plat->irq_eoi(id);
     }
     /* #42: the CPU IRQ line is the OR of the GIC and the AIC. The GIC is asked first (cheap system
      * register, and it carries the timer / maintenance PPIs that fire all the time); once it reports
      * nothing, the AIC is drained with EVENT reads (MMIO) until it reports 0. Both are empty before
      * the flush, and a source that asserts meanwhile keeps the line high, so the next IRQ finds it. */
-    if (g_aic_on)
-        pirq_qemu_aic_irq(me);
+    if (g_plat->irq_post)
+        g_plat->irq_post(me);
     cpuif_flush();
     cpuif_kick_others();
 }

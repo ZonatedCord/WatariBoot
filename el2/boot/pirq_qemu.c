@@ -15,6 +15,7 @@
 // guest sees is 32 + hwirq (intr_map rule), so the numbers in the FDT / ACPI stay valid.
 
 #include "boot.h"
+#include "plat.h"
 #include "fdt.h"
 #include "wel2_aic.h"
 
@@ -22,10 +23,10 @@ struct pirq g_pirq;
 bool g_aic_on;                          /* the hybrid backend is active */
 struct pirq_aic g_aic;                  /* valid when g_aic_on */
 
-static void q_mask(void *c, uint32_t p)               { (void)c; gic_phys_spi_enable(p, false); }
-static void q_unmask(void *c, uint32_t p)             { (void)c; gic_phys_spi_enable(p, true); }
-static void q_target(void *c, uint32_t p, int vcpu)   { (void)c; gic_phys_spi_route(p, vcpu); }
-static void q_trigger(void *c, uint32_t p, bool edge) { (void)c; gic_phys_spi_trigger(p, edge); }
+static void q_mask(void *c, uint32_t p)               { (void)c; g_plat->spi_enable(p, false); }
+static void q_unmask(void *c, uint32_t p)             { (void)c; g_plat->spi_enable(p, true); }
+static void q_target(void *c, uint32_t p, int vcpu)   { (void)c; g_plat->spi_route(p, vcpu); }
+static void q_trigger(void *c, uint32_t p, bool edge) { (void)c; g_plat->spi_trigger(p, edge); }
 
 static uint32_t q_intid_of(void *c, uint32_t phys)
 {

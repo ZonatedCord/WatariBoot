@@ -6,6 +6,12 @@
 #include "wel2_maps.h"
 #include "wel2_aic.h"
 #include "wel2_v2m.h"
+#include <stdlib.h>
+#include <string.h>
+#include "fdt.h"
+#include "fdt_m1.h"
+#include "fdt_build.h"
+#include "fx_j293.h"
 
 #define BASE   0x40000000ULL
 #define GICD_P 0x08000000ULL
@@ -531,6 +537,246 @@ static void t_s1_map(void)
 	}
 }
 
+/* ---- T6c: the M1 maps from the j293 fixture (PLAN S8) ------------------------------------------------------------
+ * The inputs are derived from the FDT exactly as stage1_build does it (usable[] / aic / uart / wdt / cpu-release-addr /
+ * framebuffer), the maps are built into the real table pools in both granules and with both E2H settings, and every
+ * 1 MB step of the first 40 GB plus every region edge is compared with an independent model of what must be mapped. */
+
+struct m1_in {
+	struct m1_platform p;
+	struct wel2_range ram[M1_MAX_USABLE];
+	unsigned nram;
+	struct wel2_range dev[M1_MAX_AIC + 2];
+	unsigned ndev;
+	struct wel2_range rel[M1_MAX_CPUS];
+	unsigned nrel;
+	struct wel2_range guest[WEL2_MAX_GUEST_RANGES];
+	unsigned nguest;
+	struct wel2_range carve, fdt, fb;
+	struct wel2_s1_layout layout;
+};
+
+static void m1_prepare(const struct opt *o, struct m1_in *in, uint64_t carve_base, uint64_t fdt_base)
+{
+	struct fdtb *b = malloc(sizeof(*b));
+	void *fdt = build_j293(b, o);
+
+	CHECK_EQ(fdt_m1_parse(fdt, &in->p), 0);
+	CHECK(in->p.is_m1);
+	in->nram = in->p.nusable;
+	for (unsigned i = 0; i < in->nram; i++)
+		in->ram[i] = (struct wel2_range){ in->p.usable[i].base, in->p.usable[i].size };
+	in->carve = (struct wel2_range){ carve_base, WEL2_M1_S2_ALIGN };
+	CHECK_EQ(wel2_ranges_inward(in->ram, in->nram, WEL2_M1_S2_ALIGN, carve_base, WEL2_M1_S2_ALIGN, in->guest,
+				    WEL2_MAX_GUEST_RANGES, &in->nguest), 0);
+	in->ndev = 0;
+	for (unsigned i = 0; i < in->p.naic; i++)
+		in->dev[in->ndev++] = (struct wel2_range){ in->p.aic[i].base, in->p.aic[i].size };
+	in->dev[in->ndev++] = (struct wel2_range){ in->p.uart.base, in->p.uart.size };
+	in->dev[in->ndev++] = (struct wel2_range){ in->p.wdt.base, in->p.wdt.size };
+	in->nrel = 0;
+	for (unsigned i = 0; i < in->p.ncpu; i++)
+		if (in->p.cpu[i].has_release)
+			in->rel[in->nrel++] = (struct wel2_range){ in->p.cpu[i].release_addr, 8 };
+	in->fdt = (struct wel2_range){ fdt_base, fdt_totalsize(fdt) };
+	in->fb = (struct wel2_range){ in->p.fb.base, wel2_fb_bytes(&in->p.fb) };
+	in->layout = (struct wel2_s1_layout){ carve_base + 0x4000, carve_base + 0x20000, carve_base + 0x28000 };
+	free(b);
+}
+
+static bool in_pages(uint64_t a, uint64_t base, uint64_t size, uint64_t g)
+{
+	return size && a >= (base & ~(g - 1)) && a < ((base + size + g - 1) & ~(g - 1));
+}
+
+/* 0 unmapped, 1 Normal WB, 2 Device, 3 Normal NC */
+static int s1_model(const struct m1_in *in, uint64_t a, uint64_t g)
+{
+	const uint64_t A = WEL2_M1_S1_ALIGN;
+
+	for (unsigned i = 0; i < in->nram; i++) {
+		uint64_t lo = (in->ram[i].base + A - 1) & ~(A - 1), hi = (in->ram[i].base + in->ram[i].size) & ~(A - 1);
+
+		if (lo < hi && a >= lo && a < hi)
+			return 1;
+	}
+	if (a >= in->carve.base && a < in->carve.base + in->carve.size)
+		return 1;
+	if (in_pages(a, in->fdt.base, in->fdt.size, g))
+		return 1;
+	for (unsigned i = 0; i < in->nrel; i++)
+		if (in_pages(a, in->rel[i].base, in->rel[i].size, g))
+			return 1;
+	for (unsigned i = 0; i < in->ndev; i++)
+		if (in_pages(a, in->dev[i].base, in->dev[i].size, g))
+			return 2;
+	if (in_pages(a, in->fb.base, in->fb.size, g))
+		return 3;
+	return 0;
+}
+
+static bool s2_model(const struct m1_in *in, uint64_t a)
+{
+	const uint64_t B = WEL2_M1_S2_ALIGN, blk = a & ~(B - 1);
+
+	if (blk < in->carve.base + in->carve.size && blk + B > in->carve.base)
+		return false;
+	for (unsigned i = 0; i < in->nram; i++)
+		if (blk >= in->ram[i].base && blk + B <= in->ram[i].base + in->ram[i].size)
+			return true;
+	return false;
+}
+
+static void m1_check_maps(const struct opt *o, unsigned gshift, bool e2h, uint64_t carve_base, uint64_t fdt_base,
+			  const char *tag)
+{
+	static struct m1_in in;
+	struct wel2_pt s1, s2;
+	uint64_t g = 1ULL << gshift, at;
+	unsigned bad1 = 0, bad2 = 0;
+
+	memset(&in, 0, sizeof(in));
+	m1_prepare(o, &in, carve_base, fdt_base);
+	CHECK_EQ(wel2_pt_init(&s1, pool_s1, sizeof(pool_s1), gshift, wel2_s1_va_bits(gshift)), 0);
+	CHECK_EQ(wel2_s1_build_m1(&s1, &(struct wel2_s1_m1){ in.ram, in.nram, in.carve, in.fdt, in.dev, in.ndev,
+							     in.rel, in.nrel, in.layout }, e2h), 0);
+	CHECK_EQ(wel2_s1_map_fb_free(&s1, in.fb.base, in.fb.size, e2h), 0);
+	CHECK_EQ(wel2_pt_init(&s2, pool_s2, sizeof(pool_s2), gshift, WEL2_S2_IPA_BITS), 0);
+	CHECK_EQ(wel2_s2_build_ram(&s2, in.guest, in.nguest), 0);
+	printf("    %s gran %uk e2h %d: stage 1 uses %u of %u tables, stage 2 uses %u of %u\n", tag, 1u << (gshift - 10),
+	       e2h, s1.used, s1.ntables, s2.used, s2.ntables);
+
+	/* every 1 MB of the first 40 GB, then every region edge +-1 granule, against the model */
+	uint64_t edges[512];
+	unsigned ne = 0;
+#define EDGE(x) do { if (ne < 512) edges[ne++] = (x); } while (0)
+	for (unsigned i = 0; i < in.nram; i++) { EDGE(in.ram[i].base); EDGE(in.ram[i].base + in.ram[i].size); }
+	EDGE(in.carve.base); EDGE(in.carve.base + in.carve.size);
+	EDGE(in.layout.text_lo); EDGE(in.layout.text_hi); EDGE(in.layout.ro_hi);
+	EDGE(in.fdt.base); EDGE(in.fdt.base + in.fdt.size); EDGE(in.fb.base); EDGE(in.fb.base + in.fb.size);
+	for (unsigned i = 0; i < in.nrel; i++) { EDGE(in.rel[i].base); EDGE(in.rel[i].base + 8); }
+	for (unsigned i = 0; i < in.ndev; i++) { EDGE(in.dev[i].base); EDGE(in.dev[i].base + in.dev[i].size); }
+	for (unsigned i = 0; i < in.nguest; i++) { EDGE(in.guest[i].base); EDGE(in.guest[i].base + in.guest[i].size); }
+	for (uint64_t a = 0; a < 0xa00000000ULL + 0x100000ULL * ne * 3; a += 0x100000ULL) {
+		uint64_t x = a;
+
+		if (a >= 0xa00000000ULL) {          /* the edge probes */
+			unsigned k = (unsigned)((a - 0xa00000000ULL) / 0x100000ULL);
+
+			x = (edges[k / 3] & ~(g - 1)) + (uint64_t)(k % 3 - 1) * g;
+		}
+		int want = s1_model(&in, x, g);
+		bool m = wel2_pt_walk(&s1, x, NULL, &at, NULL);
+		int got = m ? (int)((at >> 2) & 7) == 1 ? 1 : (int)((at >> 2) & 7) == 0 ? 2 : (int)((at >> 2) & 7) == 2 ? 3 : 9 : 0;
+
+		if (want != got && bad1++ < 5)
+			printf("    s1 mismatch at 0x%" PRIx64 ": want %d got %d\n", x, want, got);
+		bool w2 = s2_model(&in, x);
+
+		if (w2 != wel2_pt_walk(&s2, x, NULL, NULL, NULL) && bad2++ < 5)
+			printf("    s2 mismatch at 0x%" PRIx64 "\n", x);
+	}
+	CHECK_EQ(bad1, 0);
+	CHECK_EQ(bad2, 0);
+	/* guest blocks: start, middle, last page of each 32 MB block of the first 64 GB */
+	for (uint64_t blk = 0; blk < 0x1000000000ULL; blk += WEL2_M1_S2_ALIGN) {
+		bool w = s2_model(&in, blk);
+
+		if (wel2_pt_walk(&s2, blk, NULL, NULL, NULL) != w || wel2_pt_walk(&s2, blk + 0x1000000, NULL, NULL, NULL) != w ||
+		    wel2_pt_walk(&s2, blk + WEL2_M1_S2_ALIGN - g, NULL, NULL, NULL) != w)
+			bad2++;
+	}
+	CHECK_EQ(bad2, 0);
+
+	/* named facts (the model above must not be the only witness) */
+	uint64_t xn = e2h ? (3ULL << 53) : (1ULL << 54);
+	CHECK(wel2_pt_walk(&s1, in.p.aic[0].base, NULL, &at, NULL)); CHECK_EQ((at >> 2) & 7, 0); CHECK(at & xn);
+	CHECK(wel2_pt_walk(&s1, in.p.uart.base, NULL, &at, NULL));   CHECK_EQ((at >> 2) & 7, 0);
+	CHECK(wel2_pt_walk(&s1, in.p.wdt.base, NULL, &at, NULL));    CHECK_EQ((at >> 2) & 7, 0);   /* SYSTEM_RESET target */
+	CHECK(wel2_pt_walk(&s1, in.p.fb.base, NULL, &at, NULL));     CHECK_EQ((at >> 2) & 7, WEL2_S1_ATTR_NC);
+	CHECK(wel2_pt_walk(&s1, in.p.cpu[5].release_addr, NULL, &at, NULL)); CHECK_EQ((at >> 2) & 7, 1);   /* Normal WB */
+	CHECK(wel2_pt_walk(&s1, in.layout.text_lo, NULL, &at, NULL)); CHECK(at & (1ULL << 7));            /* code RO */
+	CHECK(!(at & (1ULL << 53)));                                                                      /* ... and executable */
+	CHECK(wel2_pt_walk(&s1, in.layout.ro_hi, NULL, &at, NULL));   CHECK(!(at & (1ULL << 7)));         /* data RW */
+	CHECK(!wel2_pt_walk(&s1, 0x0, NULL, NULL, NULL));                        /* no blanket device map below the RAM */
+	CHECK(!wel2_pt_walk(&s1, 0x09000000ULL, NULL, NULL, NULL));              /* the QEMU PL011 is not there */
+	CHECK(!wel2_pt_walk(&s1, 0xF00000000ULL, NULL, NULL, NULL));             /* the vGIC window is guest-only */
+	CHECK(!wel2_pt_walk(&s2, in.carve.base, NULL, NULL, NULL));              /* the layer's block is not the guest's */
+	CHECK(!wel2_pt_walk(&s2, in.carve.base + in.carve.size - g, NULL, NULL, NULL));
+	CHECK(!wel2_pt_walk(&s2, in.p.aic[0].base, NULL, NULL, NULL));           /* no device for the guest */
+	CHECK(!wel2_pt_walk(&s2, in.p.uart.base, NULL, NULL, NULL));
+	CHECK(!wel2_pt_walk(&s2, in.p.wdt.base, NULL, NULL, NULL));
+	CHECK(!wel2_pt_walk(&s2, in.p.fb.base, NULL, NULL, NULL));
+	CHECK(!wel2_pt_walk(&s2, 0xF00000000ULL, NULL, NULL, NULL));             /* vGIC GICD / GICR fault to EL2 */
+	CHECK(!wel2_pt_walk(&s2, 0xF10000000ULL, NULL, NULL, NULL));
+	CHECK(wel2_pt_walk(&s2, in.guest[0].base, NULL, &at, NULL));  CHECK_EQ((at >> 2) & 15, 0xf);      /* Normal WB */
+	CHECK(!wel2_pt_walk(&s2, in.guest[0].base - g, NULL, NULL, NULL));
+}
+
+static void t_m1_maps(void)
+{
+	static const struct opt big = { false, "serial0:115200", "/soc/serial@235200000", -1, -1, 0, false, true };
+	const unsigned grans[2] = { WEL2_GRAN_16K, WEL2_GRAN_4K };
+
+	for (unsigned gi = 0; gi < 2; gi++)
+		for (unsigned e = 0; e < 2; e++) {
+			m1_check_maps(&O0, grans[gi], e, 0x804000000ULL, 0x9f0000000ULL, "small j293");
+			m1_check_maps(&O0, grans[gi], e, 0x804000000ULL, 0x802000100ULL, "small j293 (FDT in RAM)");
+			m1_check_maps(&big, grans[gi], e, 0x884000000ULL, 0x9f0000000ULL, "8 GB j293");
+			m1_check_maps(&big, grans[gi], e, 0x9e0000000ULL - 0x2000000ULL, 0x9f0000000ULL, "8 GB j293 (layer at the top)");
+		}
+}
+
+static void t_m1_refusals(void)
+{
+	struct wel2_pt pt;
+	static struct wel2_range ram[1] = { { 0x800000000ULL, 0x10000000ULL } };
+	struct wel2_s1_m1 in = { .ram = ram, .nram = 1, .carve = { 0x800000000ULL, 0x2000000ULL } };
+	struct wel2_range dev = { 0x800400000ULL, 0x4000 };
+
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), WEL2_GRAN_16K, 36), 0);
+	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), 0);
+	CHECK_EQ(wel2_s1_map_fb_free(&pt, 0x800400000ULL, 0x4000, true), -1);      /* inside the RAM map */
+	CHECK_EQ(wel2_s1_map_fb_free(&pt, 0x1000000000ULL, 0x4000, true), -1);     /* beyond the 36-bit input range */
+	CHECK_EQ(wel2_s1_map_fb_free(&pt, 0x900000000ULL, 0x10000, true), 0);
+	CHECK_EQ(wel2_s1_map_fb_free(&pt, 0x900008000ULL, 0x4000, true), -1);      /* overlaps the previous one */
+	in.dev = &dev;
+	in.ndev = 1;
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), WEL2_GRAN_16K, 36), 0);
+	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), -1);                             /* a device on a RAM page */
+	struct wel2_range devs[2] = { { 0x900000000ULL, 0xc000 }, { 0x900008000ULL, 0x1000 } };   /* reg[1] inside reg[0] */
+
+	in.dev = devs;
+	in.ndev = 2;
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), WEL2_GRAN_16K, 36), 0);
+	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), 0);
+	struct wel2_range rel = { 0x900000000ULL, 8 };                              /* a release word in a Device page */
+
+	in.dev = NULL; in.ndev = 0; in.rel = &rel; in.nrel = 1;
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), WEL2_GRAN_16K, 36), 0);
+	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), 0);                              /* alone it is mapped Normal */
+	in.dev = devs; in.ndev = 2;
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), WEL2_GRAN_16K, 36), 0);
+	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), -1);                             /* both: refused, never silently Device */
+}
+
+static void t_ranges_inward(void)
+{
+	struct wel2_range in[3] = { { 0x1000, 0x5000000 }, { 0x10000000, 0x1ffffff }, { 0x20000000, 0x8000000 } }, out[8];
+	unsigned n;
+
+	CHECK_EQ(wel2_ranges_inward(in, 3, 0x2000000, 0, 0, out, 8, &n), 0);
+	CHECK_EQ(n, 2);                                                              /* the middle piece is 1 byte short */
+	CHECK_EQ(out[0].base, 0x2000000); CHECK_EQ(out[0].size, 0x2000000);          /* [0x1000, 0x5001000) -> one block */
+	CHECK_EQ(out[1].base, 0x20000000); CHECK_EQ(out[1].size, 0x8000000);
+	CHECK_EQ(wel2_ranges_inward(in, 3, 0x2000000, 0x23000000, 0x1000, out, 8, &n), 0);   /* a cut rounds outward */
+	CHECK_EQ(n, 3);
+	CHECK_EQ(out[1].base, 0x20000000); CHECK_EQ(out[1].size, 0x2000000);
+	CHECK_EQ(out[2].base, 0x24000000); CHECK_EQ(out[2].size, 0x4000000);
+	CHECK_EQ(wel2_ranges_inward(in, 3, 0x2000000, 0x23000000, 0x1000, out, 2, &n), -1);   /* too small: refused */
+	CHECK_EQ(wel2_ranges_inward(in, 3, 0x2000000, 0xfffffffffffff000ULL, 0x2000, out, 8, &n), -1);   /* wrapping cut */
+}
+
 int main(void)
 {
 	RUN(t_geometry);
@@ -545,5 +791,8 @@ int main(void)
 	RUN(t_s2_add_hole_rules);
 	RUN(t_s2_odd_ram_end);
 	RUN(t_s1_map);
+	RUN(t_ranges_inward);
+	RUN(t_m1_refusals);
+	RUN(t_m1_maps);
 	TESTS_DONE();
 }
