@@ -78,3 +78,8 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Commits: 8c2bbd0, d57b47f. `re/m3b-ans-windows.md`: ANS2 (RTKit boot, NVMMU/TCB linear queues, SART, DART), why inbox stornvme cannot drive it, options. Recommendation: (c) boot from a USB disk first (needs T15/DWC3 host), then (b) a native StorPort miniport for ANS (test-signed, WDK on a Windows ARM64 host after Marco's backup); (a) emulating NVMe in the layer rejected (breaks the minimal-layer rule).
 - Independent verifier re-read Linux v6.12 raw files (apple.c, sart.c, apple-dart.c, rtkit.c) and Microsoft Learn: OK with corrections, all applied in d57b47f (RTKit crash only recoverable by reboot, line numbers, RTKit endpoints/power states, weak [verified] marks downgraded).
 - Marco (2026-11-12): goal of these sessions = reach a big hardware test (layer + G1-G11 guest on the M1) to decide whether to continue; observability by photos of the M1 screen (T6h). No more research tasks until that test.
+
+### 2026-11-13 01:00 - T6h Observability by photo: done
+- Commit: c68287b. Photo-friendly framebuffer on the 2560x1600 panel: scale 6 (70 columns), fixed status band (rung/step, checkpoint state in words, guest PASS/FAIL/SKIP counts), persistent "LAST ERROR" area, legend, scrolling log; README "Reading the screen from a photo".
+- Review (Sonnet): no blocking defects; MMU-off safety and bounds checked. Hooks still to wire (T6g): `wel2_fb_set_rung` in main.c, `wel2_fb_set_error` in `fatal_msg()` (main.c:59), a SKIP checkpoint state (grey) in the vendor HVC; README fix: `fatal_msg` lives in main.c; G11 = guest check 12.
+- Opus verified: `make -C el2 test` ALL PASSED; `run-all.sh` 17/17. QEMU has no framebuffer, so no Windows boot needed.
