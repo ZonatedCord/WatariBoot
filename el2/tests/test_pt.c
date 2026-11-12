@@ -627,6 +627,9 @@ static bool s2_model(const struct m1_in *in, uint64_t a)
 	return false;
 }
 
+/* the M1 guest IPA size (plat_m1.s2_ipa_bits, plat.h) */
+#define plat_m1_ipa 36u
+
 static void m1_check_maps(const struct opt *o, unsigned gshift, bool e2h, uint64_t carve_base, uint64_t fdt_base,
 			  const char *tag)
 {
@@ -641,11 +644,29 @@ static void m1_check_maps(const struct opt *o, unsigned gshift, bool e2h, uint64
 	CHECK_EQ(wel2_s1_build_m1(&s1, &(struct wel2_s1_m1){ in.ram, in.nram, in.carve, in.fdt, in.dev, in.ndev,
 							     in.rel, in.nrel, in.layout }, e2h), 0);
 	CHECK_EQ(wel2_s1_map_fb_free(&s1, in.fb.base, in.fb.size, e2h), 0);
-	CHECK_EQ(wel2_pt_init(&s2, pool_s2, sizeof(pool_s2), gshift, WEL2_S2_IPA_BITS), 0);
+	CHECK_EQ(wel2_pt_init(&s2, pool_s2, sizeof(pool_s2), gshift, plat_m1_ipa), 0);
 	CHECK_EQ(wel2_s2_build_ram(&s2, in.guest, in.nguest), 0);
 	printf("    %s gran %uk e2h %d: stage 1 uses %u of %u tables, stage 2 uses %u of %u\n", tag, 1u << (gshift - 10),
 	       e2h, s1.used, s1.ntables, s2.used, s2.ntables);
 
+	/* VTCR_EL2 of the 36-bit guest space (Arm ARM D24.2.223, Tables D8-27 and D8-31): T0SZ 28; 16 KB: start level 2 =
+	 * SL0 0b01, TG0 0b10; 4 KB: start level 1 = SL0 0b01, TG0 0b00; PS 1 (36-bit PARange) */
+	{
+		uint64_t v = wel2_vtcr(&s2, 1);
+
+		CHECK_EQ(v & 0x3f, 28);
+		CHECK_EQ((v >> 6) & 3, 1);
+		CHECK_EQ((v >> 14) & 3, gshift == WEL2_GRAN_16K ? 2 : 0);
+		CHECK_EQ((v >> 16) & 7, 1);
+		CHECK_EQ(s2.start_level, gshift == WEL2_GRAN_16K ? 2 : 1);
+		CHECK_EQ(s2.root_entries, gshift == WEL2_GRAN_16K ? 2048 : 64);
+	}
+	/* the FDT: read-only where it had to be mapped, untouched where it lies in the RAM map (never downgraded) */
+	CHECK(wel2_pt_walk(&s1, in.fdt.base, NULL, &at, NULL));
+	if (in.fdt.base == 0x802000100ULL)
+		CHECK(!(at & (1ULL << 7)));
+	else
+		CHECK(at & (1ULL << 7));
 	/* every 1 MB of the first 40 GB, then every region edge +-1 granule, against the model */
 	uint64_t edges[512];
 	unsigned ne = 0;
@@ -663,7 +684,7 @@ static void m1_check_maps(const struct opt *o, unsigned gshift, bool e2h, uint64
 		if (a >= 0xa00000000ULL) {          /* the edge probes */
 			unsigned k = (unsigned)((a - 0xa00000000ULL) / 0x100000ULL);
 
-			x = (edges[k / 3] & ~(g - 1)) + (uint64_t)(k % 3 - 1) * g;
+			x = (edges[k / 3] & ~(g - 1)) + (uint64_t)((int64_t)(int)(k % 3) - 1) * g;
 		}
 		int want = s1_model(&in, x, g);
 		bool m = wel2_pt_walk(&s1, x, NULL, &at, NULL);
@@ -760,6 +781,33 @@ static void t_m1_refusals(void)
 	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), -1);                             /* both: refused, never silently Device */
 }
 
+static void t_m1_fdt_pages(void)
+{
+	struct wel2_pt pt;
+	static struct wel2_range ram[1] = { { 0x800000000ULL, 0x10000000ULL } };
+	struct wel2_s1_m1 in = { .ram = ram, .nram = 1, .carve = { 0x800000000ULL, 0x2000000ULL } };
+	struct wel2_range rel = { 0x900000010ULL, 8 };
+	uint64_t at;
+
+	in.fdt = (struct wel2_range){ 0x900000000ULL, 0x8000 };                /* outside the RAM: read-only pages */
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), WEL2_GRAN_16K, 36), 0);
+	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), 0);
+	CHECK(wel2_pt_walk(&pt, 0x900004000ULL, NULL, &at, NULL)); CHECK(at & (1ULL << 7));
+	in.rel = &rel; in.nrel = 1;                                           /* a release word in the FDT's page */
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), WEL2_GRAN_16K, 36), 0);
+	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), -1);
+	in.fdt = (struct wel2_range){ 0x800400000ULL, 0x8000 };                /* inside the RAM map: stays read-write */
+	in.rel = NULL; in.nrel = 0;
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), WEL2_GRAN_16K, 36), 0);
+	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), 0);
+	CHECK(wel2_pt_walk(&pt, 0x800400000ULL, NULL, &at, NULL)); CHECK(!(at & (1ULL << 7)));
+	in.fdt = (struct wel2_range){ 0x80fffc000ULL, 0x8000 };                /* straddles the RAM end: only the outside page RO */
+	CHECK_EQ(wel2_pt_init(&pt, pool_s1, sizeof(pool_s1), WEL2_GRAN_16K, 36), 0);
+	CHECK_EQ(wel2_s1_build_m1(&pt, &in, true), 0);
+	CHECK(wel2_pt_walk(&pt, 0x80fffc000ULL, NULL, &at, NULL)); CHECK(!(at & (1ULL << 7)));
+	CHECK(wel2_pt_walk(&pt, 0x810000000ULL, NULL, &at, NULL)); CHECK(at & (1ULL << 7));
+}
+
 static void t_ranges_inward(void)
 {
 	struct wel2_range in[3] = { { 0x1000, 0x5000000 }, { 0x10000000, 0x1ffffff }, { 0x20000000, 0x8000000 } }, out[8];
@@ -793,6 +841,7 @@ int main(void)
 	RUN(t_s1_map);
 	RUN(t_ranges_inward);
 	RUN(t_m1_refusals);
+	RUN(t_m1_fdt_pages);
 	RUN(t_m1_maps);
 	TESTS_DONE();
 }

@@ -7,6 +7,8 @@ bool wel2_uart_putc(struct wel2_uart *u, uint8_t c)
 	unsigned st_off, st_bit, tx_off;
 	bool ready_when_set;
 
+	if (u->type == WEL2_UART_NONE)
+		return false;
 	if (u->type == WEL2_UART_S5L) {
 		st_off = S5L_UTRSTAT; st_bit = S5L_UTRSTAT_TXBE; tx_off = S5L_UTXH; ready_when_set = true;
 	} else {
@@ -36,6 +38,8 @@ bool wel2_uart_putc(struct wel2_uart *u, uint8_t c)
 
 void wel2_uart_puts(struct wel2_uart *u, const char *s)
 {
+	if (u->type == WEL2_UART_NONE)
+		return;
 	for (; *s; s++) {
 		if (*s == '\n')
 			wel2_uart_putc(u, '\r');

@@ -68,6 +68,7 @@ void putc_(char c);
 struct wel2_uart;
 extern struct wel2_uart g_con;       /* util.c: the console (PL011 until con_select_s5l) */
 void con_select_s5l(uint64_t base);
+void con_select_none(void);                  /* util.c: null console (the M1 without a UART node) */
 extern uint64_t g_con_s5l_base, g_con_s5l_size;   /* stage1.c: S5L UART window from the FDT, 0 = none */  /* switch the console to the Apple S5L UART at base (MMU may be off) */
 void puts_(const char *s);
 /* Framebuffer output (T5b, util.c): g_fb is set by stage1_build from the FDT (fmt NONE = no framebuffer, every call

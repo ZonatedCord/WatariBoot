@@ -28,6 +28,8 @@
 struct wel2_platform {
 	const char *name;
 	bool m1_memory;                 /* memory maps come from the FDT lists (RAM-only guest stage 2, no Device blanket) */
+	unsigned s2_ipa_bits;           /* guest IPA size: QEMU 40 (EDK2 uses the high PCIe windows), M1 36 (the measured PARange; the
+	                                 * vGIC windows at 0xF_xxxx_xxxx lie inside 64 GB) */
 	bool has_phys_gic;              /* a physical GICv3 is owned by EL2 (false: AIC) */
 	uint64_t vgic_gicd_base;        /* guest-visible vGIC distributor window */
 	uint64_t vgic_gicr_base;        /* guest-visible vGIC redistributor window of CPU 0 */

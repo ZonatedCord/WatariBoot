@@ -48,6 +48,7 @@ static void m1_system_reset(void) { nyi("system_reset (TODO T6f)"); }
 const struct wel2_platform plat_m1 = {
     .name = "m1",
     .m1_memory = true,
+    .s2_ipa_bits = 36,
     .has_phys_gic = false,
     .vgic_gicd_base = PLAT_M1_GICD_BASE,
     .vgic_gicr_base = PLAT_M1_GICR_BASE,

@@ -86,6 +86,7 @@ static void q_system_reset(void)
 const struct wel2_platform plat_qemu = {
     .name = "qemu",
     .m1_memory = false,
+    .s2_ipa_bits = WEL2_S2_IPA_BITS,
     .has_phys_gic = true,
     .vgic_gicd_base = PLAT_QEMU_GICD_BASE,
     .vgic_gicr_base = PLAT_QEMU_GICR_BASE,

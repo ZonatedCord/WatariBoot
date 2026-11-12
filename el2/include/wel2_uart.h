@@ -34,7 +34,9 @@
 /* After this many dropped bytes in a row a byte is tried once only (a dead UART must not slow every line). */
 #define WEL2_UART_MAX_FAILS  4u
 
-enum wel2_uart_type { WEL2_UART_PL011, WEL2_UART_S5L };
+/* WEL2_UART_NONE (T6c): the null console. The M1 without a usable S5L UART node must never fall back to the PL011 (its
+ * address is unmapped there): every byte is dropped, nothing is read or written, nothing is counted. */
+enum wel2_uart_type { WEL2_UART_PL011, WEL2_UART_S5L, WEL2_UART_NONE };
 
 struct wel2_uart_io {
 	uint32_t (*rd)(void *ctx, unsigned off);

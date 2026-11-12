@@ -88,6 +88,7 @@ static void t_m1_table(void)
 
 	CHECK(m->m1_memory);
 	CHECK(!m->has_phys_gic);
+	CHECK_EQ(m->s2_ipa_bits, 36);
 	CHECK_EQ(m->vgic_gicd_base, 0xF00000000ULL);
 	CHECK_EQ(m->vgic_gicr_base, 0xF10000000ULL);
 	CHECK_EQ(m->vgic_gicd_base, GICD);                                /* the windows test.h's vGIC tests use */

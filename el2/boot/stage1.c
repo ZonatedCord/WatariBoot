@@ -169,18 +169,13 @@ void stage1_build(uint64_t fdt)
     g_plat = plat_select(m1rc, &g_m1);
     bool m1 = g_plat->m1_memory;
 
+    if (m1)
+        con_select_none();      /* T6c: the M1 never touches the PL011 (unmapped there); the S5L UART replaces this below */
+
     g_carve_size = m1 ? WEL2_CARVE_SIZE_M1 : WEL2_CARVE_SIZE_QEMU;
     g_carve_base = g_layer_base & ~(g_carve_size - 1);
     g_ram_base = g_carve_base;
     g_ram_end = g_carve_base + 0x100000000ULL;
-
-    /* The whole layer block (image, .bss, stacks: _start to __layer_end) must lie inside the carve-out, whatever
-     * address the loader chose; the linker only checks the size. MMU off: s1_msg only. */
-    if (g_layer_base + (uint64_t)(uintptr_t)__layer_end - (uint64_t)(uintptr_t)_start > g_carve_base + g_carve_size) {
-        s1_msg("Watari EL2: FATAL: the layer image and stacks do not fit the carve-out block at this load address, halted\n");
-        for (;;)
-            __asm__ volatile("wfe");
-    }
 
     /* Console first: a node compatible with "apple,s5l-uart" (the M1 under m1n1) switches putc_/puts_ from the
      * QEMU PL011 to it, so that every message below, and every core after, goes to the right UART. No such node
@@ -191,7 +186,7 @@ void stage1_build(uint64_t fdt)
         con_select_s5l(g_m1.uart.base);
         g_con_s5l_base = g_m1.uart.base;
         g_con_s5l_size = g_m1.uart.size ? g_m1.uart.size : 0x1000;
-    } else if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
+    } else if (!m1 && fdt && !(fdt & 7) && !fdt_check((void *)fdt) &&
         fdt_find_compatible_reg((void *)fdt, FDT_COMPAT_S5L_UART, &uart) == 0 && uart.found) {
         con_select_s5l(uart.base);
         g_con_s5l_base = uart.base;
@@ -203,6 +198,16 @@ void stage1_build(uint64_t fdt)
      * every call is a no-op. The stage-1 mapping (Normal non-cacheable) follows with the other maps below. */
     if (fdt && !(fdt & 7) && !fdt_check((void *)fdt))
         fdt_get_framebuffer((void *)fdt, &g_fb);
+
+    /* The whole layer block (image, .bss, stacks: _start to __layer_end) must lie inside the carve-out, whatever
+     * address the loader chose; the linker only checks the size. MMU off: s1_msg only; it runs after the console and the
+     * framebuffer are known, so the M1 can still say (or paint red) why it stopped. */
+    if (g_layer_base + (uint64_t)(uintptr_t)__layer_end - (uint64_t)(uintptr_t)_start > g_carve_base + g_carve_size) {
+        s1_msg("Watari EL2: FATAL: the layer image and stacks do not fit the carve-out block at this load address, halted\n");
+        checkpoint_fail();
+        for (;;)
+            __asm__ volatile("wfe");
+    }
 
     /* Options from /chosen/bootargs (QEMU -append); the FDT is read-only here and the MMU is off. */
     args[0] = 0;

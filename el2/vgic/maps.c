@@ -241,14 +241,14 @@ int wel2_s1_build_m1(struct wel2_pt *pt, const struct wel2_s1_m1 *in, bool e2h)
 		return -1;
 	if (in->fdt.size) {
 		uint64_t lo = in->fdt.base & ~(g - 1), hi = (in->fdt.base + in->fdt.size + g - 1) & ~(g - 1);
-		bool all = true;
 
 		if (in->fdt.base + in->fdt.size < in->fdt.base || hi > limit)
 			return -1;
+		/* Only the pages that are not mapped yet, one by one: a page that is already RAM or carve-out keeps its
+		 * read-write mapping (it is never downgraded to read-only). */
 		for (uint64_t a = lo; a < hi; a += g)
-			all = all && wel2_pt_walk(pt, a, 0, 0, 0);
-		if (!all && wel2_pt_map(pt, lo, lo, hi - lo, nrm | S1_AP_RO | xn))   /* some page outside the RAM map */
-			return -1;
+			if (!wel2_pt_walk(pt, a, 0, 0, 0) && wel2_pt_map(pt, a, a, g, nrm | S1_AP_RO | xn))
+				return -1;
 	}
 	for (unsigned i = 0; i < in->nrel; i++) {
 		uint64_t lo = in->rel[i].base & ~(g - 1), hi = (in->rel[i].base + in->rel[i].size + g - 1) & ~(g - 1);
@@ -261,8 +261,8 @@ int wel2_s1_build_m1(struct wel2_pt *pt, const struct wel2_s1_m1 *in, bool e2h)
 			uint64_t at;
 
 			if (wel2_pt_walk(pt, a, 0, &at, 0)) {
-				if (((at >> 2) & 7) != S1_ATTR_NORMAL)
-					return -1;      /* the word sits in a device or non-cacheable page: refused */
+				if (((at >> 2) & 7) != S1_ATTR_NORMAL || (at & S1_AP_RO))
+					return -1;      /* the word sits in a device, non-cacheable or read-only (FDT) page: refused */
 				continue;
 			}
 			if (wel2_pt_map(pt, a, a, g, nrm | xn))

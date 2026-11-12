@@ -6,7 +6,7 @@
  *  EL2 stage 1 (identity): [0, RAM base) Device-nGnRnE XN, the RAM Normal WB inner-shareable RW XN, with the
  *     layer's code RO X and its read-only data RO XN (page granularity). Everything else is unmapped.
  *     Input size 39 bits with the 4 KB granule, 36 bits with 16 KB (root at level 2, one table).
- *  Guest stage 2 (identity, 40-bit IPA): everything Device-nGnRnE XN, the RAM Normal WB inner-shareable RW,
+ *  Guest stage 2 (identity, IPA size per platform: 40 bits on QEMU, 36 on the M1): everything Device-nGnRnE XN, the RAM Normal WB inner-shareable RW,
  *     then the holes unmapped (GICD/GICR, which the vGIC emulates by trapping, and the layer's own carve-out).
  */
 #ifndef WEL2_MAPS_H
@@ -89,7 +89,7 @@ struct wel2_s1_m1 {
 	const struct wel2_range *ram;     /* usable RAM, exact (rounded inward to WEL2_M1_S1_ALIGN here) */
 	unsigned nram;
 	struct wel2_range carve;          /* the layer's block: always mapped (image, .bss, stacks, table pools) */
-	struct wel2_range fdt;            /* the loader's FDT, mapped read-only when not already in the RAM map; size 0 = none */
+	struct wel2_range fdt;            /* the loader's FDT: its pages that are not mapped yet go in read-only, mapped ones are left as they are; size 0 = none */
 	const struct wel2_range *dev;     /* device windows (AIC, UART, WDT), rounded outward, Device-nGnRnE XN */
 	unsigned ndev;
 	const struct wel2_range *rel;     /* spin-table cpu-release-addr words (8 bytes each): their pages 1:1 Normal cacheable RW XN

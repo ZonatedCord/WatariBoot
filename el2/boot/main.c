@@ -165,10 +165,12 @@ static void handle_smc(struct frame *f)
  * implement only 16 KB, so 16 KB is the M1 case; the map logic (identity, device attributes, GIC holes) does
  * not depend on the granule.
  *
- * IPA space 40 bits (T0SZ=24; M1-4: EDK2 touches the PCIe high ECAM at 0x4010000000 and may use the high MMIO
+ * IPA space g_plat->s2_ipa_bits: 40 bits on QEMU (T0SZ=24; M1-4: EDK2 touches the PCIe high ECAM at 0x4010000000 and may use the high MMIO
  * window at 0x8000000000). 4 KB: start level 0 (SL0=2, 2 entries of 512 GB), 1 GB / 2 MB blocks. 16 KB: start
  * level 1 (SL0=2, 16 entries of 64 GB; no level-1 blocks without FEAT_LPA2), 32 MB blocks at level 2, 16 KB
- * pages at level 3 (Arm ARM D8.2.9, Table D8-27/D8-31). Contents:
+ * pages at level 3 (Arm ARM D8.2.9, Table D8-27/D8-31). The M1 (36 bits, T0SZ=28): 16 KB start level 2 (SL0=1, one
+ * table of 2048 32 MB entries), 4 KB start level 1 (SL0=1, 64 entries of 1 GB); wel2_vtcr derives both from the table
+ * geometry (tests/test_pt.c). Contents:
  *   everything             : Device-nGnRnE blocks (MMIO, PCIe windows)
  *   RAM (g_ram_base..g_ram_end, from the FDT /memory node, #60; default 0x40000000-0x13fffffff):
  *                            Normal WB blocks, the largest the granule and the alignment allow (the RAM helper
@@ -228,12 +230,12 @@ static void stage2_init(void)
     g_v2m.log_stray = v2m_stray_log;
     /* QEMU virt with -m 4G or more has RAM at 0xFFFFC000: then there is no hole and no frame. */
     g_v2m_on = v2m_page_free(&g_v2m, g_ram_base, g_ram_end);
-    if (g_v2m_on && v2m_add_hole(&g_v2m, holes, &nholes, HOLES_MAX, g_gran))
+    if (!g_plat->m1_memory && g_v2m_on && v2m_add_hole(&g_v2m, holes, &nholes, HOLES_MAX, g_gran))
         fatal_msg("stage-2 holes: MSI frame page does not fit");
     if (!g_v2m_on)
         puts_("Watari EL2: MSI frame page 0xFFFFC000 is guest RAM here: not emulated\n");
 
-    if (g_aic_on) {                     /* #42: the AIC belongs to the layer, the guest faults there */
+    if (!g_plat->m1_memory && g_aic_on) {   /* #42: the AIC belongs to the layer, the guest faults there */
         if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_aic_info.base, g_aic_info.size, g_gran))
             fatal_msg("stage-2 holes: AIC window does not fit");
     }
@@ -241,26 +243,27 @@ static void stage2_init(void)
     /* The layer's console UART (Apple S5L, from the FDT) is not the guest's: stage 2 maps every address Device by
      * default, so without this hole the guest could read and write the layer's log UART. (QEMU: the PL011 is the
      * guest's too and stays mapped: no S5L node, no hole.) */
-    if (g_con_s5l_base && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_con_s5l_base, g_con_s5l_size, g_gran))
+    if (!g_plat->m1_memory && g_con_s5l_base && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_con_s5l_base, g_con_s5l_size, g_gran))
         fatal_msg("stage-2 holes: console UART window does not fit");
 
     /* The framebuffer is the layer's too (checkpoints and log text): never given to the guest. The guest's stage 2
      * is RAM plus these holes; unmapping the framebuffer pages makes a guest access fault to EL2 and be reported. */
-    if (g_fb.fmt && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, wel2_fb_bytes(&g_fb), g_gran))
+    if (!g_plat->m1_memory && g_fb.fmt && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, wel2_fb_bytes(&g_fb), g_gran))
         fatal_msg("stage-2 holes: framebuffer does not fit");
 
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
 
-    if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, hide_lo, g_carve_base + g_carve_size - hide_lo, g_gran))
+    if (!g_plat->m1_memory && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, hide_lo, g_carve_base + g_carve_size - hide_lo, g_gran))
         fatal_msg("stage-2 holes: layer carve-out does not fit");
 #endif
-    if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, WEL2_S2_IPA_BITS) ||
+    if (wel2_pt_init(&s2_pt, s2_pool, sizeof(s2_pool), g_gran, g_plat->s2_ipa_bits) ||
         (g_plat->m1_memory ? wel2_s2_build_ram(&s2_pt, g_guest_ram, g_nguest_ram)
                            : wel2_s2_build(&s2_pt, &ram, holes, nholes)))
         fatal_msg("stage-2 tables: bad geometry or the table pool is too small");
     /* VTCR_EL2.PS = min(ID_AA64MMFR0_EL1.PARange, 0b010 = 40 bit): the M1 may implement fewer physical address
-     * bits than the 40-bit IPA space the guest is given (an output address above PARange is an address size fault). */
+     * bits than the 40-bit IPA space the QEMU guest is given (an output address above PARange is an address size fault);
+     * on the M1 the IPA space is 36 bits itself (g_plat->s2_ipa_bits), the PARange measured on the j293. */
     uint64_t mmfr0;
 
     __asm__ volatile("mrs %0, id_aa64mmfr0_el1" : "=r"(mmfr0));
@@ -271,7 +274,7 @@ static void stage2_init(void)
 }
 
 /* Per core: VTCR_EL2 (Arm ARM D24.2.223) from the builder: RES1 bit31, PS=min(PARange, 40 bit), TG0 (4 KB: 0,
- * 16 KB: 0b10), SH0=3, ORGN0=IRGN0=1 (WB WA), SL0 per granule and start level, T0SZ=24 (40-bit IPA). */
+ * 16 KB: 0b10), SH0=3, ORGN0=IRGN0=1 (WB WA), SL0 per granule and start level, T0SZ = 64 - g_plat->s2_ipa_bits (24 on QEMU, 28 on the M1). */
 void stage2_enable(void)
 {
     __asm__ volatile("msr vtcr_el2, %0" : : "r"(g_vtcr));
@@ -516,6 +519,10 @@ static void set_virtual_ids(void)
  * and the FDT is patched first (fdt.c): /memory loses the layer's carve-out, the PSCI
  * conduit becomes "hvc". The entry is the start of the EDK2 image, whose header
  * (code0 = "adr x1, .") tells the relocatable PrePi where it was loaded. */
+/* TODO(T10/T11, M1 hand-off): fdt_patch_for_guest(), EDK2_FDT_ADDR (= g_carve_base) and EDK2_ENTRY (= carve end + 0x80000)
+ * are QEMU conventions (RAM starts at the carve-out, the FDT is copied to the RAM base, EDK2 sits behind a 2 MB block).
+ * They do not describe the M1, where the carve-out is a 32 MB block inside the RAM and the guest sees RAM ranges
+ * (g_guest_ram[]); the chain build is not an M1 build until that hand-off is redone. */
 static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
 {
     struct fdt_patch_info pi;
