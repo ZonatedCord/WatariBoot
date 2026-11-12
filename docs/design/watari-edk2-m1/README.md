@@ -1,6 +1,6 @@
 # watari-edk2-m1: EDK2 at EL1 on the real M1, on top of Watari EL2
 
-- Project: Watari Boot · Ralph task T11 (`ralph/TASKS-m3a.md`) · Date: 2026-11-12 · Version: 0.1 · Status: **draft, not yet reviewed by an independent agent**
+- Project: Watari Boot · Ralph task T11 (`ralph/TASKS-m3a.md`) · Date: 2026-11-12 · Version: 0.1 · Status: **draft, reviewed by an independent agent (Sonnet), corrections applied**
 - Scope: what an EDK2 firmware needs to run at EL1 on Marco's 13" M1 MacBook Pro (j293, t8103) under the layer in `el2/`, how it is loaded (m1n1 → layer → EDK2), how it gets memory, interrupts, timer, PSCI, a console and the built-in display, which ACPI tables it publishes, and the step lists for T12 (package skeleton) and T13 (day-3 procedure).
 - Out of scope: storage and USB drivers (T14, T15), PCIe, the Windows boot itself (M3b). They appear only where a decision taken here constrains them.
 
@@ -10,7 +10,7 @@
 |---|---|
 | [DESIGN.md](DESIGN.md) | Sources; prior art (Asahi U-Boot, NTASP Project Mu); the load path and what `chain_to_edk2` must change; the guest FDT; memory; interrupts, timer, PSCI; console; the framebuffer hand-over and the GOP driver; ACPI and the minimal DSDT; the package layout and what is reused from EDK2 |
 | [PLAN.md](PLAN.md) | Steps E1-E14 for T12 (with the QEMU smoke tests) and H1-H8 for T13 (day 3), with files and the test of each step |
-| [RISKS.md](RISKS.md) | Risk table R-E1..R-E16 and open questions Q-E1..Q-E12 |
+| [RISKS.md](RISKS.md) | Risk table R-E1..R-E17 and open questions Q-E1..Q-E12 |
 | [draft ADR](../../adr/draft-edk2-m1-platform.md) | The decisions that need Marco's approval |
 
 As in `watari-el2-m1boot`: no PRD and no separate TEST_STRATEGY; the requirement is the scope above and the tests are part of each plan step.
