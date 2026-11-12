@@ -73,3 +73,19 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Windows boot on the merged branch (TAG=t6c-merged, T6c + T7a + T6e/T6f modules) reached the desktop: T6c done.
 - Not finished, work saved in agent worktrees (resume next time, do not restart): T6d/T6e/T6f/T7 wiring in plat_m1 (`agent-a537b5235260987ab`, uncommitted edits in progress); T11 EDK2-on-M1 design (`agent-aee99778ffe1b20d2`); T14 ANS research (`agent-ae203f2fac7d41989`). All three stopped at the usage limit.
 - Merged but not ticked: T6e and T6f modules (tick when wired), T7a guest (T7 also needs the packaging script).
+
+### 2026-11-12 20:30 - T14 M3b research, Windows storage on the M1 (ANS): done
+- Commits: 8c2bbd0, d57b47f. `re/m3b-ans-windows.md`: ANS2 (RTKit boot, NVMMU/TCB linear queues, SART, DART), why inbox stornvme cannot drive it, options. Recommendation: (c) boot from a USB disk first (needs T15/DWC3 host), then (b) a native StorPort miniport for ANS (test-signed, WDK on a Windows ARM64 host after Marco's backup); (a) emulating NVMe in the layer rejected (breaks the minimal-layer rule).
+- Independent verifier re-read Linux v6.12 raw files (apple.c, sart.c, apple-dart.c, rtkit.c) and Microsoft Learn: OK with corrections, all applied in d57b47f (RTKit crash only recoverable by reboot, line numbers, RTKit endpoints/power states, weak [verified] marks downgraded).
+- Marco (2026-11-12): goal of these sessions = reach a big hardware test (layer + G1-G11 guest on the M1) to decide whether to continue; observability by photos of the M1 screen (T6h). No more research tasks until that test.
+
+### 2026-11-13 01:00 - T6h Observability by photo: done
+- Commit: c68287b. Photo-friendly framebuffer on the 2560x1600 panel: scale 6 (70 columns), fixed status band (rung/step, checkpoint state in words, guest PASS/FAIL/SKIP counts), persistent "LAST ERROR" area, legend, scrolling log; README "Reading the screen from a photo".
+- Review (Sonnet): no blocking defects; MMU-off safety and bounds checked. Hooks still to wire (T6g): `wel2_fb_set_rung` in main.c, `wel2_fb_set_error` in `fatal_msg()` (main.c:59), a SKIP checkpoint state (grey) in the vendor HVC; README fix: `fatal_msg` lives in main.c; G11 = guest check 12.
+- Opus verified: `make -C el2 test` ALL PASSED; `run-all.sh` 17/17. QEMU has no framebuffer, so no Windows boot needed.
+
+### 2026-11-13 01:10 - T11 EDK2 platform for the M1, design: done
+- Commits: 1a7cb3f (author Fable), 23d0525 (review corrections). `docs/design/watari-edk2-m1/` + `docs/adr/draft-edk2-m1-platform.md`: WatariM1Pkg on the ArmVirtQemuKernel structure; the layer builds a small guest FDT; SerialPortLib over a vendor hypercall `WEL2_CONSOLE_WRITE`; framebuffer hand-over modes `band`/`guest`; ACPI from T10 + a minimal DSDT (ACPI0007 processors only [hypothesis]); no storage/PCIe/USB at first; T12 steps E1-E14, T13 steps H1-H8. Prior art: Asahi uses U-Boot; NTASP's Project Mu tree (BSD-2-Clause) reference only.
+- Review (Sonnet): OK with corrections, all applied (guarded probe for the console HVC, EDK2 cites re-checked at edk2-stable202608 incl. the GICv5 branch, MS debug-interface and RNG requirements as risks, scope extensions of the minimal layer listed as needing Marco's yes).
+- Riskiest open question: Windows and a 30-bit x2r10g10b10 GOP framebuffer (MS requires 8-bit BGR).
+- Decisions for Marco (ADR): WEL2_CONSOLE_WRITE hypercall, framebuffer hand-over, guest FDT builder, shadow framebuffer: they extend the minimal-layer scope.

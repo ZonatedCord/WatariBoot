@@ -11,6 +11,7 @@
 #include "wel2_maps.h"
 #include "fdt.h"
 #include "fdt_build.h"
+#include "../vgic/font5x7.h"        /* the font table: glyph patterns are checked against it */
 
 #define CANARY   0xdeadbeefu
 #define GUARD    64u                    /* canary words before and after the pixels */
@@ -103,9 +104,10 @@ static void t_setup_validation(void)
 
 	CHECK_EQ(wel2_fb_setup(&f, 0x9e2570000ULL, 2560, 1600, 10240, "x2r10g10b10", 12), 0);
 	CHECK_EQ(f.fmt, WEL2_FB_X2R10G10B10);
-	CHECK_EQ(f.scale, 3);                                        /* 2560 / 800 */
-	CHECK_EQ(f.cols, (2560 - 16) / 18);
-	CHECK_EQ(f.rows, (1600 - 48) / 27);
+	CHECK_EQ(f.scale, 6);                                        /* 2560 / 400 */
+	CHECK_EQ(f.cols, 70);                                        /* (2560 - 16) / 36 */
+	CHECK_EQ(f.band_y, 32); CHECK_EQ(f.err_y, 32 + 3 * 54); CHECK_EQ(f.text_y, 194 + 2 * 54 + 4);   /* 306 */
+	CHECK_EQ(f.rows, 23);                                        /* (1600 - 306) / 54 */
 	CHECK_EQ(wel2_fb_bytes(&f), 1600ull * 10240);
 	/* every refusal leaves an all-zero structure (format NONE, nothing drawable) */
 	CHECK_EQ(wel2_fb_setup(&f, 0x1000, 0, 100, 400, "x8r8g8b8", 9), -1);
@@ -131,31 +133,30 @@ static void t_checkpoint(void)
 		uint32_t green, red;
 
 		scr_new(&s, FMTS[k], 400, 120, 8);
-		scr_paint(&s, 0x11111111u);
 		green = wel2_fb_pixel(&s.fb, WEL2_RGB_GREEN);
 		red = wel2_fb_pixel(&s.fb, WEL2_RGB_RED);
 		wel2_fb_checkpoint(&s.fb, 0, WEL2_RGB_GREEN);
 		wel2_fb_checkpoint(&s.fb, 3, WEL2_RGB_GREEN);
-		/* square n: x in [8 + 40n, 8 + 40n + 32), y in [0, 32) */
-		for (uint32_t y = 0; y < 120; y++)
+		/* square n: x in [8 + 28n, 8 + 28n + 24), y in [0, 24); the rest of the row was wiped to black */
+		for (uint32_t y = 0; y < WEL2_FB_CPROW; y++)
 			for (uint32_t x = 0; x < 400; x++) {
-				bool in0 = x >= 8 && x < 40 && y < 32;
-				bool in3 = x >= 128 && x < 160 && y < 32;
+				bool in0 = x >= 8 && x < 32 && y < 24;
+				bool in3 = x >= 92 && x < 116 && y < 24;
 
-				CHECK_EQ(at(&s, x, y), in0 || in3 ? green : 0x11111111u);
+				CHECK_EQ(at(&s, x, y), in0 || in3 ? green : 0u);
 			}
 		CHECK_EQ(s.fb.cp, 3);
 		wel2_fb_checkpoint_fail(&s.fb);                              /* the current one (3) turns red */
-		CHECK_EQ(at(&s, 128, 0), red); CHECK_EQ(at(&s, 159, 31), red);
+		CHECK_EQ(at(&s, 92, 0), red); CHECK_EQ(at(&s, 115, 23), red);
 		CHECK_EQ(at(&s, 8, 0), green);                               /* others unchanged */
-		CHECK_EQ(at(&s, 160, 0), 0x11111111u);
-		/* the last square that fits: x = 8 + 40 * 9 = 368, ends at 400; index 10 would leave the screen */
-		wel2_fb_checkpoint(&s.fb, 9, WEL2_RGB_AMBER);
-		CHECK_EQ(at(&s, 368, 0), wel2_fb_pixel(&s.fb, WEL2_RGB_AMBER)); CHECK_EQ(at(&s, 399, 31), wel2_fb_pixel(&s.fb, WEL2_RGB_AMBER));
-		wel2_fb_checkpoint(&s.fb, 10, WEL2_RGB_RED);
+		CHECK_EQ(at(&s, 116, 0), 0u);
+		/* the last square that fits: x = 8 + 28 * 13 = 372, ends at 396; index 14 would end at 424 > 400 */
+		wel2_fb_checkpoint(&s.fb, 13, WEL2_RGB_AMBER);
+		CHECK_EQ(at(&s, 372, 0), wel2_fb_pixel(&s.fb, WEL2_RGB_AMBER)); CHECK_EQ(at(&s, 395, 23), wel2_fb_pixel(&s.fb, WEL2_RGB_AMBER));
+		wel2_fb_checkpoint(&s.fb, 14, WEL2_RGB_RED);
 		wel2_fb_checkpoint(&s.fb, 100000, WEL2_RGB_RED);
 		wel2_fb_checkpoint(&s.fb, 0xffffffffu, WEL2_RGB_RED);
-		CHECK_EQ(s.fb.cp, 9);                                        /* refused calls do not move the current one */
+		CHECK_EQ(s.fb.cp, 13);                                        /* refused calls do not move the current one */
 		CHECK(scr_canaries_ok(&s));
 		scr_free(&s);
 	}
@@ -193,9 +194,13 @@ static void t_no_fb_is_noop(void)
 	f.cp = -1;
 	wel2_fb_checkpoint(&f, 0, WEL2_RGB_GREEN);
 	wel2_fb_checkpoint_fail(&f);
+	wel2_fb_set_rung(&f, 1, 2);
+	wel2_fb_set_error(&f, "X");
+	wel2_fb_checkpoint_text(&f, "X");
 	wel2_fb_putc(&f, 'A');
 	wel2_fb_puts(&f, "hello\n");
 	CHECK_EQ(f.fmt, WEL2_FB_NONE); CHECK_EQ(f.cp, -1); CHECK_EQ(f.cx, 0); CHECK_EQ(f.cy, 0); CHECK_EQ(f.cleared, 0);
+	CHECK_EQ(f.rung1, 0); CHECK_EQ(f.err_kind, 0); CHECK_EQ(f.err[0], 0); CHECK_EQ(f.label[0], 0);
 }
 
 /* ---- text ------------------------------------------------------------------------------------------------------- */
@@ -209,7 +214,7 @@ static const char *GLYPH_DOT[7] = { ".....", ".....", ".....", ".....", ".....",
  * below the glyph (the gap of the 6 x 9 cell) are background. */
 static bool cell_shows(const struct screen *s, uint32_t col, uint32_t row, const char *const pat[7])
 {
-	uint32_t sc = s->fb.scale, x0 = 8 + col * 6 * sc, y0 = 48 + row * 9 * sc;
+	uint32_t sc = s->fb.scale, x0 = 8 + col * 6 * sc, y0 = s->fb.text_y + row * 9 * sc;
 	uint32_t fg = wel2_fb_pixel(&s->fb, WEL2_RGB_WHITE), bg = wel2_fb_pixel(&s->fb, WEL2_RGB_BLACK);
 
 	for (uint32_t cy = 0; cy < 9 * sc; cy++)
@@ -236,21 +241,25 @@ static void t_glyphs_scale1(void)
 		struct screen s;
 
 		scr_new(&s, FMTS[k], 640, 200, 4);                           /* 640 / 800 = scale 1 */
-		scr_paint(&s, 0x33333333u);                                  /* old image: must be wiped by the text */
+		scr_paint(&s, 0x33333333u);                                  /* old image: must be wiped by the first drawing */
 		CHECK_EQ(s.fb.scale, 1);
-		wel2_fb_puts(&s.fb, "IL7.i ~\n");                            /* lower case i = I; '~' not in the font */
-		CHECK(cell_shows(&s, 0, 0, GLYPH_I));
-		CHECK(cell_shows(&s, 1, 0, GLYPH_L));
-		CHECK(cell_shows(&s, 2, 0, GLYPH_7));
-		CHECK(cell_shows(&s, 3, 0, GLYPH_DOT));
-		CHECK(cell_shows(&s, 4, 0, GLYPH_I));
-		CHECK(cell_blank(&s, 5, 0));                                 /* space */
-		CHECK(cell_blank(&s, 6, 0));                                 /* unknown character -> blank */
-		CHECK_EQ(s.fb.cx, 0); CHECK_EQ(s.fb.cy, 1);
-		/* the band above the text and the old image above it are untouched; the text area was wiped */
-		CHECK_EQ(at(&s, 0, 0), 0x33333333u); CHECK_EQ(at(&s, 639, 47), 0x33333333u);
+		wel2_fb_putc(&s.fb, ' ');                                    /* first drawing: wipe, band, legend */
+		s.fb.cx = 0;
+		/* 640 wide = 105 columns: the two legend lines come first (rows 0 and 1) */
+		CHECK_EQ(s.fb.cx, 0); CHECK_EQ(s.fb.cy, 2);
+		wel2_fb_puts(&s.fb, "IL7.i ~\n");
+		CHECK(cell_shows(&s, 0, 2, GLYPH_I));
+		CHECK(cell_shows(&s, 1, 2, GLYPH_L));
+		CHECK(cell_shows(&s, 2, 2, GLYPH_7));
+		CHECK(cell_shows(&s, 3, 2, GLYPH_DOT));
+		CHECK(cell_shows(&s, 4, 2, GLYPH_I));
+		CHECK(cell_blank(&s, 5, 2));                                 /* space */
+		CHECK(cell_blank(&s, 6, 2));                                 /* unknown character -> blank */
+		CHECK_EQ(s.fb.cx, 0); CHECK_EQ(s.fb.cy, 3);
+		/* the old image is gone everywhere (the whole screen was wiped, the checkpoint row included) */
+		CHECK_EQ(at(&s, 0, 0), wel2_fb_pixel(&s.fb, WEL2_RGB_BLACK)); CHECK_EQ(at(&s, 639, 31), wel2_fb_pixel(&s.fb, WEL2_RGB_BLACK));
 		CHECK_EQ(at(&s, 639, 199), wel2_fb_pixel(&s.fb, WEL2_RGB_BLACK));
-		CHECK_EQ(at(&s, 0, 48), wel2_fb_pixel(&s.fb, WEL2_RGB_BLACK));
+		CHECK_EQ(at(&s, 0, s.fb.text_y), wel2_fb_pixel(&s.fb, WEL2_RGB_BLACK));
 		CHECK(scr_canaries_ok(&s));
 		scr_free(&s);
 	}
@@ -258,21 +267,25 @@ static void t_glyphs_scale1(void)
 
 static void t_glyphs_scale2_and_3(void)
 {
-	static const uint32_t widths[2] = { 1600, 2400 };               /* scale 2 and 3 */
+	static const uint32_t widths[2] = { 800, 1200 };                /* scale 2 and 3 */
 
 	for (int k = 0; k < 2; k++) {
 		struct screen s;
 
-		scr_new(&s, WEL2_FB_X2R10G10B10, widths[k], 300, 0);
+		scr_new(&s, WEL2_FB_X2R10G10B10, widths[k], 400, 0);
 		CHECK_EQ(s.fb.scale, 2 + k);
+		wel2_fb_putc(&s.fb, ' ');
+		CHECK_EQ(s.fb.cy, 2);                                        /* the legend took rows 0 and 1 */
+		s.fb.cx = 0;
 		wel2_fb_puts(&s.fb, "L\nI");
-		CHECK(cell_shows(&s, 0, 0, GLYPH_L));
-		CHECK(cell_shows(&s, 0, 1, GLYPH_I));
-		CHECK(cell_blank(&s, 1, 0));
+		CHECK(cell_shows(&s, 0, 2, GLYPH_L));
+		CHECK(cell_shows(&s, 0, 3, GLYPH_I));
+		CHECK(cell_blank(&s, 1, 2));
 		/* one lit pixel of the 'L' at scale 2/3 covers a scale x scale block, and nothing leaks to the next block */
 		uint32_t sc = s.fb.scale, fg = wel2_fb_pixel(&s.fb, WEL2_RGB_WHITE);
-		CHECK_EQ(at(&s, 8, 48), fg); CHECK_EQ(at(&s, 8 + sc - 1, 48 + sc - 1), fg);
-		CHECK(at(&s, 8 + sc, 48) != fg);
+		uint32_t ty = s.fb.text_y + 2 * 9 * sc;                      /* row 2: the 'L' (top-left pixel lit, 2nd pixel dark) */
+		CHECK_EQ(at(&s, 8, ty), fg); CHECK_EQ(at(&s, 8 + sc - 1, ty + sc - 1), fg);
+		CHECK(at(&s, 8 + sc, ty) != fg);
 		CHECK(scr_canaries_ok(&s));
 		scr_free(&s);
 	}
@@ -282,7 +295,7 @@ static void t_cr_ignored_and_lf_newline(void)
 {
 	struct screen s;
 
-	scr_new(&s, WEL2_FB_X8R8G8B8, 640, 200, 0);
+	scr_new(&s, WEL2_FB_X8R8G8B8, 300, 200, 0);                      /* 49 columns: no legend, text from row 0 */
 	wel2_fb_puts(&s.fb, "I\r\nL\r\n");                               /* what the UART path sends for "\n" */
 	CHECK(cell_shows(&s, 0, 0, GLYPH_I));
 	CHECK(cell_shows(&s, 0, 1, GLYPH_L));
@@ -313,18 +326,18 @@ static void t_scroll_by_clearing(void)
 	struct screen s;
 	uint32_t bg, fg;
 
-	scr_new(&s, WEL2_FB_X8R8G8B8, 200, 48 + 9 * 3, 0);                // three text rows
+	scr_new(&s, WEL2_FB_X8R8G8B8, 200, 81 + 9 * 3, 0);                // three text rows (text_y = 81 at scale 1)
 	bg = wel2_fb_pixel(&s.fb, WEL2_RGB_BLACK);
 	fg = wel2_fb_pixel(&s.fb, WEL2_RGB_WHITE);
-	CHECK_EQ(s.fb.rows, 3);
+	CHECK_EQ(s.fb.text_y, 81); CHECK_EQ(s.fb.rows, 3);
 	wel2_fb_puts(&s.fb, "L\nL\nL\n");                                // fills rows 0..2, the third newline overflows
 	CHECK_EQ(s.fb.cy, 0); CHECK_EQ(s.fb.cx, 0);
-	for (uint32_t y = 48; y < 48 + 27; y++)                          // the text area was cleared
+	for (uint32_t y = 81; y < 81 + 27; y++)                          // the text area was cleared
 		for (uint32_t x = 0; x < 200; x++)
 			CHECK_EQ(at(&s, x, y), bg);
 	wel2_fb_putc(&s.fb, 'I');                                        // and output restarts at the top
 	CHECK(cell_shows(&s, 0, 0, GLYPH_I));
-	CHECK_EQ(at(&s, 8 + 2, 48), fg);
+	CHECK_EQ(at(&s, 8 + 2, 81), fg);
 	CHECK(scr_canaries_ok(&s));
 	scr_free(&s);
 }
@@ -336,8 +349,8 @@ static void t_checkpoints_survive_text(void)
 	scr_new(&s, WEL2_FB_X2R10G10B10, 640, 120, 0);
 	wel2_fb_checkpoint(&s.fb, 1, WEL2_RGB_GREEN);
 	wel2_fb_puts(&s.fb, "HELLO\nWORLD\nAGAIN\nAND AGAIN\nAND AGAIN\n");   // forces a scroll
-	CHECK_EQ(at(&s, 48, 0), wel2_fb_pixel(&s.fb, WEL2_RGB_GREEN));    // the band is never part of the text area
-	CHECK_EQ(at(&s, 79, 31), wel2_fb_pixel(&s.fb, WEL2_RGB_GREEN));
+	CHECK_EQ(at(&s, 36, 0), wel2_fb_pixel(&s.fb, WEL2_RGB_GREEN));    // the squares are never part of the text area
+	CHECK_EQ(at(&s, 59, 23), wel2_fb_pixel(&s.fb, WEL2_RGB_GREEN));
 	CHECK(scr_canaries_ok(&s));
 	scr_free(&s);
 }
@@ -345,7 +358,7 @@ static void t_checkpoints_survive_text(void)
 /* A long fuzz-like run over odd geometries: no store outside the buffer, whatever the text. */
 static void t_bounds_odd_geometry(void)
 {
-	static const uint32_t dims[][3] = { { 17, 50, 0 }, { 40, 49, 5 }, { 60, 60, 1 }, { 641, 130, 3 }, { 9, 9, 0 } };
+	static const uint32_t dims[][3] = { { 17, 50, 0 }, { 40, 49, 5 }, { 60, 60, 1 }, { 641, 130, 3 }, { 9, 9, 0 }, { 300, 100, 2 }, { 2560, 100, 0 }, { 800, 330, 7 } };
 
 	for (unsigned d = 0; d < sizeof(dims) / sizeof(dims[0]); d++)
 		for (int k = 0; k < 2; k++) {
@@ -354,8 +367,11 @@ static void t_bounds_odd_geometry(void)
 			scr_new(&s, FMTS[k], dims[d][0], dims[d][1], dims[d][2]);
 			for (int i = 0; i < 3000; i++)
 				wel2_fb_putc(&s.fb, (char)(i * 7 + (i >> 3)));       // all byte values, including > 127
-			for (unsigned c = 0; c < 40; c++)
-				wel2_fb_checkpoint(&s.fb, c, WEL2_RGB_GREEN);
+			for (unsigned c = 0; c < 60; c++)
+				wel2_fb_checkpoint(&s.fb, c, c % 5 == 0 ? WEL2_RGB_GREY : c % 3 ? WEL2_RGB_GREEN : WEL2_RGB_RED);
+			wel2_fb_set_rung(&s.fb, 5, 4000000000u);
+			wel2_fb_checkpoint_text(&s.fb, "A LABEL MUCH LONGER THAN THE STORED LIMIT OF THIRTY ONE");
+			wel2_fb_set_error(&s.fb, "AN ERROR TEXT THAT IS FAR LONGER THAN THE SCREEN CAN POSSIBLY SHOW IN TWO LINES OF A NARROW PANEL");
 			wel2_fb_checkpoint_fail(&s.fb);
 			CHECK(scr_canaries_ok(&s));
 			scr_free(&s);
@@ -388,6 +404,256 @@ static void t_ppm_sample(void)
 			}
 		fclose(f);
 	}
+	scr_free(&s);
+}
+
+
+/* ---- status band, error line, legend (T6h) -------------------------------------------------------------------- */
+/* Colours as drawn (0xRRGGBB): the band background, the white text, the state colours, the error line. */
+#define C_BAND   0x14284bu
+#define C_OK     0x40ff40u
+#define C_RUN    0xffc020u
+#define C_FAILT  0xff6060u
+#define C_ERR    0xff4040u
+#define C_NOERR  0x909090u
+#define C_RULE   0x606060u
+
+static const uint8_t *font_rows(char c)
+{
+	static const uint8_t blank[7];
+
+	if (c >= 'a' && c <= 'z')
+		c = (char)(c - 'a' + 'A');
+	for (unsigned i = 0; i < sizeof(font5x7) / sizeof(font5x7[0]); i++)
+		if (font5x7[i].c == c)
+			return font5x7[i].row;
+	return blank;
+}
+
+/* Does the text line whose top is at pixel row y0 show exactly `str` (the glyphs of the font table, in fg on bg),
+ * followed by background up to the last column? */
+static bool line_is(const struct screen *s, uint32_t y0, const char *str, uint32_t fg_rgb, uint32_t bg_rgb)
+{
+	uint32_t sc = s->fb.scale, fg = wel2_fb_pixel(&s->fb, fg_rgb), bg = wel2_fb_pixel(&s->fb, bg_rgb);
+	size_t len = strlen(str);
+
+	for (uint32_t col = 0; col < s->fb.cols; col++) {
+		const uint8_t *g = font_rows(col < len ? str[col] : ' ');
+
+		for (uint32_t cy = 0; cy < 9 * sc; cy++)
+			for (uint32_t cx = 0; cx < 6 * sc; cx++) {
+				uint32_t gx = cx / sc, gy = cy / sc;
+				bool lit = gx < 5 && gy < 7 && (g[gy] & (1u << (4 - gx)));
+
+				if (at(s, 8 + col * 6 * sc + cx, y0 + cy) != (lit ? fg : bg))
+					return false;
+			}
+	}
+	return true;
+}
+
+#define L0(s) ((s)->fb.band_y)
+#define L1(s) ((s)->fb.band_y + 9 * (s)->fb.scale)
+#define L2(s) ((s)->fb.band_y + 18 * (s)->fb.scale)
+#define E0(s) ((s)->fb.err_y)
+#define E1(s) ((s)->fb.err_y + 9 * (s)->fb.scale)
+
+static void write_ppm(const struct screen *s, const char *path)
+{
+	FILE *f = fopen(path, "wb");
+
+	CHECK(f != NULL);
+	if (!f)
+		return;
+	fprintf(f, "P6\n%u %u\n255\n", s->w, s->h);
+	for (uint32_t y = 0; y < s->h; y++)
+		for (uint32_t x = 0; x < s->w; x++) {
+			uint32_t p = at(s, x, y);
+			unsigned char rgb[3];
+
+			if (s->fb.fmt == WEL2_FB_X2R10G10B10) {
+				rgb[0] = (unsigned char)(p >> 22); rgb[1] = (unsigned char)(p >> 12); rgb[2] = (unsigned char)(p >> 2);
+			} else {
+				rgb[0] = (unsigned char)(p >> 16); rgb[1] = (unsigned char)(p >> 8); rgb[2] = (unsigned char)p;
+			}
+			fwrite(rgb, 1, 3, f);
+		}
+	fclose(f);
+}
+
+/* The j293 screen: 2560 x 1600, both pixel formats. The PPM fixture of the last format is written to
+ * $WEL2_FB_PPM_2560 when set (looked at by eye / photographed-screen mock-up, not a check). */
+static void t_band_2560(void)
+{
+	for (int k = 0; k < 2; k++) {
+		struct screen s;
+		char line[16], l0[80], l1[80];
+
+		scr_new(&s, FMTS[k], 2560, 1600, 0);
+		CHECK_EQ(s.fb.scale, 6); CHECK_EQ(s.fb.cols, 70); CHECK_EQ(s.fb.rows, 23);
+		/* nothing drawn yet: the panel is left alone until the first call */
+		CHECK_EQ(s.fb.cleared, 0);
+		CHECK(at(&s, 100, 100) == CANARY);
+		wel2_fb_checkpoint(&s.fb, 0, WEL2_RGB_GREEN);
+		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG - STEP -", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 0 OK", C_OK, C_BAND));
+		CHECK(line_is(&s, L2(&s), "GUEST PASS 0 FAIL 0 SKIP 0", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, E0(&s), "LAST ERROR: NONE", C_NOERR, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, E1(&s), "", C_NOERR, WEL2_RGB_BLACK));
+		/* the rule, and the legend at the top of the text area (white on black) */
+		CHECK_EQ(at(&s, 0, s.fb.text_y - 4), wel2_fb_pixel(&s.fb, C_RULE));
+		CHECK_EQ(at(&s, 2559, s.fb.text_y - 1), wel2_fb_pixel(&s.fb, C_RULE));
+		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y + 54, "GREEN = OK  AMBER = RUNNING  RED = FAIL  GREY = SKIP", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK_EQ(s.fb.cy, 2);
+
+		wel2_fb_set_rung(&s.fb, 3, 2);
+		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG L3 STEP 2", WEL2_RGB_WHITE, C_BAND));
+		for (unsigned i = 1; i <= 5; i++)
+			wel2_fb_checkpoint(&s.fb, i, i == 5 ? WEL2_RGB_AMBER : WEL2_RGB_GREEN);
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 5 RUNNING", C_RUN, C_BAND));
+		wel2_fb_checkpoint(&s.fb, 5, WEL2_RGB_GREEN);
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 5 OK", C_OK, C_BAND));
+
+		/* guest checks: counters follow the states, each square counted once */
+		wel2_fb_checkpoint(&s.fb, 17, WEL2_RGB_AMBER);
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 17 RUNNING (GUEST CHECK 1)", C_RUN, C_BAND));
+		CHECK(line_is(&s, L2(&s), "GUEST PASS 0 FAIL 0 SKIP 0", WEL2_RGB_WHITE, C_BAND));
+		wel2_fb_checkpoint(&s.fb, 17, WEL2_RGB_GREEN);
+		wel2_fb_checkpoint(&s.fb, 17, WEL2_RGB_GREEN);              /* repeated: still one */
+		wel2_fb_checkpoint(&s.fb, 18, WEL2_RGB_GREEN);
+		CHECK(line_is(&s, L2(&s), "GUEST PASS 2 FAIL 0 SKIP 0", WEL2_RGB_WHITE, C_BAND));
+		wel2_fb_checkpoint(&s.fb, 19, WEL2_RGB_RED);
+		wel2_fb_checkpoint(&s.fb, 20, WEL2_RGB_GREY);
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 20 SKIP (GUEST CHECK 4)", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, L2(&s), "GUEST PASS 2 FAIL 1 SKIP 1", C_FAILT, C_BAND));
+		CHECK_EQ(wel2_fb_guest_pass(&s.fb), 2); CHECK_EQ(wel2_fb_guest_fail(&s.fb), 1); CHECK_EQ(wel2_fb_guest_skip(&s.fb), 1);
+		wel2_fb_checkpoint(&s.fb, 17, WEL2_RGB_RED);                 /* a check changes its mind */
+		CHECK(line_is(&s, L2(&s), "GUEST PASS 1 FAIL 2 SKIP 1", C_FAILT, C_BAND));
+		/* the layer's own squares (0..15) are not guest checks */
+		wel2_fb_checkpoint(&s.fb, 15, WEL2_RGB_RED);
+		CHECK_EQ(wel2_fb_guest_fail(&s.fb), 2);
+		wel2_fb_checkpoint(&s.fb, 6, WEL2_RGB_GREEN);
+
+		/* the automatic error text, then an explicit one that is not replaced */
+		CHECK(line_is(&s, E0(&s), "LAST ERROR: CHECKPOINT 15 FAILED", C_ERR, WEL2_RGB_BLACK));
+		wel2_fb_checkpoint_text(&s.fb, "g4 timer");
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 6 OK G4 TIMER", C_OK, C_BAND));
+		wel2_fb_set_error(&s.fb, "sync abort at EL2, ESR=0x96000045 FAR=0x00000000deadbeef; elr=0x9f0001234 spsr=0x600003c9 x0=1");
+		/* upper-cased, 70 columns on the first line (12 are "LAST ERROR: "), the rest on the second, cut at 128 */
+		{
+			const char *t = "SYNC ABORT AT EL2, ESR=0X96000045 FAR=0X00000000DEADBEEF; ELR=0X9F0001234 SPSR=0X600003C9 X0=1";
+
+			memcpy(l0, "LAST ERROR: ", 12); memcpy(l0 + 12, t, 58); l0[70] = 0;
+			memcpy(l1, t + 58, strlen(t + 58) + 1);
+			CHECK(line_is(&s, E0(&s), l0, C_ERR, WEL2_RGB_BLACK));
+			CHECK(line_is(&s, E1(&s), l1, C_ERR, WEL2_RGB_BLACK));
+		}
+		wel2_fb_checkpoint(&s.fb, 7, WEL2_RGB_RED);                  /* automatic text must not replace it */
+		wel2_fb_checkpoint_fail(&s.fb);
+		CHECK_EQ(s.fb.err_kind, 2); CHECK_EQ(strncmp(s.fb.err, "SYNC ABORT", 10), 0);
+
+		/* the error line and the band persist across scrolls; the legend comes back at the top */
+		for (int i = 0; i < 100; i++) {
+			snprintf(line, sizeof(line), "LINE %d\n", i);
+			wel2_fb_puts(&s.fb, line);
+		}
+		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG L3 STEP 2", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, E0(&s), l0, C_ERR, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, E1(&s), l1, C_ERR, WEL2_RGB_BLACK));
+		CHECK_EQ(s.fb.err_kind, 2);
+		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		/* clear the explicit error: back to NONE */
+		wel2_fb_set_error(&s.fb, "");
+		CHECK(line_is(&s, E0(&s), "LAST ERROR: NONE", C_NOERR, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, E1(&s), "", C_NOERR, WEL2_RGB_BLACK));
+		CHECK(scr_canaries_ok(&s));
+		if (k == 1 && getenv("WEL2_FB_PPM_2560"))
+			write_ppm(&s, getenv("WEL2_FB_PPM_2560"));
+		scr_free(&s);
+	}
+}
+
+/* Exact text of the two lines after a scroll: the error text is the very same line, drawn once, never scrolled. */
+static void t_error_persists_across_scrolls(void)
+{
+	for (int k = 0; k < 2; k++) {
+		struct screen s;
+		char line[16];
+
+		scr_new(&s, FMTS[k], 2560, 1600, 0);
+		wel2_fb_set_rung(&s.fb, 0, 0);
+		wel2_fb_set_error(&s.fb, "DABT AT EL2 FAR=0X1000");
+		for (int i = 0; i < 200; i++) {
+			snprintf(line, sizeof(line), "LINE %d\n", i);
+			wel2_fb_puts(&s.fb, line);
+		}
+		CHECK(line_is(&s, E0(&s), "LAST ERROR: DABT AT EL2 FAR=0X1000", C_ERR, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, E1(&s), "", C_ERR, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG L0 STEP 0", WEL2_RGB_WHITE, C_BAND));
+		/* 200 lines of output on a 23-row area (21 usable after the legend) scrolled several times */
+		CHECK(s.fb.cy < s.fb.rows);
+		CHECK(scr_canaries_ok(&s));
+		scr_free(&s);
+	}
+}
+
+/* QEMU-like 800 x 600: scale 2, 65 columns, 26 rows; the same layout, nothing clipped. */
+static void t_band_800x600(void)
+{
+	for (int k = 0; k < 2; k++) {
+		struct screen s;
+
+		scr_new(&s, FMTS[k], 800, 600, 16);
+		CHECK_EQ(s.fb.scale, 2); CHECK_EQ(s.fb.cols, 65); CHECK_EQ(s.fb.text_y, 32 + 54 + 36 + 4); CHECK_EQ(s.fb.rows, 26);
+		wel2_fb_set_rung(&s.fb, 1, 1);
+		wel2_fb_checkpoint(&s.fb, 2, WEL2_RGB_GREEN);
+		wel2_fb_puts(&s.fb, "HELLO\n");
+		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG L1 STEP 1", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 2 OK", C_OK, C_BAND));
+		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y + 2 * 18, "HELLO", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(scr_canaries_ok(&s));
+		scr_free(&s);
+	}
+}
+
+/* Small screens: the band is clipped or left out, nothing is stored outside, text still works where it fits. */
+static void t_band_small_screens(void)
+{
+	struct screen s;
+
+	scr_new(&s, WEL2_FB_X8R8G8B8, 64, 70, 0);                        /* band does not fit: no band, no text rows */
+	CHECK_EQ(s.fb.rows, 0);
+	wel2_fb_set_rung(&s.fb, 1, 1);
+	wel2_fb_set_error(&s.fb, "X");
+	wel2_fb_checkpoint(&s.fb, 0, WEL2_RGB_GREEN);
+	wel2_fb_puts(&s.fb, "ABC\n");
+	CHECK(scr_canaries_ok(&s));
+	scr_free(&s);
+	/* the first line of the band fits, the rest does not */
+	scr_new(&s, WEL2_FB_X2R10G10B10, 123, 45, 1);
+	wel2_fb_checkpoint(&s.fb, 0, WEL2_RGB_RED);
+	wel2_fb_set_error(&s.fb, "A LONG ERROR");
+	CHECK(scr_canaries_ok(&s));
+	scr_free(&s);
+	/* narrow: cols < 56, so no legend, and the first text row is free for the first character */
+	scr_new(&s, WEL2_FB_X8R8G8B8, 300, 200, 0);
+	wel2_fb_putc(&s.fb, 'I');
+	CHECK(cell_shows(&s, 0, 0, GLYPH_I));
+	scr_free(&s);
+}
+
+/* The squares fall on the checkpoint row and the status band stays the same when a square fails at the right edge. */
+static void t_fatal_error_text(void)
+{
+	struct screen s;
+
+	scr_new(&s, WEL2_FB_X2R10G10B10, 2560, 1600, 0);
+	wel2_fb_checkpoint(&s.fb, 3, WEL2_RGB_GREEN);
+	wel2_fb_checkpoint_fail(&s.fb);
+	CHECK(line_is(&s, L1(&s), "CHECKPOINT 3 FAIL", C_FAILT, C_BAND));
+	CHECK(line_is(&s, E0(&s), "LAST ERROR: FATAL AT CHECKPOINT 3", C_ERR, WEL2_RGB_BLACK));
 	scr_free(&s);
 }
 
@@ -657,6 +923,11 @@ int main(void)
 	RUN(t_checkpoints_survive_text);
 	RUN(t_bounds_odd_geometry);
 	RUN(t_ppm_sample);
+	RUN(t_band_2560);
+	RUN(t_error_persists_across_scrolls);
+	RUN(t_band_800x600);
+	RUN(t_band_small_screens);
+	RUN(t_fatal_error_text);
 	RUN(t_fdt_present);
 	RUN(t_fdt_absent_or_unusable);
 	RUN(t_fdt_qemu_shape);
