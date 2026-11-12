@@ -315,6 +315,7 @@ static void m1_system_reset(void)
     if (wel2_cs_system_reset(&g_cs_ops, g_m1.wdt.found ? g_m1.wdt.base : 0) < 0) {
         puts_("Watari EL2: SYSTEM_RESET: no watchdog node in the FDT, halting instead\n");
         checkpoint(CHK_HALT);
+        big_unlock();                                    /* like system_off: other cores that trap can still print */
     }
     wel2_cs_wait_forever(&g_cs_ops, 0);
 }

@@ -628,7 +628,13 @@ static uint64_t write_guest_info(void)
 {
     struct wel2_guest_info *gi = (struct wel2_guest_info *)((uint64_t)(uintptr_t)__image_start - 0x1000);
     const char *name = g_plat->name;
+    uint64_t at = (uint64_t)(uintptr_t)gi;
 
+    /* The guest must be able to read it: inside guest RAM. On the M1 the layer's block is cut out of the RAM list and
+     * the spot below __image_start is not necessarily guest RAM (the hand-off there is T10/T11): say so, do not hand
+     * the guest a pointer into the carve-out. */
+    if (g_plat->m1_memory && (!guest_ram_contains(at) || !guest_ram_contains(at + sizeof(*gi) - 1)))
+        fatal_msg("guest info block does not lie in guest RAM (M1 hand-off not implemented, T10/T11)");
     memset(gi, 0, sizeof(*gi));
     gi->magic = WEL2_GINFO_MAGIC;
     gi->version = WEL2_GINFO_VERSION;
@@ -757,9 +763,19 @@ static void parse_bootargs(uint64_t fdt)
             g_lpi = false;
         else if (arg_is(p, "wel2.aic=off"))
             g_aic_allowed = false;
-        else if (arg_is(p, "wel2.cpuif=hw"))
+        else if (arg_is(p, "wel2.cpuif=hw")) {
+            /* DESIGN 5.4: the hardware list-register mode is QEMU-only (the M1's ICH_VTR_EL2.SEIS = 1 erratum). */
+            if (g_plat->m1_memory)
+                fatal_msg("wel2.cpuif=hw is refused on the M1 (SEIS erratum): the cpuif mode is trap");
             g_cpuif_trap = false;
-        else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 't' &&
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'c' &&
+                   p[6] == 'p' && p[7] == 'u' && p[8] == 'i' && p[9] == 'f' && p[10] == '=') {
+            /* trap and hw matched above; anything else (trap-notc is T6g) is not silently ignored */
+            puts_("Watari EL2: WARNING: unknown boot argument value, ignored: ");
+            for (const char *q = p; *q && *q != ' '; q++)
+                putc_(*q);
+            puts_("\n");
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 't' &&
                  p[6] == 'r' && p[7] == 'a' && p[8] == 'c' && p[9] == 'e' && p[10] == '=') {
             g_trace_on = true;
             g_trace_skip = 0;
@@ -771,11 +787,15 @@ static void parse_bootargs(uint64_t fdt)
         } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'g' &&
                    p[6] == 'u' && p[7] == 'e' && p[8] == 's' && p[9] == 't' && p[10] == '=') {
             uint64_t v = 0;
+            const char *q = p + 11;
 
-            for (const char *q = p + 11; (*q >= '0' && *q <= '9') || (*q >= 'a' && *q <= 'f'); q++)
-                v = v * 16 + (uint64_t)(*q <= '9' ? *q - '0' : *q - 'a' + 10);
+            if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X'))
+                q += 2;
+            for (; (*q >= '0' && *q <= '9') || (*q >= 'a' && *q <= 'f') || (*q >= 'A' && *q <= 'F'); q++)
+                v = v * 16 + (uint64_t)(*q <= '9' ? *q - '0' : (*q | 0x20) - 'a' + 10);
             g_guest_mode = true;
             g_guest_entry = v == 1 ? 0 : v;          /* 1 = on, default entry */
+            put_kv("Watari EL2: wel2.guest parsed, value = ", v);
 #endif
         }
     }
@@ -873,6 +893,12 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
 #ifdef WEL2_CHAIN
     g_hcr |= HCR_TSC;
 #endif
+    if (g_plat->m1_memory) {
+        /* DESIGN 5.4 / 5.1: the M1 runs the trap mode (SEIS erratum) and needs VHE (E2H stuck at 1). */
+        if (!g_e2h)
+            fatal_msg("M1 platform without HCR_EL2.E2H: the layer cannot run here");
+        g_cpuif_trap = true;
+    }
     parse_bootargs(fdt);
     vgic_setup(fdt);
     pirq_vcpu_on(&g_pirq, this_cpu());          /* the cold-boot core can take SPIs */

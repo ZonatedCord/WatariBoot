@@ -23,6 +23,7 @@ for elf in "$@"; do
     echo "check-nosmc: $elf: smc only in:" $funcs
     dir=$(dirname "$elf")
     for o in plat_m1 cpu_start apple_fiq apple_sysreg hvc_vendor psci; do
+        [ -f "$dir/$o.o" ] || { echo "check-nosmc: FAIL: $dir/$o.o missing (nothing checked for it)" >&2; rc=1; continue; }
         if "$LLVM/llvm-objdump" -d "$dir/$o.o" | awk '$3=="smc" || $2=="smc" {found=1} END {exit !found}'; then
             echo "check-nosmc: FAIL: smc in $dir/$o.o" >&2; rc=1
         fi
