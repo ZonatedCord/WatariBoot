@@ -81,3 +81,7 @@ Caveats:
 - D3: G3 sets SCTLR_EL1.EnIA around PACIA/AUTIA, requires signed != plain and a corrupted signature not to authenticate back to the pointer.
 - D4/D5: G5a requires the IGRPEN1 and BPR1 counters to advance and ICC_SRE_EL1 not to (trap modes); with an info block, missing `WEL2_STATS` is a FAIL in G5a/G5b. `stats_fill` must therefore keep `WEL2_STAT_ICC_SRE` separate from the TALL1 pair.
 - D6/D7: G9/G10 use the running core's own index, G10 clears stale commands and requires the secondary to have issued CPU_OFF; the fatal path uses SYSTEM_RESET; a G11 reset that returns sets checkpoint G11 to FAIL.
+
+## Wiring status (T6d-T7 wiring session)
+
+Done in the tree: plat_m1 IRQ path (shared pirq_aic_drain), FIQ module hooks (fiq, timer_resync, ppi_enable gates, kick, maint_backstop on the IRQ and FIQ tails), PSCI on the M1 (psci.c native_psci branches, cpu_off_begin before teardown, park + secondary_rewake on a fresh stack, watchdog reset, SYSTEM_OFF halt), vendor HVC glue and guest info block (wel2.guest=1|<hex>). Checks: boot/check-nosmc.sh, check-apple-enc.sh on the linked images. Checkpoint squares 9/10/11 = CPU_ON accepted / core arrived / halt. Not run on hardware or QEMU: the M1 psci.c branches (no M1 machine); QEMU runs the guest with -cpu max,pauth=off until T6g sets API/APK.

@@ -13,6 +13,8 @@
 #include "wel2_aic.h"
 #include "wel2_maps.h"
 #include "wel2_v2m.h"
+#include "wel2_hvc_vendor.h"
+#include "wel2_guest_info.h"
 
 #define HCR_VM   (1ULL << 0)
 #define HCR_FMO  (1ULL << 3)
@@ -104,6 +106,91 @@ void __attribute__((noreturn)) fatal_dump(struct frame *f, unsigned idx, const c
     fatal(f, idx);
 }
 
+/* ---- Vendor hypercalls (T7, wel2_hvc.h): the test guest's log, checkpoints and counters ------------------------------
+ * The logic is vgic/hvc_vendor.c (host-tested); this is its hardware side. handle_hvc holds the big lock, so the UART
+ * and the framebuffer need no further locking. */
+static bool hvc_range_ok(void *ctx, uint64_t pa, uint64_t len)
+{
+    (void)ctx;
+    if (len == 0 || pa + len < pa)
+        return false;
+    uint64_t last = pa + len - 1;
+
+    if (!guest_ram_contains(pa) || !guest_ram_contains(last))
+        return false;
+    /* QEMU: guest RAM is one span that includes the layer's carve-out; the layer itself is never readable. The M1
+     * list (g_guest_ram) already excludes it. */
+    if (!g_plat->m1_memory && pa < g_carve_base + g_carve_size && last >= g_layer_base)
+        return false;
+    return true;
+}
+
+/* The guest runs with MMU and caches off (its stores are in memory, EL2's cacheable map may hold stale lines) and reads
+ * the same way: clean+invalidate around every access [hypothesis: needed on the M1, harmless on QEMU TCG]. */
+static void hvc_clean_inv(uint64_t pa, uint64_t len)
+{
+    uint64_t ctr;
+
+    __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
+    uint64_t line = 4ULL << ((ctr >> 16) & 0xf), a = pa & ~(line - 1);
+
+    for (; a < pa + len; a += line)
+        __asm__ volatile("dc civac, %0" : : "r"(a) : "memory");
+    __asm__ volatile("dsb sy" ::: "memory");
+}
+
+static void hvc_read_guest(void *ctx, uint64_t pa, void *dst, uint64_t len)
+{
+    (void)ctx;
+    hvc_clean_inv(pa, len);
+    memcpy(dst, (const void *)(uintptr_t)pa, len);
+}
+
+static void hvc_write_guest(void *ctx, uint64_t pa, const void *src, uint64_t len)
+{
+    (void)ctx;
+    memcpy((void *)(uintptr_t)pa, src, len);
+    hvc_clean_inv(pa, len);
+}
+
+static void hvc_log_line(void *ctx, const char *line, unsigned n)
+{
+    static const char pre[] = "Watari EL1: ";
+    char buf[WEL2_LOG_MAX + sizeof(pre) + 2];
+    unsigned k = 0;
+
+    (void)ctx;
+    for (unsigned i = 0; i < sizeof(pre) - 1; i++)
+        buf[k++] = pre[i];
+    for (unsigned i = 0; i < n && k < sizeof(buf) - 2; i++)
+        buf[k++] = line[i];
+    buf[k++] = '\n';
+    buf[k] = 0;
+    puts_(buf);
+}
+
+static void hvc_checkpoint(void *ctx, unsigned n, unsigned state)
+{
+    (void)ctx;
+    checkpoint_state(WEL2_CHK_SQUARE_BASE + n, state);
+}
+
+static void hvc_stats_fill(void *ctx, struct wel2_stats *out)
+{
+    (void)ctx;
+    cpuif_stats_fill(out);
+}
+
+static const struct wel2_hvc_ops g_hvc_ops = {
+    .ctx = 0,
+    .range_ok = hvc_range_ok,
+    .read_guest = hvc_read_guest,
+    .write_guest = hvc_write_guest,
+    .log_line = hvc_log_line,
+    .checkpoint = hvc_checkpoint,
+    .stats_fill = hvc_stats_fill,
+};
+
 static unsigned g_hvc_log_budget = 8;
 
 static void handle_hvc(struct frame *f)
@@ -111,7 +198,8 @@ static void handle_hvc(struct frame *f)
     uint32_t imm = f->esr & 0xffff;
     uint32_t fid = (uint32_t)f->x[0];
 
-    if (g_hvc_log_budget) {
+    /* The guest's own vendor calls would fill the 8-line trace with noise: it shows the other HVCs. */
+    if (g_hvc_log_budget && !(imm == 0 && wel2_hvc_is_vendor(f->x[0]))) {
         g_hvc_log_budget--;
         puts_("Watari EL2: HVC from EL1, imm=");
         puthex(imm);
@@ -120,6 +208,8 @@ static void handle_hvc(struct frame *f)
         puts_("\n");
     }
 
+    if (imm == 0 && wel2_hvc_vendor(&g_hvc_ops, f->x))   /* f->x[0..3] in/out; false = not a vendor id */
+        return;
     if (imm == 0 && psci_handle(f, fid))
         return;
     /* Unknown conduit/immediate: SMCCC NOT_SUPPORTED. ELR already points past
@@ -524,6 +614,44 @@ static void set_virtual_ids(void)
 }
 
 #ifdef WEL2_CHAIN
+/* T7: wel2.guest=1|<hex entry>. The first guest is the EL1 test guest (el2/guest), not EDK2: x0 is the guest info block
+ * (wel2_guest_info.h) instead of the FDT, and the entry is EDK2_ENTRY (value 1) or the given address. */
+static bool g_guest_mode;
+static uint64_t g_guest_entry;
+
+#define HCR_APK (1ULL << 40)
+#define HCR_API (1ULL << 41)
+
+/* The block lives at the end of the hand-off buffer, 4 KB below the layer: guest RAM the guest can read, within 64 MB
+ * of the guest image (which it checks before it dereferences x0). */
+static uint64_t write_guest_info(void)
+{
+    struct wel2_guest_info *gi = (struct wel2_guest_info *)((uint64_t)(uintptr_t)__image_start - 0x1000);
+    const char *name = g_plat->name;
+
+    memset(gi, 0, sizeof(*gi));
+    gi->magic = WEL2_GINFO_MAGIC;
+    gi->version = WEL2_GINFO_VERSION;
+    gi->size = sizeof(*gi);
+    for (unsigned i = 0; name[i] && i < sizeof(gi->platform) - 1; i++)
+        gi->platform[i] = name[i];
+    gi->gicd_base = g_plat->vgic_gicd_base;
+    gi->gicr_base = g_plat->vgic_gicr_base;
+    gi->gicr_stride = 0x20000;
+    gi->ncores = g_ncpu < WEL2_GINFO_MAX_CORES ? g_ncpu : WEL2_GINFO_MAX_CORES;
+    gi->checks = 0;                                       /* all (wel2.step selects subsets in T6g) */
+    gi->cpuif_mode = g_cpuif_trap ? WEL2_CPUIF_TRAP : WEL2_CPUIF_HW;
+    /* PAuth only when the layer really lets the guest use the keys; PPI 30 only where the platform raises it. */
+    if ((g_hcr & (HCR_API | HCR_APK)) == (HCR_API | HCR_APK))
+        gi->flags |= WEL2_GINFO_F_PAUTH;
+    if (!g_plat->timer_resync)
+        gi->flags |= WEL2_GINFO_F_NO_PTIMER;
+    for (unsigned i = 0; i < gi->ncores; i++)
+        gi->mpidr[i] = ((uint64_t)(g_pcpu[i].aff >> 24) << 32) | (g_pcpu[i].aff & 0xffffff);
+    dcache_clean_range(gi, sizeof(*gi));
+    return (uint64_t)(uintptr_t)gi;
+}
+
 /* M1-4: hand the machine to EDK2 (ArmVirtQemuKernel) at EL1, the way a boot loader
  * hands over to an arm64 Linux kernel (Linux arm64 booting.rst, entry state):
  *   x0 = physical address of the FDT, x1 = x2 = x3 = 0, MMU off, D-cache off,
@@ -569,13 +697,26 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
      * output reads the FDT there before it learns the real address (F-21). */
     uint32_t total = fdt_used_size((void *)fdt);
     put_kv("Watari EL2: FDT used bytes = ", total);
-    if (total > ((uint64_t)(uintptr_t)__image_start - EDK2_FDT_ADDR) || fdt < pi.mem_base_new)
+    if (total > ((uint64_t)(uintptr_t)__image_start - EDK2_FDT_ADDR - (g_guest_mode ? 0x1000 : 0)) || fdt < pi.mem_base_new)
         fatal_msg("FDT does not fit the hand-off buffer, or sits inside the layer's region");
     memcpy((void *)EDK2_FDT_ADDR, (void *)fdt, total);
     fdt_set_totalsize((void *)EDK2_FDT_ADDR, total);
     /* EL2 wrote through its cacheable map; the guest starts with MMU and caches off. */
     dcache_clean_range((void *)EDK2_FDT_ADDR, total);
     put_kv("Watari EL2: patched FDT copied to ", EDK2_FDT_ADDR);
+    if (g_guest_mode) {
+        uint64_t entry = g_guest_entry ? g_guest_entry : EDK2_ENTRY;
+
+        if (!guest_ram_contains(entry) || (entry & 0xfff))
+            fatal_msg("wel2.guest: entry is not 4 KB aligned guest RAM");
+        if (*(volatile uint32_t *)(entry + 0x38) != 0x644d5241)
+            fatal_msg("wel2.guest: no arm64 Image header at the guest entry");
+        uint64_t info = write_guest_info();
+
+        put_kv("Watari EL2: guest info block at ", info);
+        put_kv("Watari EL2: eret to the EL1 test guest, entry = ", entry);
+        enter_el1(entry, 0, SPSR_EL1H_MASKED, g_hcr, info);
+    }
     uint32_t magic = *(volatile uint32_t *)(EDK2_ENTRY + 0x38);
     if (magic != 0x644d5241) {               /* "ARM\x64" */
         put_kv("Watari EL2: no arm64 Image header at EDK2 entry ", EDK2_ENTRY);
@@ -624,8 +765,19 @@ static void parse_bootargs(uint64_t fdt)
             g_trace_skip = 0;
             for (const char *q = p + 11; *q >= '0' && *q <= '9'; q++)
                 g_trace_skip = g_trace_skip * 10 + (unsigned)(*q - '0');
-        } else if (arg_is(p, "wel2.test=noeoi"))
+        } else if (arg_is(p, "wel2.test=noeoi")) {
             g_cpuif_noeoi = true;
+#ifdef WEL2_CHAIN
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'g' &&
+                   p[6] == 'u' && p[7] == 'e' && p[8] == 's' && p[9] == 't' && p[10] == '=') {
+            uint64_t v = 0;
+
+            for (const char *q = p + 11; (*q >= '0' && *q <= '9') || (*q >= 'a' && *q <= 'f'); q++)
+                v = v * 16 + (uint64_t)(*q <= '9' ? *q - '0' : *q - 'a' + 10);
+            g_guest_mode = true;
+            g_guest_entry = v == 1 ? 0 : v;          /* 1 = on, default entry */
+#endif
+        }
     }
 }
 

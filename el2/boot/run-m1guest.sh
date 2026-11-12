@@ -3,7 +3,8 @@
 # T7a: the EL1 test guest (el2/guest, checks G1-G11 of DESIGN section 8) on top of Watari EL2, QEMU TCG, -smp 4.
 #   QEMU -kernel build-chain/wel2.bin         : the layer, chain build (x0 = FDT)
 #   QEMU -device loader,addr=0x40280000       : the guest image, entered by the layer at EL1 instead of EDK2
-# The guest has an arm64 Image header, so the chain path accepts it unchanged; no edit of main.c is needed.
+# wel2.guest=1 makes the layer pass the guest info block in x0 and enter the guest at the EDK2 entry. QEMU runs with
+# -cpu max,pauth=off until T6g sets HCR_EL2.API/APK (the guest FAILs G3 if PAuth exists and the layer did not enable it).
 # Until the layer implements the vendor hypercalls (docs/design/watari-el2-m1boot/T7-wiring.md) the guest sees
 # NOT_SUPPORTED from WEL2_LOG and falls back to the QEMU PL011 (same text), so the checks that do not need the wiring
 # work today; G5a/G5b judge the trap counters only once WEL2_STATS exists (otherwise "counters n/a").
@@ -11,10 +12,10 @@
 # Exit 0 = success. 60 s timeout.
 set -u
 cd "$(dirname "$0")"
-ARGS=""
+ARGS="wel2.guest=1"
 case "${CPUIF:-hw}" in
-    trap) ARGS="wel2.cpuif=trap" ;;
-    trap-notc) ARGS="wel2.cpuif=trap-notc" ;;
+    trap) ARGS="$ARGS wel2.cpuif=trap" ;;
+    trap-notc) ARGS="$ARGS wel2.cpuif=trap-notc" ;;
     hw) ;;
     *) echo "FAIL: CPUIF must be hw, trap or trap-notc"; exit 2 ;;
 esac
@@ -27,7 +28,7 @@ GUEST=../guest/build/m1guest.bin
 OUT=build-chain
 LOG=$OUT/guest-uart.log
 : > "$LOG"
-"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu max -accel tcg \
+"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu "${QEMU_CPU:-max,pauth=off}" -accel tcg \
     -nographic -m 512M -smp 4 -nic none -no-reboot -kernel $OUT/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
     -device loader,file="$GUEST",addr=0x40280000,force-raw=on \
     -serial "file:$LOG" -monitor none >$OUT/guest-qemu.out 2>&1 &
@@ -51,6 +52,14 @@ for g in G1 G2 G3 G4 G5a G5b G6 G7 G8 G9 G10 G11; do
     elif echo "$l" | grep -q " FAIL "; then echo "FAILED: $l"; rc=1
     else echo "ok: $g"; fi
 done
+# T7 wiring: the output arrives through WEL2_LOG (the layer's "Watari EL1:" prefix, no PL011 fallback), and in a trap
+# mode G5a/G5b are judged on the layer's counters (not "counters n/a").
+grep -aq "guest info block at" $OUT/guest-uart.txt || { echo "MISSING: the layer did not pass the guest info block"; rc=1; }
+if [ "${CPUIF:-hw}" != hw ]; then
+    for g in G5a G5b; do
+        gline $g | grep -q "n/a" && { echo "FAILED: $g judged without the layer's counters"; rc=1; }
+    done
+fi
 grep -q "UNEXPECTED\|FATAL\|unhandled guest\|non-PSCI SMC" $OUT/guest-uart.txt && { echo "FAIL: unexpected event reported"; rc=1; }
 grep -aq "PSCI SYSTEM_\(RESET\|OFF\)" $OUT/guest-uart.txt || { echo "MISSING: the layer's SYSTEM_RESET/OFF line"; rc=1; }
 [ "$EXITED" = 1 ] || { echo "FAIL: QEMU still running after 60 s (SYSTEM_RESET not honoured?)"; rc=1; }
