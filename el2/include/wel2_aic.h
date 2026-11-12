@@ -166,6 +166,30 @@ const struct pirq_ops *pirq_aic_ops(struct pirq_aic *a);
 /* One EVENT read on the calling core. A legacy IPI is acked and left masked here. */
 struct aic_event pirq_aic_poll(struct pirq_aic *a);
 
+/* The drain loop of an IRQ taken on the calling core (T6d): EVENT reads until the AIC reports nothing, each hardware
+ * source handed to pirq_arrive() as phys = d->key | hwirq. Shared by the M1 platform (key 0) and the QEMU hybrid
+ * machine (key AIC_KEY, pirq_qemu.c). A delivered source is already masked by the EVENT read; pirq_arrive() decides
+ * the rest. When the pirq backend does not report auto_masks (the hybrid machine's GIC rules), an edge source is
+ * unmasked here, as the backend would. At most d->budget EVENT reads (0 = AIC_DRAIN_BUDGET) per call: a source that
+ * keeps asserting keeps the CPU IRQ line high and the next exception drains again; budget_hit says it happened. */
+#define AIC_DRAIN_BUDGET 64u
+struct pirq_aic_drain {
+	uint32_t key;                       /* ORed into the hwirq to form the pirq key */
+	unsigned budget;
+	/* Optional: called for every event that is not AIC_EV_NONE, after it was handled. vintid = what pirq_arrive()
+	 * returned for AIC_EV_IRQ (INTR_INVALID: denied), 0 otherwise. */
+	void (*note)(void *ctx, const struct aic_event *ev, uint32_t vintid);
+	void *ctx;
+};
+struct aic_drain_result {
+	unsigned polls;                     /* EVENT reads, including the one that returned nothing */
+	unsigned irqs;                      /* hardware sources handed to pirq_arrive() */
+	unsigned other;                     /* IPI / bad events (counted in a->st, nothing forwarded) */
+	bool budget_hit;
+};
+struct aic_drain_result pirq_aic_drain(struct pirq_aic *a, struct pirq *p, unsigned vcpu,
+				       const struct pirq_aic_drain *d);
+
 /* Software generate / clear a source (tests, irq_set_irqchip_state-like uses). A source raised with
  * sw_set is cleared by pirq_aic_poll() when it is taken (the EVENT read does not clear SW_SET on the
  * M1, so the source would re-fire at every unmask). Callers on different cores need no lock:

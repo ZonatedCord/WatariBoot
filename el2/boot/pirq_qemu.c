@@ -187,36 +187,35 @@ int pirq_qemu_init_aic_cpu(unsigned vcpu)
     return pirq_aic_init_cpu(&g_aic, vcpu);
 }
 
-/* Drain the AIC of the calling core after the physical GIC reported nothing more. A delivered hardware
- * source is already masked by the EVENT read; pirq_arrive does the rest (level: stays masked until the guest
- * deactivates; edge: unmasked here, the backend flag auto_masks is false). */
+/* Log of the drain below (the same lines as before the loop moved to pirq_aic_drain; run-m1-6 greps them). */
+static void aic_note(void *ctx, const struct aic_event *ev, uint32_t id)
+{
+    unsigned me = (unsigned)(uintptr_t)ctx;
+
+    if (ev->kind == AIC_EV_IRQ) {
+#ifndef WEL2_CHAIN
+        static unsigned n_log;
+
+        if (n_log++ < 8) {           /* run-m1-6: which core took the AIC event, and as which vINTID */
+            put_kn("Watari EL2: AIC event taken on cpu ", me, "\n");
+            put_kv("Watari EL2:   AIC hwirq = ", ev->num);
+            put_kv("Watari EL2:   injected as vINTID = ", id);
+        }
+#else
+        (void)me; (void)id;
+#endif
+        if (g_trace_on && g_aic.st.events <= 100)
+            put_kv("Watari EL2: TR AIC event, hwirq ", ev->num);
+    } else if (g_aic.st.ipi_unexpected + g_aic.st.bad <= 8) {
+        put_kv("Watari EL2: unexpected AIC event, raw ", ev->raw);
+    }
+}
+
+/* Drain the AIC of the calling core after the physical GIC reported nothing more (pirq_aic_drain, wel2_aic.h). A
+ * delivered hardware source is already masked by the EVENT read. */
 void pirq_qemu_aic_irq(unsigned me)
 {
-    for (unsigned n = 0; n < 64; n++) {
-        struct aic_event ev = pirq_aic_poll(&g_aic);
+    const struct pirq_aic_drain d = { AIC_KEY, 64, aic_note, (void *)(uintptr_t)me };
 
-        if (ev.kind == AIC_EV_NONE)
-            return;
-        if (ev.kind == AIC_EV_IRQ) {
-            uint32_t id = pirq_arrive(&g_pirq, me, AIC_KEY | ev.num);
-
-#ifndef WEL2_CHAIN
-            {
-                static unsigned n_log;
-
-                if (n_log++ < 8) {       /* run-m1-6: which core took the AIC event, and as which vINTID */
-                    put_kn("Watari EL2: AIC event taken on cpu ", me, "\n");
-                    put_kv("Watari EL2:   AIC hwirq = ", ev.num);
-                    put_kv("Watari EL2:   injected as vINTID = ", id);
-                }
-            }
-#endif
-            if (g_trace_on && g_aic.st.events <= 100)
-                put_kv("Watari EL2: TR AIC event, hwirq ", ev.num);
-            if (id != INTR_INVALID && pirq_is_edge(&g_pirq, id))
-                g_aic.ops.unmask(g_aic.ops.ctx, ev.num);
-        } else if (g_aic.st.ipi_unexpected + g_aic.st.bad <= 8) {
-            put_kv("Watari EL2: unexpected AIC event, raw ", ev.raw);
-        }
-    }
+    pirq_aic_drain(&g_aic, &g_pirq, me, &d);
 }

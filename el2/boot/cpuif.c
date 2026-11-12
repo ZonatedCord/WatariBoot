@@ -344,11 +344,17 @@ void cpuif_flush(void)
     /* Level-sensitive virtual timer: the model line follows the timer. While
      * the line is high the physical PPI stays masked at EL2 (it would fire
      * again immediately); once the guest has silenced the timer, unmask. */
-    bool line = vtimer_line();
-    vgic_set_irq_level(g_v, me, PPI_VTIMER, line);
-    if (!line && c->vtimer_masked) {
-        c->vtimer_masked = false;
-        g_plat->ppi_enable(PPI_VTIMER, true);
+    if (g_plat->timer_resync) {
+        /* M1 (T6e): the Apple gate protocol, including the EL1 physical timer (PPI 30); vtimer_line() and
+         * c->vtimer_masked are not used there. */
+        g_plat->timer_resync(me);
+    } else {
+        bool line = vtimer_line();
+        vgic_set_irq_level(g_v, me, PPI_VTIMER, line);
+        if (!line && c->vtimer_masked) {
+            c->vtimer_masked = false;
+            g_plat->ppi_enable(PPI_VTIMER, true);
+        }
     }
 
     vcif_fill(v, g_v, me);                   /* priority order, evicting if need be */
@@ -541,7 +547,28 @@ void cpuif_irq(void)
     if (g_plat->irq_post)
         g_plat->irq_post(me);
     cpuif_flush();
+    cpuif_maint_backstop();                  /* M1: the maintenance signal may be the IRQ (T6e D-1) */
     cpuif_kick_others();
+}
+
+/* T6e D-1: the vGIC maintenance interrupt reaches EL2 as a physical interrupt on QEMU (PPI 25, handled above). On the
+ * M1 its signal type is [hypothesis] until measured (FIQ or IRQ), so both exit tails call this after the flush: if the
+ * condition is still asserted the platform clears the enables itself and never loops. QUENCHED invalidates the cached
+ * ICH_HCR_EL2 (the module wrote it behind hcr_set()); FATAL (not clearable) halts with the reason. */
+void cpuif_maint_backstop(void)
+{
+    unsigned me = this_cpu();
+    int r;
+
+    if (!g_plat->maint_backstop)
+        return;
+    r = g_plat->maint_backstop(me);
+    if (r == 0)
+        return;
+    g_cif[me].st_maint++;
+    g_cif[me].hcr_cur = ~0ULL;               /* the next hcr_set() writes whatever it wants, not what it believes is on */
+    if (r >= 2)
+        fatal_msg("vGIC maintenance interrupt is not clearable (ICH_MISR_EL2 stays non-zero)");
 }
 
 /* vGIC effects (INTERFACES section 5): wire the guest's SPI configuration to

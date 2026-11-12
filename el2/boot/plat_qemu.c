@@ -62,9 +62,9 @@ static void q_irq_post(unsigned me)
         pirq_qemu_aic_irq(me);
 }
 
-static int64_t q_cpu_start(uint64_t target, unsigned idx)
+static int64_t q_cpu_start(uint64_t target, unsigned idx, uint64_t entry, uint64_t ctx)
 {
-    (void)idx;
+    (void)idx; (void)entry; (void)ctx;                  /* the layer keeps them in g_pcpu[]; the firmware starts secondary_entry */
     return psci_smc(PSCI_CPU_ON_64, target, (uint64_t)(uintptr_t)secondary_entry, 0);
 }
 

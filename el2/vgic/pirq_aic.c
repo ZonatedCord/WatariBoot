@@ -217,6 +217,34 @@ struct aic_event pirq_aic_poll(struct pirq_aic *a)
 	return ev;
 }
 
+struct aic_drain_result pirq_aic_drain(struct pirq_aic *a, struct pirq *p, unsigned vcpu,
+				       const struct pirq_aic_drain *d)
+{
+	struct aic_drain_result r = { 0, 0, 0, false };
+	unsigned budget = d->budget ? d->budget : AIC_DRAIN_BUDGET;
+
+	for (unsigned n = 0; n < budget; n++) {
+		struct aic_event ev = pirq_aic_poll(a);
+		uint32_t id = 0;
+
+		r.polls++;
+		if (ev.kind == AIC_EV_NONE)
+			return r;
+		if (ev.kind == AIC_EV_IRQ) {
+			r.irqs++;
+			id = pirq_arrive(p, vcpu, d->key | ev.num);
+			if (id != INTR_INVALID && !p->ops->auto_masks && pirq_is_edge(p, id))
+				a->ops.unmask(a->ops.ctx, ev.num);
+		} else {
+			r.other++;
+		}
+		if (d->note)
+			d->note(d->ctx, &ev, id);
+	}
+	r.budget_hit = true;
+	return r;
+}
+
 void pirq_aic_sw_set(struct pirq_aic *a, uint32_t irq)
 {
 	if (irq_ok(a, irq)) {

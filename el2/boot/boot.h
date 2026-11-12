@@ -123,7 +123,11 @@ extern struct fdt_aic_info g_aic_info;       /* main.c: the QEMU hybrid machine'
 extern bool g_aic_allowed;                   /* wel2.aic=off clears it */
 void stage2_enable(void);                    /* VTCR/VTTBR of this core */
 void fatal_msg(const char *why) __attribute__((noreturn));
+void fatal_dump(struct frame *f, unsigned idx, const char *why) __attribute__((noreturn));   /* main.c: why + register dump + halt */
 void secondary_entry(void);                  /* start.S: EL2 entry of cores 1..n */
+/* start.S: a core that CPU_OFF parked is woken: new EL2 stack (top of its slot), then el2_secondary_main(). MMU and
+ * caches are on already; the exception frames of the old stack are abandoned. */
+void secondary_rewake(void) __attribute__((noreturn));
 void el2_secondary_main(void) __attribute__((noreturn));
 void el2_main(uint64_t fdt) __attribute__((noreturn));   /* x0 at reset = FDT from QEMU */
 
@@ -161,6 +165,7 @@ void cpuif_cpu_down(void);                   /* CPU_OFF: ICH off, LR state dropp
 void cpuif_flush(void);                      /* harvest LRs, fill from vGIC */
 void cpuif_kick_others(void);                /* kick cores with a deliverable vIRQ */
 void cpuif_irq(void);                        /* physical IRQ taken at EL2 */
+void cpuif_maint_backstop(void);             /* IRQ and FIQ exit tails, after cpuif_flush(): g_plat->maint_backstop (M1) */
 void cpuif_stats(void);
 bool cpuif_sysreg_trap(struct frame *f);     /* ICC_SGI*R_EL1 writes */
 void cpuif_vgic_effect(enum vgic_effect eff, uint32_t intid, int arg);

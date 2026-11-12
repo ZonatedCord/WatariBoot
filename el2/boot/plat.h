@@ -56,11 +56,34 @@ struct wel2_platform {
 	void (*spi_trigger)(uint32_t intid, bool edge);
 
 	/* ---- power and reset (the platform side of guest PSCI) ---- */
-	int64_t (*cpu_start)(uint64_t target_mpidr, unsigned idx);   /* PSCI return code (ALREADY_ON = retry) */
+	/* psci.c has checked target and entry; entry/ctx are the guest's (QEMU: the firmware gets secondary_entry and the
+	 * layer keeps entry/ctx in g_pcpu[]; M1: the platform stores them itself, T6f). Returns a PSCI code (QEMU:
+	 * ALREADY_ON = retry, M1: passed to the guest as is). */
+	int64_t (*cpu_start)(uint64_t target_mpidr, unsigned idx, uint64_t entry, uint64_t ctx);
 	int64_t (*cpu_off)(void);                           /* this core powers down; returns only on failure */
 	void (*system_off)(void);                           /* returns only on failure */
 	void (*system_reset)(void);                         /* returns only on failure */
+
+	/* ---- T6d/T6e/T6f wiring; every one of these may be NULL (QEMU: NULL, the generic behaviour applies) ---- */
+	bool native_psci;                                   /* no PSCI firmware (M1): psci.c uses the hooks below, strips MPIDR bits 31/30/24 */
+	/* CPU_OFF step 1, big lock held, BEFORE any teardown: SUCCESS (the platform now regards the core as OFF), or the
+	 * PSCI error to return to the guest with nothing torn down. NULL: the generic "last core" rule of psci.c. */
+	int64_t (*cpu_off_begin)(unsigned me);
+	/* A secondary core is about to eret (big lock held): the entry point and context of its start. false = the core
+	 * was not started by a CPU_ON (stray): it must not eret. NULL: g_pcpu[me].entry/.ctx. */
+	bool (*cpu_arrive)(unsigned me, uint64_t *entry, uint64_t *ctx);
+	/* cpuif_flush(): make the vGIC timer lines follow the guest timers and reopen a closed gate (M1). NULL: the QEMU
+	 * body (vtimer_line() + physical PPI 27). */
+	void (*timer_resync)(unsigned me);
+	/* After cpuif_flush() on the IRQ and FIQ exit tails: the vGIC maintenance backstop. Returns 0 (nothing to do),
+	 * 1 (the maintenance enables were quenched: the cached ICH_HCR_EL2 is stale) or 2 (not clearable: fatal). */
+	int (*maint_backstop)(unsigned me);
+	void (*stats)(void);                                /* cpuif_stats(): platform counters */
 };
+
+/* The M1 PSCI state (plat_m1.c), used by psci.c when g_plat->native_psci. */
+struct wel2_cs;
+extern struct wel2_cs g_cs;
 
 extern const struct wel2_platform plat_qemu;
 extern const struct wel2_platform plat_m1;

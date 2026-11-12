@@ -134,16 +134,9 @@ park:
 // A core outside that range must not touch a stack: it records its MPIDR (bit 63 set) in g_bad_mpidr
 // (best effort: written with MMU/caches off, so the reader must invalidate its line first; the boot core
 // reports it at the next CPU_ON) and parks.
-    .text
-    .global secondary_entry
-secondary_entry:
-    msr     daifset, #0xf
-    mrs     x1, CurrentEL
-    lsr     x1, x1, #2
-    cmp     x1, #2
-    b.eq    1f
-    park_x0 5                       // started below EL2: cannot continue
-1:  mrs     x1, mpidr_el1
+    // core_sp: sp = top of this core's EL2 stack slot (x1..x5 clobbered); bad_core for an MPIDR outside the slots.
+    .macro core_sp
+    mrs     x1, mpidr_el1
     ubfx    x2, x1, #0, #8          // Aff0
     ubfx    x3, x1, #8, #8          // Aff1
     ubfx    x4, x1, #16, #8         // Aff2
@@ -160,6 +153,18 @@ secondary_entry:
     add     x1, x1, #1
     lsl     x1, x1, #WEL2_STACK_SHIFT   // (idx + 1) * WEL2_STACK_SIZE
     add     sp, x2, x1
+    .endm
+
+    .text
+    .global secondary_entry
+secondary_entry:
+    msr     daifset, #0xf
+    mrs     x1, CurrentEL
+    lsr     x1, x1, #2
+    cmp     x1, #2
+    b.eq    1f
+    park_x0 5                       // started below EL2: cannot continue
+1:  core_sp
     // Insurance, per core [hypothesis: QEMU TCG has no stale lines, so it cannot show the need]: this core's caches may
     // hold stale lines of its own stack slot and of the stage-1 globals it reads (g_s1) from a previous run; drop
     // them (DC IVAC by VA, Arm ARM D7.5) before the stage-1 map makes this memory cacheable. The boot core cleaned
@@ -188,6 +193,18 @@ secondary_entry:
     msr     vbar_el2, x1
     isb
     bl      s1_enable               // same tables as the boot core (#53), then C code
+    bl      el2_secondary_main      // never returns
+    b       park
+
+// secondary_rewake (T6f): a core that CPU_OFF parked inside the layer (M1: no firmware to hand it back to) has been
+// woken by CPU_ON. It runs on a stack deep inside an exception handler: abandon it, start again from the top of the same
+// slot, and enter el2_secondary_main like a first start. MMU, caches and VBAR are on already (no s1_enable); DAIF stays
+// masked (el2_secondary_main takes the big lock and ends in enter_el1).
+    .text
+    .global secondary_rewake
+secondary_rewake:
+    msr     daifset, #0xf
+    core_sp
     bl      el2_secondary_main      // never returns
     b       park
 

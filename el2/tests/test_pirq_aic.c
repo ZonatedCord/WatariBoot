@@ -630,8 +630,190 @@ static void t_init_cpu_whoami(void)
 	CHECK_EQ(FA.ipi_mask[2], AIC_IPI_OTHER | AIC_IPI_SELF);    /* still quieted */
 }
 
+/* ---- the drain loop of the IRQ path (T6d): pirq_aic_drain over the register-level model ---- */
+
+static unsigned n_note, n_note_irq, n_note_other;
+static uint32_t last_note_vintid;
+static void note_cb(void *ctx, const struct aic_event *ev, uint32_t vintid)
+{
+	(void)ctx;
+	n_note++;
+	if (ev->kind == AIC_EV_IRQ) {
+		n_note_irq++;
+		last_note_vintid = vintid;
+	} else {
+		n_note_other++;
+	}
+}
+
+static void t_drain_several_sources(void)
+{
+	struct pirq_aic_drain d = { 0, 0, note_cb, NULL };
+	struct aic_drain_result r;
+
+	setup_aic(true, false);
+	n_note = n_note_irq = n_note_other = 0;
+	enable_spi(ANS_V);
+	enable_spi(DWC_V);
+	enable_spi(MSI_V);
+	fa_line(&FA, ANS_PHYS, true);                              /* level */
+	fa_line(&FA, DWC_PHYS, true);                              /* level */
+	fa_pulse(&FA, MSI_PHYS);                                   /* edge */
+	FA.cpu = 0;
+	CHECK(fa_irq_out(&FA, 0));
+
+	r = pirq_aic_drain(&A, &P, 0, &d);
+	CHECK_EQ(r.irqs, 3);
+	CHECK_EQ(r.other, 0);
+	CHECK_EQ(r.polls, 4);                                      /* three events and the empty read that ends it */
+	CHECK(!r.budget_hit);
+	CHECK_EQ(n_note, 3);
+	CHECK_EQ(n_note_irq, 3);
+	CHECK(!fa_irq_out(&FA, 0));                                /* the IRQ line is low again: nothing left */
+	CHECK(fa_bit(FA.mask, ANS_PHYS) && fa_bit(FA.mask, DWC_PHYS));    /* levels stay masked until the guest EOIs */
+	CHECK(pirq_is_masked(&P, ANS_V) && pirq_is_masked(&P, DWC_V));
+	CHECK(!fa_bit(FA.mask, MSI_PHYS));                         /* the edge was unmasked at injection (auto_masks) */
+	CHECK_EQ(P.st.arrivals, 3);
+	CHECK(anything_pending(0));
+
+	/* the second drain with nothing asserted: one empty read, nothing else */
+	r = pirq_aic_drain(&A, &P, 0, &d);
+	CHECK_EQ(r.polls, 1);
+	CHECK_EQ(r.irqs + r.other, 0);
+	CHECK_EQ(n_note, 3);
+}
+
+static void t_drain_spurious_zero_first(void)
+{
+	struct pirq_aic_drain d = { 0, 0, note_cb, NULL };
+	struct aic_drain_result r;
+
+	setup_aic(false, false);
+	n_note = n_note_irq = n_note_other = 0;
+	r = pirq_aic_drain(&A, &P, 0, &d);                         /* an IRQ taken for a source that has gone: EVENT = 0 */
+	CHECK_EQ(r.polls, 1);
+	CHECK_EQ(r.irqs, 0);
+	CHECK(!r.budget_hit);
+	CHECK_EQ(A.st.spurious, 1);
+	CHECK_EQ(n_note, 0);
+}
+
+static void t_drain_bad_and_ipi_events(void)
+{
+	struct pirq_aic_drain d = { 0, 0, note_cb, NULL };
+	struct aic_drain_result r;
+
+	setup_aic(false, false);
+	n_note = n_note_irq = n_note_other = 0;
+	enable_spi(ANS_V);
+	FA.has_forced = true;
+	FA.forced = (7u << 16) | 3;                                /* unknown type: BAD, counted, nothing forwarded */
+	fa_line(&FA, ANS_PHYS, true);                              /* a real source behind it */
+	r = pirq_aic_drain(&A, &P, 0, &d);
+	CHECK_EQ(r.other, 1);
+	CHECK_EQ(r.irqs, 1);                                       /* the loop went on after the bad event */
+	CHECK_EQ(A.st.bad, 1);
+	CHECK_EQ(n_note_other, 1);
+	CHECK_EQ(n_note_irq, 1);
+	CHECK_EQ(last_note_vintid, ANS_V);
+
+	n_note = n_note_irq = n_note_other = 0;
+	FA.ipi_mask[0] &= ~AIC_IPI_OTHER;                          /* a legacy IPI nobody sends on the t8103 */
+	FA.ipi_pend[0] |= AIC_IPI_OTHER;
+	r = pirq_aic_drain(&A, &P, 0, &d);
+	CHECK_EQ(r.other, 1);
+	CHECK_EQ(r.irqs, 0);
+	CHECK_EQ(A.st.ipi_unexpected, 1);
+	CHECK(!fa_irq_out(&FA, 0));                                /* contained: acked and masked */
+	CHECK_EQ(P.st.arrivals, 1);                                /* only the real source reached pirq */
+}
+
+static void t_drain_denied_source(void)
+{
+	struct pirq_aic_drain d = { 0, 0, note_cb, NULL };
+	struct aic_drain_result r;
+
+	setup_aic(false, false);
+	n_note = n_note_irq = n_note_other = 0;
+	FA.mask[583 / 32] &= ~(1u << (583 % 32));                  /* firmware left it unmasked */
+	fa_line(&FA, 583, true);
+	r = pirq_aic_drain(&A, &P, 0, &d);
+	CHECK_EQ(r.irqs, 1);
+	CHECK_EQ(last_note_vintid, INTR_INVALID);
+	CHECK_EQ(P.st.denied, 1);
+	CHECK(fa_bit(FA.mask, 583));                               /* quieted, not forwarded */
+	CHECK(!anything_pending(0));
+	CHECK(!fa_irq_out(&FA, 0));
+}
+
+static void t_drain_budget(void)
+{
+	struct pirq_aic_drain d = { 0, 2, note_cb, NULL };
+	struct aic_drain_result r;
+
+	setup_aic(false, false);
+	n_note = n_note_irq = n_note_other = 0;
+	enable_spi(ANS_V);
+	enable_spi(DWC_V);
+	fa_line(&FA, ANS_PHYS, true);
+	fa_line(&FA, DWC_PHYS, true);
+	r = pirq_aic_drain(&A, &P, 0, &d);                         /* budget 2: both reads found an event */
+	CHECK_EQ(r.polls, 2);
+	CHECK_EQ(r.irqs, 2);
+	CHECK(r.budget_hit);                                       /* we cannot tell whether more is pending: say so */
+	r = pirq_aic_drain(&A, &P, 0, &d);                         /* the next exception: nothing left */
+	CHECK_EQ(r.polls, 1);
+	CHECK(!r.budget_hit);
+	CHECK_EQ(P.st.arrivals, 2);
+}
+
+/* A source that cannot be quieted keeps the line asserted: the loop is bounded and the next IRQ drains again. */
+static void t_drain_stuck_source_bounded(void)
+{
+	struct pirq_aic_drain d = { 0, 0, NULL, NULL };           /* default budget */
+	struct aic_drain_result r;
+
+	setup_aic(true, false);
+	set_edge_cfg(MSI_V);
+	enable_spi(MSI_V);
+	for (unsigned i = 0; i < 3; i++) {
+		fa_pulse(&FA, MSI_PHYS);                               /* edge: unmasked at injection, so it can fire again */
+		r = pirq_aic_drain(&A, &P, 0, &d);
+		CHECK_EQ(r.irqs, 1);
+		CHECK(!r.budget_hit);
+	}
+	CHECK_EQ(AIC_DRAIN_BUDGET, 64);                            /* the default budget (budget 0 above) */
+}
+
+/* The hybrid machine's backend does not report auto_masks: the drain unmasks an edge source itself (key AIC_KEY). */
+static void t_drain_without_auto_masks(void)
+{
+	struct pirq_aic_drain d = { 0, 0, NULL, NULL };
+	struct pirq_ops o;
+	struct aic_drain_result r;
+
+	setup_aic(true, false);
+	o = A.ops;
+	o.auto_masks = false;
+	pirq_init(&P, &o, &F.v, 4);
+	for (unsigned i = 0; i < 4; i++)
+		pirq_vcpu_on(&P, i);
+	enable_spi(MSI_V);
+	fa_pulse(&FA, MSI_PHYS);
+	r = pirq_aic_drain(&A, &P, 0, &d);
+	CHECK_EQ(r.irqs, 1);
+	CHECK(!fa_bit(FA.mask, MSI_PHYS));                         /* unmasked by the drain, not by pirq_arrive */
+}
+
 int main(void)
 {
+	RUN(t_drain_several_sources);
+	RUN(t_drain_spurious_zero_first);
+	RUN(t_drain_bad_and_ipi_events);
+	RUN(t_drain_denied_source);
+	RUN(t_drain_budget);
+	RUN(t_drain_stuck_source_bounded);
+	RUN(t_drain_without_auto_masks);
 	RUN(t_init_state);
 	RUN(t_t8103_map);
 	RUN(t_level_cycle);

@@ -94,6 +94,16 @@ static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
         __asm__ volatile("wfe");
 }
 
+/* A platform module found a condition it cannot survive (e.g. an FIQ storm): say why, then the same dump as an
+ * unexpected exception. */
+void __attribute__((noreturn)) fatal_dump(struct frame *f, unsigned idx, const char *why)
+{
+    puts_("Watari EL2: FATAL: ");
+    puts_(why);
+    puts_("\n");
+    fatal(f, idx);
+}
+
 static unsigned g_hvc_log_budget = 8;
 
 static void handle_hvc(struct frame *f)
@@ -472,6 +482,9 @@ void el2_exception(struct frame *f, unsigned idx)
         /* ICC_SGI*R_EL1 write: the SGI is now pending in the model */
     } else if (idx == 10 && g_plat->fiq) {
         g_plat->fiq(f);                      /* T6e: the Apple FIQ (timer, IPI, PMU); QEMU has none: fatal below */
+        cpuif_flush();                       /* the FIQ may have raised a vGIC line (timer, IPI): deliver it */
+        cpuif_maint_backstop();              /* the maintenance signal may be the FIQ (T6e D-1) */
+        cpuif_kick_others();
         big_unlock();
         return;
     } else if (idx == 9) {
@@ -756,6 +769,10 @@ void __attribute__((noreturn)) el2_secondary_main(void)
     vgic_vcpu_wake(&g_vgic, me);               /* same hand-off contract as the boot vCPU */
 #endif
     uint64_t entry = g_pcpu[me].entry, ctx = g_pcpu[me].ctx;
+    if (g_plat->cpu_arrive && !g_plat->cpu_arrive(me, &entry, &ctx)) {
+        big_unlock();                          /* T6f: a core nobody CPU_ON'ed (stray start) must not enter a guest */
+        fatal_msg("secondary core started without a CPU_ON (stray start)");
+    }
     g_pcpu[me].state = CPU_ST_ON;
     pirq_vcpu_on(&g_pirq, me);                 /* SPIs the guest routed here come back */
     put_kn("Watari EL2: cpu ", me, " up at EL2, eret to the guest entry point\n");
