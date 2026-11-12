@@ -15,6 +15,7 @@
 #include "boot.h"
 #include "plat.h"
 #include "wel2_coreidx.h"
+#include "wel2_cpu_start.h"
 
 #define PSCI_VERSION          0x84000000u
 #define PSCI_CPU_SUSPEND_32   0x84000001u
@@ -44,6 +45,10 @@
 /* MPIDR as used by CPU_ON / AFFINITY_INFO (section 5.1.4): Aff3 [39:32],
  * Aff2 [23:16], Aff1 [15:8], Aff0 [7:0]; all other bits must be zero. */
 #define PSCI_MPIDR_MASK 0x000000ff00ffffffULL
+/* MPIDR_EL1 bits that are not affinity: bit 31 (RES1), bit 30 (U), bit 24 (MT). The guest on the M1 reads VMPIDR_EL2 =
+ * the physical MPIDR with bit 31 set, and a guest that passes it unmasked must still find its core (Linux masks it
+ * itself; Windows is [hypothesis]). QEMU keeps the strict spec behaviour: only platforms without firmware PSCI strip. */
+#define PSCI_MPIDR_RES_BITS ((1ULL << 31) | (1ULL << 30) | (1ULL << 24))
 
 static void __attribute__((noreturn)) psci_system_off(void)
 {
@@ -72,6 +77,8 @@ static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
         entry &= 0xffffffffULL;
         ctx &= 0xffffffffULL;
     }
+    if (g_plat->native_psci)
+        target &= ~PSCI_MPIDR_RES_BITS;
     if (target & ~PSCI_MPIDR_MASK)
         return PSCI_INVALID_PARAMETERS;
     unsigned idx = cpu_from_mpidr(target);
@@ -89,6 +96,22 @@ static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
     if (g_pcpu[idx].state == CPU_ST_ON_PENDING)
         return PSCI_ON_PENDING;
 
+    if (g_plat->native_psci) {
+        /* M1 (T6f): the module owns the state machine (spin table first time, wake flag after a park); its codes are
+         * the PSCI codes. g_pcpu[].state is only the mirror the kick logic reads, updated on success. */
+        int64_t r = g_plat->cpu_start(target, idx, entry, ctx);
+
+        if (r == PSCI_SUCCESS) {
+            g_pcpu[idx].entry = entry;
+            g_pcpu[idx].ctx = ctx;
+            g_pcpu[idx].state = CPU_ST_ON_PENDING;
+            put_kn("Watari EL2: PSCI CPU_ON cpu ", idx, " accepted\n");
+        } else if (r == PSCI_INTERNAL_FAILURE) {
+            put_kv("Watari EL2: M1 CPU_ON failed: no usable release address or already released, ret = ", (uint64_t)r);
+        }
+        return r;
+    }
+
     g_pcpu[idx].entry = entry;
     g_pcpu[idx].ctx = ctx;
     g_pcpu[idx].state = CPU_ST_ON_PENDING;
@@ -99,7 +122,7 @@ static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
      * firmware's ALREADY_ON. */
     int64_t r = PSCI_ALREADY_ON;
     for (unsigned tries = 0; r == PSCI_ALREADY_ON && tries < 100000; tries++)
-        r = g_plat->cpu_start(target, idx);
+        r = g_plat->cpu_start(target, idx, entry, ctx);
     if (r != PSCI_SUCCESS) {
         g_pcpu[idx].state = CPU_ST_OFF;
         put_kv("Watari EL2: firmware CPU_ON failed, ret = ", (uint64_t)r);
@@ -117,11 +140,20 @@ static int64_t cpu_off(void)
 {
     unsigned me = this_cpu(), others = 0;
 
-    for (unsigned i = 0; i < g_ncpu; i++)
-        if (i != me && g_pcpu[i].state != CPU_ST_OFF)
-            others++;
-    if (!others)
-        return PSCI_DENIED;
+    if (g_plat->cpu_off_begin) {
+        /* M1 (T6f): the module decides FIRST, under the lock; the teardown below runs only on SUCCESS. DENIED /
+         * INVALID_PARAMETERS go back to the guest with nothing torn down. */
+        int64_t r0 = g_plat->cpu_off_begin(me);
+
+        if (r0 != PSCI_SUCCESS)
+            return r0;
+    } else {
+        for (unsigned i = 0; i < g_ncpu; i++)
+            if (i != me && g_pcpu[i].state != CPU_ST_OFF)
+                others++;
+        if (!others)
+            return PSCI_DENIED;
+    }
 
     put_kn("Watari EL2: PSCI CPU_OFF cpu ", me, "\n");
     vgic_vcpu_reset(&g_vgic, me);      /* redistributor asleep, private IRQs dropped */
@@ -134,7 +166,7 @@ static int64_t cpu_off(void)
     g_pcpu[me].state = CPU_ST_OFF;
     big_unlock();                       /* this core never comes back to release it */
     __asm__ volatile("dsb sy" ::: "memory");
-    int64_t r = g_plat->cpu_off();
+    int64_t r = g_plat->cpu_off();     /* QEMU: the firmware powers the core down. M1: park, then restart (no return) */
     put_kv("Watari EL2: firmware CPU_OFF returned, ret = ", (uint64_t)r);
     fatal_msg("CPU_OFF returned");
 }
@@ -146,11 +178,15 @@ static int64_t affinity_info(uint64_t target, uint64_t level, bool is64)
         level &= 0xffffffffULL;
     }
     /* Levels above 0 are optional since PSCI 1.0 (5.7.1): not supported. */
+    if (g_plat->native_psci)
+        target &= ~PSCI_MPIDR_RES_BITS;
     if (level != 0 || (target & ~PSCI_MPIDR_MASK))
         return PSCI_INVALID_PARAMETERS;
     unsigned idx = cpu_from_mpidr(target);
     if (idx == ~0u)
         return PSCI_INVALID_PARAMETERS;
+    if (g_plat->native_psci)
+        return wel2_cs_affinity(&g_cs, target);       /* one source of truth on the M1 */
     return g_pcpu[idx].state;           /* ON 0, OFF 1, ON_PENDING 2 */
 }
 
@@ -204,11 +240,13 @@ bool psci_handle(struct frame *f, uint32_t fid)
         break;
     case PSCI_SYSTEM_OFF:
         cpuif_stats();
-        puts_("Watari EL2: PSCI SYSTEM_OFF -> forwarding to QEMU firmware (SMC)\n");
+        puts_(g_plat->native_psci ? "Watari EL2: PSCI SYSTEM_OFF -> halt (no firmware)\n"
+                                  : "Watari EL2: PSCI SYSTEM_OFF -> forwarding to QEMU firmware (SMC)\n");
         psci_system_off();
     case PSCI_SYSTEM_RESET:                /* 5.11: EDK2 ResetSystem(); M1-4 */
         cpuif_stats();
-        puts_("Watari EL2: PSCI SYSTEM_RESET -> forwarding to QEMU firmware (SMC)\n");
+        puts_(g_plat->native_psci ? "Watari EL2: PSCI SYSTEM_RESET -> watchdog (no firmware)\n"
+                                  : "Watari EL2: PSCI SYSTEM_RESET -> forwarding to QEMU firmware (SMC)\n");
         g_plat->system_reset();
         fatal_msg("SYSTEM_RESET returned");
     case PSCI_CPU_SUSPEND_32:

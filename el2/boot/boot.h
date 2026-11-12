@@ -167,6 +167,8 @@ void cpuif_kick_others(void);                /* kick cores with a deliverable vI
 void cpuif_irq(void);                        /* physical IRQ taken at EL2 */
 void cpuif_maint_backstop(void);             /* IRQ and FIQ exit tails, after cpuif_flush(): g_plat->maint_backstop (M1) */
 void cpuif_stats(void);
+struct wel2_stats;
+void cpuif_stats_fill(struct wel2_stats *out);   /* WEL2_STATS: trap counters per ICC register, system wide */
 bool cpuif_sysreg_trap(struct frame *f);     /* ICC_SGI*R_EL1 writes */
 void cpuif_vgic_effect(enum vgic_effect eff, uint32_t intid, int arg);
 

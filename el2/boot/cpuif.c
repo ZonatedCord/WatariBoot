@@ -48,6 +48,7 @@
 #include "wel2_aic.h"
 #include "wel2_vcif.h"
 #include "wel2_ram.h"
+#include "wel2_hvc.h"
 
 #define ICH_HCR_EN     (1ULL << 0)
 #define ICH_HCR_UIE    (1ULL << 1)
@@ -72,6 +73,7 @@ struct cif {
     unsigned st_timer, st_spi, st_kick, st_kick_evict, st_lpi_badtable, st_maint, st_uie, st_lpi;
     unsigned st_iar, st_eoir, st_dir, st_pmr_w, st_pmr_r, st_other;
     unsigned pmr_reported;
+    uint64_t st_reg[WEL2_STAT_COUNT];  /* trapped ICC accesses per register (WEL2_STATS, T7) */
 };
 
 static struct vgic *g_v;
@@ -224,6 +226,8 @@ void cpuif_init_cpu(void)
     c->st_maint = keep.st_maint; c->st_uie = keep.st_uie; c->st_iar = keep.st_iar;
     c->st_eoir = keep.st_eoir; c->st_dir = keep.st_dir; c->st_pmr_w = keep.st_pmr_w;
     c->st_pmr_r = keep.st_pmr_r; c->st_other = keep.st_other; c->pmr_reported = keep.pmr_reported;
+    for (unsigned k = 0; k < WEL2_STAT_COUNT; k++)
+        c->st_reg[k] = keep.st_reg[k];
     vcif_init(&c->vc, nlr, pribits, prebits);
     c->vc.st_inject = keep.vc.st_inject; c->vc.st_evict = keep.vc.st_evict;
     c->vc.st_eoi = keep.vc.st_eoi; c->vc.eoicount = keep.vc.eoicount;
@@ -597,6 +601,40 @@ void cpuif_vgic_effect(enum vgic_effect eff, uint32_t intid, int arg)
  *   CRn 12 CRm 11: DIR 1 (w), RPR 3 (r)
  *   CRn  4 CRm  6: PMR 0
  */
+/* Which WEL2_STAT_* counter an emulated ICC access belongs to. ICC_SRE_EL1 never traps (not in the TALL1 group) so
+ * WEL2_STAT_ICC_SRE stays 0, which is what G5a checks. */
+static unsigned icc_stat_of(uint32_t crn, uint32_t crm, uint32_t op2)
+{
+    if (crn == 4 && crm == 6 && op2 == 0)
+        return WEL2_STAT_ICC_PMR;
+    if (crn == 12 && crm == 12) {
+        switch (op2) {
+        case 0: return WEL2_STAT_ICC_IAR1;
+        case 1: return WEL2_STAT_ICC_EOIR1;
+        case 3: return WEL2_STAT_ICC_BPR1;
+        case 4: return WEL2_STAT_ICC_CTLR;
+        case 7: return WEL2_STAT_ICC_IGRPEN1;
+        }
+    }
+    if (crn == 12 && crm == 11 && op2 == 1)
+        return WEL2_STAT_ICC_DIR;
+    if (crn == 12 && crm == 11 && op2 == 3)
+        return WEL2_STAT_ICC_RPR;
+    return WEL2_STAT_ICC_OTHER;
+}
+
+/* WEL2_STATS: system-wide totals. */
+void cpuif_stats_fill(struct wel2_stats *out)
+{
+    out->version = WEL2_HVC_ABI_VERSION;
+    out->cpuif_mode = g_cpuif_trap ? WEL2_CPUIF_TRAP : WEL2_CPUIF_HW;
+    for (unsigned k = 0; k < WEL2_STAT_COUNT; k++) {
+        out->count[k] = 0;
+        for (unsigned i = 0; i < g_ncpu; i++)
+            out->count[k] += g_cif[i].st_reg[k];
+    }
+}
+
 static bool icc_emulate(struct frame *f, uint32_t crn, uint32_t crm, uint32_t op2,
                         uint32_t rt, bool rd)
 {
@@ -666,6 +704,7 @@ static bool icc_emulate(struct frame *f, uint32_t crn, uint32_t crm, uint32_t op
     }
     if (!known)
         return false;
+    c->st_reg[icc_stat_of(crn, crm, op2)]++;
     if (g_trace_on && crn == 12) {
         static unsigned n_icc;
         bool iar = crm == 12 && op2 == 0 && rd, eoi = (crm == 12 && op2 == 1 && !rd) || (crm == 11 && op2 == 1 && !rd);
@@ -796,4 +835,6 @@ void cpuif_stats(void)
         icc_report();
         put_kv("Watari EL2: stats: EOIR/DIR without a matching active LR = ", t[8]);
     }
+    if (g_plat->stats)
+        g_plat->stats();
 }

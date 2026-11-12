@@ -14,12 +14,20 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=${1:-$HERE/apple_sysreg.c}
 TMP=${TMPDIR:-/tmp}/check-apple-enc.$$
 OBJ=$TMP.o
-trap 'rm -f "$OBJ"' EXIT
+trap '[ -n "$LINKED" ] || rm -f "$OBJ"' EXIT
 rc=0
 fail() { echo "check-apple-enc: FAIL: $*" >&2; rc=1; }
 
-"$LLVM/clang" --target=aarch64-none-elf -std=c11 -O2 -ffreestanding -fno-pic -I"$HERE/../include" -c "$SRC" -o "$OBJ" \
-    || { echo "check-apple-enc: FAIL: cannot assemble $SRC" >&2; exit 1; }
+if [ -n "$2" ]; then
+    # T6e wiring: check the functions of the LINKED image (llvm-objdump finds them by symbol in an ELF). The "no other
+    # mrs/msr" count is skipped in that mode: the whole layer legitimately holds other system-register accesses.
+    OBJ=$2
+    [ -f "$OBJ" ] || { echo "check-apple-enc: FAIL: $OBJ missing" >&2; exit 1; }
+    LINKED=1
+else
+    "$LLVM/clang" --target=aarch64-none-elf -std=c11 -O2 -ffreestanding -fno-pic -I"$HERE/../include" -c "$SRC" -o "$OBJ" \
+        || { echo "check-apple-enc: FAIL: cannot assemble $SRC" >&2; exit 1; }
+fi
 
 # mrs/msr (register form): bits 31:22 = 1101010100 (0x354), bit 20 = 1  ->  (w & 0xFFD00000) == 0xD5100000
 # word = 0xD5000000 | L<<21 | 1<<20 | (op0&1)<<19 | op1<<16 | CRn<<12 | CRm<<8 | op2<<5 | Rt   (op0 is 2 or 3)
@@ -69,6 +77,10 @@ done || rc=1
 
 # no other system-register access anywhere in the object (a stray accessor would escape the per-function check)
 NEXP=$(echo "$TABLE" | grep -c .)
+if [ -n "$LINKED" ]; then
+    [ $rc -eq 0 ] && echo "check-apple-enc: OK on the linked image ($NEXP accessors match the encoding table)"
+    exit $rc
+fi
 NALL=$("$LLVM/llvm-objdump" -d "$OBJ" | awk '$1 ~ /^[0-9a-f]+:$/ && $2 ~ /^[0-9a-f]{8}$/ {print $2}' |
        while read -r w; do v=$(( 0x$w )); [ $(( v & 0xFFD00000 )) -eq $(( 0xD5100000 )) ] && echo x; done | grep -c x || true)
 [ "$NALL" -eq "$NEXP" ] || fail "object holds $NALL mrs/msr instructions, the table lists $NEXP"
