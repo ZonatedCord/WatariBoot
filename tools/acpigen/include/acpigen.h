@@ -330,6 +330,14 @@ extern const acpigen_gtdt_cfg t8103_gtdt;
 extern const acpigen_csrt_cfg t8103_csrt;
 extern const acpigen_model t8103_model;
 
+/* j293 (13" M1 MacBook Pro) on top of Watari EL2: see src/j293_model.c and README. */
+#define J293_NCPUS 8
+extern const acpigen_cpu j293_cpus[J293_NCPUS];
+extern const acpigen_gicd j293_gicd;
+extern const acpigen_gtdt_cfg j293_gtdt;
+extern const acpigen_fadt_cfg j293_fadt;
+extern const acpigen_model j293_model;
+
 #define QEMU_VIRT_NCPUS 4
 extern const acpigen_cpu qemu_virt_cpus[QEMU_VIRT_NCPUS];
 extern const acpigen_gicd qemu_virt_gicd;

@@ -104,25 +104,25 @@
           "output": 0
         },
         "claude-fable-5-2": {
-          "cache_read": 16783821,
+          "cache_read": 23516506,
           "cache_write_1h": 0,
-          "cache_write_5m": 1398529,
-          "input": 180,
-          "output": 215584
+          "cache_write_5m": 2150513,
+          "input": 306,
+          "output": 307721
         },
         "claude-opus-5-5": {
-          "cache_read": 16712990,
-          "cache_write_1h": 784851,
+          "cache_read": 40956689,
+          "cache_write_1h": 1778186,
           "cache_write_5m": 0,
-          "input": 280,
-          "output": 60417
+          "input": 490,
+          "output": 111215
         },
         "claude-sonnet-5-5": {
-          "cache_read": 35015579,
+          "cache_read": 99556263,
           "cache_write_1h": 0,
-          "cache_write_5m": 1641159,
-          "input": 534,
-          "output": 324146
+          "cache_write_5m": 4198695,
+          "input": 1280,
+          "output": 880171
         }
       }
     },
