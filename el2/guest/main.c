@@ -24,6 +24,10 @@ extern unsigned char __stacks[];
 static struct wel2_guest_info g_info;
 static bool g_have_info;
 static bool g_uart_fallback_ok;         /* no info block: QEMU virt assumed, the PL011 may be used */
+static bool g_is_apple;                 /* MIDR_EL1 implementer 0x61: never touch QEMU's MMIO map */
+static bool g_log_works;                /* a WEL2_LOG call succeeded at least once */
+static unsigned g_boot_core;            /* redistributor index of the core running guest_main */
+static volatile u32 g_irq_entries, g_spur_run, g_storm;   /* D1: IRQ storm bounds, see irq_handler */
 static bool g_uart_mode;                /* WEL2_LOG answered NOT_SUPPORTED */
 static unsigned g_pass, g_fail;
 static volatile u32 g_log_errs;         /* WEL2_LOG calls the layer rejected */
@@ -36,6 +40,7 @@ struct core_state {
     volatile u32 round;                 /* times the core entered secondary_main */
     volatile u32 cmd;                   /* 0 idle, 1 = call CPU_OFF */
     volatile u32 fail;
+    volatile u32 offs;                  /* times the secondary reached its CPU_OFF call */
 };
 static struct core_state g_core[MAX_CORES];
 
@@ -103,12 +108,15 @@ void b_flush(struct buf *b)
     if (!g_uart_mode) {
         int64_t r = (int64_t)hvc4(WEL2_LOG, (u64)(uintptr_t)b->s, b->n + 1, 0);
 
-        if (r == 0)
+        if (r == 0) {
+            g_log_works = true;
             return;
+        }
         if (r == WEL2_HVC_NOT_SUPPORTED && g_uart_fallback_ok)
             g_uart_mode = true;         /* the layer has no LOG yet: use the PL011 from now on */
         else {
-            g_log_errs++;
+            if (r != WEL2_HVC_NOT_SUPPORTED)
+                g_log_errs++;
             return;
         }
     }
@@ -149,6 +157,11 @@ static void finish(unsigned n, const char *name, bool ok, struct buf *detail)
 
     b_init(&b);
     b_str(&b, name);
+    if (g_storm) {
+        ok = false;
+        g_storm = 0;
+        b_str(detail, " IRQ-STORM(masked)");
+    }
     b_str(&b, ok ? " PASS " : " FAIL ");
     b_str(&b, detail->s);
     b_flush(&b);
@@ -174,15 +187,49 @@ static void skip(const char *name, const char *why)
 /* ---- exceptions and interrupts --------------------------------------------------------------------------- */
 static void timer_rearm(unsigned intid);
 
+#define IRQ_ENTRY_LIMIT 5000u           /* IRQ entries allowed per wait window (a 10 ms timer gives ~5 in 50 ms) */
+#define SPURIOUS_LIMIT  64u             /* consecutive acks of 1020-1023 */
+
+static void timer_off(unsigned intid);
+
+/* D1: a level interrupt that is never deactivated would re-enter forever. Past the limits the handler sets
+ * SPSR_EL1.I so the eret returns masked, stops both timers and flags the running check as failed. */
+static void irq_storm(const char *why)
+{
+    struct buf b;
+
+    if (g_storm)
+        return;
+    g_storm = 1;
+    SYSREG_WR(spsr_el1, SYSREG_RD(spsr_el1) | 0x80);
+    timer_off(27);
+    timer_off(30);
+    b_init(&b);
+    b_str(&b, "IRQ STORM: ");
+    b_str(&b, why);
+    b_str(&b, " during G");
+    b_dec(&b, g_chk_running);
+    b_str(&b, ", IRQ masked on return");
+    b_flush(&b);
+}
+
 static void irq_handler(void)
 {
+    if (++g_irq_entries > IRQ_ENTRY_LIMIT) {
+        irq_storm("too many IRQ entries in one wait window");
+        return;
+    }
     for (unsigned loop = 0; loop < 4; loop++) {
         u64 iar = SYSREG_RD(icc_iar1_el1);              /* virtual acknowledge */
         u32 id = (u32)(iar & 0xffffff);
         int c = gic_core_of(mpidr_now());
 
-        if (id >= 1020)                                  /* 1023 = spurious: nothing left */
+        if (id >= 1020) {                                /* 1020-1023: spurious / nothing left */
+            if (++g_spur_run > SPURIOUS_LIMIT)
+                irq_storm("endless spurious acknowledges");
             return;
+        }
+        g_spur_run = 0;
         g_irq_last = id;
         if (id < 32 && c >= 0)
             g_irq_count[c][id]++;
@@ -242,8 +289,8 @@ void guest_exception(unsigned idx, void *frame)
     g_exc++;
     report_exception(idx, esr, elr, far);
     if (g_exc > 8 || idx != 4 || (esr >> 26) == 0x16 || (esr >> 26) == 0x17) {
-        say("too many or fatal exceptions: SYSTEM_OFF");
-        hvc4(PSCI_SYSTEM_OFF, 0, 0, 0);
+        say("too many or fatal exceptions: SYSTEM_RESET");
+        hvc4(PSCI_SYSTEM_RESET, 0, 0, 0);
         for (;;)
             __asm__ volatile("wfe");
     }
@@ -289,9 +336,11 @@ static u64 wait_ge(volatile u32 *p, u32 want, u64 ms)
 {
     u64 t0 = cntvct(), end = t0 + ms_to_ticks(ms);
 
+    g_irq_entries = 0;                                   /* new wait window (D1) */
+    g_spur_run = 0;
     irq_on();
     while (*p < want) {
-        if (cntvct() > end) {
+        if (cntvct() > end || g_storm) {
             irq_off();
             return ~0ull;
         }
@@ -302,7 +351,8 @@ static u64 wait_ge(volatile u32 *p, u32 want, u64 ms)
 }
 
 /* ---- PSCI --------------------------------------------------------------------------------------------------- */
-static int64_t psci(u64 fid, u64 a1, u64 a2, u64 a3) { return (int64_t)hvc4(fid, a1, a2, a3); }
+/* PSCI results are 32-bit signed values in w0 (DEN0022F.b 5.2): compare them as int32_t. */
+static int64_t psci(u64 fid, u64 a1, u64 a2, u64 a3) { return (int64_t)(int32_t)hvc4(fid, a1, a2, a3); }
 
 /* ---- the checks --------------------------------------------------------------------------------------------- */
 static void g1(void)
@@ -333,6 +383,12 @@ static void g1(void)
         ok = false;
     }
     b_str(&d, g_uart_mode ? " out=uart-fallback" : " out=hvc");
+    /* DESIGN 8: the hand-over passes the info block. LOG working (the layer implements the calls) while x0 was no
+     * valid info block is a hand-over failure; so is an Apple core without one (then nothing else is run). */
+    if (!g_have_info && (g_log_works || g_is_apple)) {
+        ok = false;
+        b_str(&d, " NO valid info block in x0 (WEL2GINF magic/version/range)");
+    }
     finish(WEL2_CHK_G1, "G1", ok, &d);
 }
 
@@ -374,10 +430,12 @@ static void g2(void)
 }
 
 /* PAuth: the layer must not trap the key registers or PACIA/AUTIA (HCR_EL2.API/APK, DESIGN 5.1). */
-static bool pauth_roundtrip(u64 *signed_out)
+static bool pauth_test(u64 *signed_out, bool *tamper_ok)
 {
     u64 p = 0x0000000040281234ull, s = p, mod = 0x1234;
+    u64 sctlr = SYSREG_RD(sctlr_el1);
 
+    SYSREG_WR(sctlr_el1, sctlr | (1ull << 31));          /* EnIA */
     SYSREG_WR(APIAKeyLo_EL1, 0x0123456789abcdefull);
     SYSREG_WR(APIAKeyHi_EL1, 0xfedcba9876543210ull);
     __asm__ volatile("isb");
@@ -385,7 +443,12 @@ static bool pauth_roundtrip(u64 *signed_out)
     *signed_out = s;
     u64 a = s;
     __asm__ volatile(".arch_extension pauth\n autia %0, %1" : "+r"(a) : "r"(mod));
-    return a == p;
+    u64 bad = s ^ (1ull << 51);                          /* corrupt the signature */
+    __asm__ volatile(".arch_extension pauth\n autia %0, %1" : "+r"(bad) : "r"(mod));
+    *tamper_ok = bad != p;                               /* a failed authentication must not give the pointer back */
+    SYSREG_WR(sctlr_el1, sctlr);
+    __asm__ volatile("isb");
+    return a == p && s != p;
 }
 
 static void g3(void)
@@ -417,10 +480,12 @@ static void g3(void)
         ok = false;
     } else if (pa) {
         u64 sgn;
-        bool rt = pauth_roundtrip(&sgn);
+        bool tamper;
+        bool rt = pauth_test(&sgn, &tamper);
 
-        b_str(&d, rt ? "sign+auth ok" : "auth MISMATCH");
-        if (!rt) ok = false;
+        b_str(&d, rt ? "sign+auth ok" : "sign/auth BAD (unsigned or mismatch)");
+        b_str(&d, tamper ? " tamper detected" : " TAMPER NOT DETECTED");
+        if (!rt || !tamper) ok = false;
         if (g_exc != exc0) { ok = false; b_str(&d, " faulted"); }
     } else {
         b_str(&d, "not implemented");
@@ -470,7 +535,7 @@ static bool read_stats(void)
 
 static u64 tall1_sum(const struct wel2_stats *s)
 {
-    return s->count[WEL2_STAT_ICC_SRE] + s->count[WEL2_STAT_ICC_IGRPEN1] + s->count[WEL2_STAT_ICC_BPR1];
+    return s->count[WEL2_STAT_ICC_IGRPEN1] + s->count[WEL2_STAT_ICC_BPR1];     /* ICC_SRE_EL1 is not a TALL1 register */
 }
 static u64 tc_sum(const struct wel2_stats *s)
 {
@@ -508,14 +573,21 @@ static void g5a(void)
 
         b_str(&d, " TALL1-traps +");
         b_dec(&d, dn);
-        if (trapping && (g_stats.count[WEL2_STAT_ICC_SRE] == before.count[WEL2_STAT_ICC_SRE] ||
-                         g_stats.count[WEL2_STAT_ICC_IGRPEN1] == before.count[WEL2_STAT_ICC_IGRPEN1] ||
+        if (trapping && (g_stats.count[WEL2_STAT_ICC_IGRPEN1] == before.count[WEL2_STAT_ICC_IGRPEN1] ||
                          g_stats.count[WEL2_STAT_ICC_BPR1] == before.count[WEL2_STAT_ICC_BPR1])) {
             ok = false;
-            b_str(&d, " TALL1 group did not trap");
+            b_str(&d, " TALL1 group (IGRPEN1/BPR1) did not trap");
+        }
+        if (trapping && g_stats.count[WEL2_STAT_ICC_SRE] != before.count[WEL2_STAT_ICC_SRE]) {
+            ok = false;
+            b_str(&d, " ICC_SRE_EL1 was trapped (TALL1 must not trap it)");
         }
     } else {
         b_str(&d, " counters n/a");
+        if (g_have_info) {
+            ok = false;
+            b_str(&d, " (WEL2_STATS missing although the layer sent an info block)");
+        }
     }
     finish(WEL2_CHK_G5A, "G5a", ok, &d);
 }
@@ -572,6 +644,10 @@ static void g5b(void)
         }
     } else {
         b_str(&d, " counters n/a");
+        if (g_have_info) {
+            ok = false;
+            b_str(&d, " (WEL2_STATS missing although the layer sent an info block)");
+        }
     }
     finish(WEL2_CHK_G5B, "G5b", ok, &d);
 }
@@ -612,6 +688,7 @@ static void g6(void)
     u64 rpr = SYSREG_RD(icc_rpr_el1);
     b_str(&d, " RPR after EOI ");
     b_hex(&d, rpr);
+    if (rpr != 0xff) { ok = false; b_str(&d, " (expected idle 0xff)"); }
     finish(WEL2_CHK_G6, "G6", ok, &d);
 }
 
@@ -701,12 +778,13 @@ void secondary_main(u64 stack_top)
     b_str(&b, " EL");
     b_dec(&b, SYSREG_RD(CurrentEL) >> 2);
     b_flush(&b);
-    gic_send_sgi(2, g_mpidr[0]);                         /* tell core 0 */
+    gic_send_sgi(2, g_mpidr[g_boot_core]);                /* tell the boot core */
     c->up = 1;
     for (;;) {
         if (c->cmd == 1) {
             c->cmd = 0;
             c->up = 0;
+            c->offs++;
             say("secondary: CPU_OFF");
             int64_t r = psci(PSCI_CPU_OFF, 0, 0, 0);     /* does not return on success */
             b_init(&b);
@@ -739,7 +817,9 @@ static void g9(void)
     b_sdec(&d, again);
     if (again != PSCI_ALREADY_ON) ok = false;
     u32 sgi0 = g_irq_count[me][2];
-    for (unsigned n = 1; n < g_ncores; n++) {
+    for (unsigned n = 0; n < g_ncores; n++) {
+        if (n == (unsigned)me)
+            continue;                                    /* every core except the one running this check */
         u64 top = (u64)(uintptr_t)__stacks + (u64)(n + 1) * STACK_SIZE;
         int64_t r = psci(PSCI_CPU_ON_64, g_mpidr[n], secondary_entry_addr(), top);
 
@@ -751,11 +831,7 @@ static void g9(void)
             b_sdec(&d, r);
             continue;
         }
-        u64 end = cntvct() + ms_to_ticks(5000);
-        irq_on();
-        while (!g_core[n].up && cntvct() < end)
-            __asm__ volatile("nop");
-        irq_off();
+        wait_ge(&g_core[n].up, 1, 5000);
         if (!g_core[n].up || g_core[n].fail) {
             ok = false;
             b_str(&d, " cpu ");
@@ -783,40 +859,43 @@ static void g10(void)
 {
     struct buf d;
     bool ok = true;
+    int me = gic_core_of(mpidr_now());
 
     begin(WEL2_CHK_G10);
     b_init(&d);
-    if (g_ncores < 2) {
-        b_str(&d, "only one core");
-        finish(WEL2_CHK_G10, "G10", true, &d);
+    if (g_ncores < 2 || me < 0) {
+        b_str(&d, g_ncores < 2 ? "only one core" : "no core index");
+        finish(WEL2_CHK_G10, "G10", g_ncores >= 2 ? false : true, &d);
         return;
     }
-    unsigned n = 1;
-    u32 round0 = g_core[n].round;
+    unsigned n = me == 0 ? 1 : 0;                        /* a core other than the one running the checks */
+    u32 round0 = g_core[n].round, offs0 = g_core[n].offs;
     g_core[n].cmd = 1;
     u64 end = cntvct() + ms_to_ticks(5000);
     int64_t st;
     do {
         st = psci(PSCI_AFFINITY_64, g_mpidr[n], 0, 0);
     } while (st != 1 && cntvct() < end);
-    b_str(&d, "cpu 1 AFFINITY_INFO=");
+    b_str(&d, "cpu ");
+    b_dec(&d, n);
+    b_str(&d, " AFFINITY_INFO=");
     b_sdec(&d, st);
-    if (st != 1) {
+    if (st != 1 || g_core[n].offs != offs0 + 1) {
         ok = false;
-        b_str(&d, " (never OFF)");
+        b_str(&d, st != 1 ? " (never OFF)" : " (CPU_OFF was not issued by the core)");
+        g_core[n].cmd = 0;                               /* no stale command for a later run */
     } else {
         u64 top = (u64)(uintptr_t)__stacks + (u64)(n + 1) * STACK_SIZE;
+
+        g_core[n].cmd = 0;                               /* already consumed; make sure no stale one survives */
+        g_core[n].up = 0;
         int64_t r = psci(PSCI_CPU_ON_64, g_mpidr[n], secondary_entry_addr(), top);
 
         b_str(&d, " CPU_ON again=");
         b_sdec(&d, r);
         if (r != 0) ok = false;
-        end = cntvct() + ms_to_ticks(5000);
-        while (g_core[n].round < round0 + 1 && cntvct() < end)
-            __asm__ volatile("nop");
-        end = cntvct() + ms_to_ticks(1000);
-        while (!g_core[n].up && cntvct() < end)
-            __asm__ volatile("nop");
+        wait_ge(&g_core[n].round, round0 + 1, 5000);
+        wait_ge(&g_core[n].up, 1, 1000);
         if (!g_core[n].up || g_core[n].round < round0 + 1) {
             ok = false;
             b_str(&d, " did not come back");
@@ -847,31 +926,59 @@ static void g11(void)
      * reboot (or QEMU exiting) are the proof. */
     finish(WEL2_CHK_G11, "G11", g_exc == 0 && g_log_errs == 0, &d);
     hvc4(off ? PSCI_SYSTEM_OFF : PSCI_SYSTEM_RESET, 0, 0, 0);
+    checkpoint(WEL2_CHK_G11, WEL2_CHKSTATE_FAIL);        /* the call returned: the verdict above was wrong */
     say("G11 FAIL SYSTEM_RESET/OFF returned");
     for (;;)
         __asm__ volatile("wfe");
 }
 
+extern unsigned char _start[];
+
+/* x0 is only dereferenced when it can be the layer's block: non-null, 8-byte aligned, and within 64 MB of this
+ * image (the layer places the block next to the guest; QEMU's FDT hand-off buffer is 2.5 MB below it). Anything
+ * else (e.g. an MMIO address) is never touched. */
+static bool info_ptr_plausible(const struct wel2_guest_info *info)
+{
+    u64 p = (u64)(uintptr_t)info, base = (u64)(uintptr_t)_start, win = 64ull << 20;
+
+    if (!p || (p & 7))
+        return false;
+    return p + sizeof(*info) > p && p + sizeof(*info) <= base + win && p + win >= base;
+}
+
 void guest_main(const struct wel2_guest_info *info)
 {
     g_frq = SYSREG_RD(cntfrq_el0);
-    if (info && !((uintptr_t)info & 7) && info->magic == WEL2_GINFO_MAGIC && info->version == WEL2_GINFO_VERSION &&
+    g_is_apple = ((SYSREG_RD(midr_el1) >> 24) & 0xff) == 0x61;
+    if (info_ptr_plausible(info) && info->magic == WEL2_GINFO_MAGIC && info->version == WEL2_GINFO_VERSION &&
         info->size >= sizeof(*info)) {
         for (unsigned i = 0; i < sizeof(g_info) / 8; i++)      /* no memcpy: copy word by word */
             ((volatile u64 *)&g_info)[i] = ((const volatile u64 *)info)[i];
+        g_info.platform[sizeof(g_info.platform) - 1] = 0;
         g_have_info = true;
         g_gicd = g_info.gicd_base;
         g_gicr = g_info.gicr_base;
         if (g_info.gicr_stride)
             g_gicr_stride = g_info.gicr_stride;
     }
-    g_uart_fallback_ok = !g_have_info;
+    /* The PL011 / QEMU GIC addresses are used only on positive QEMU evidence: no info block and MIDR_EL1
+     * implementer is not Apple (0x61). On an Apple core without an info block no MMIO is touched at all. */
+    g_uart_fallback_ok = !g_have_info && !g_is_apple;
 
     say("Watari EL1 test guest: G1-G11");
+    if (!g_have_info && g_is_apple) {
+        g1();                                            /* FAILs: no info block */
+        g11();
+    }
     if (selected(WEL2_CHK_G1)) g1();
     if (selected(WEL2_CHK_G2)) g2();
     if (selected(WEL2_CHK_G3)) g3();
     if (selected(WEL2_CHK_G4)) g4(); else gic_scan_cores();
+    {
+        int bc = gic_core_of(mpidr_now());
+
+        g_boot_core = bc >= 0 ? (unsigned)bc : 0;
+    }
     if (selected(WEL2_CHK_G5A)) g5a();
     if (selected(WEL2_CHK_G5B)) g5b();
     if (selected(WEL2_CHK_G6)) g6();

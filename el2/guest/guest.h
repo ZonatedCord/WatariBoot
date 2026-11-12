@@ -26,7 +26,9 @@ static inline u64 hvc4(u64 fid, u64 a1, u64 a2, u64 a3)
     register u64 x1 __asm__("x1") = a1;
     register u64 x2 __asm__("x2") = a2;
     register u64 x3 __asm__("x3") = a3;
-    __asm__ volatile("hvc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) : : "memory");
+    __asm__ volatile("hvc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3)
+                     : : "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17",
+                       "memory");
     return x0;
 }
 

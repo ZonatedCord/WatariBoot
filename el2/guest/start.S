@@ -15,7 +15,7 @@
 _start:
     b       reset                   // code0
     .long   0                       // code1
-    .quad   0x80000                 // text_offset (unused: position independent)
+    .quad   0                       // text_offset (position independent)
     .quad   __image_size            // image_size: image, .bss and stacks
     .quad   0xa                     // flags: LE, 4K pages, any placement
     .quad   0, 0, 0

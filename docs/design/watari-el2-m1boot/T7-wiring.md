@@ -73,3 +73,11 @@ Caveats:
 - Check numbers `WEL2_CHK_*`: G1..G4 = 1..4, G5a = 5, G5b = 6, G6..G11 = 7..12 (squares 17..28).
 - The task text listed the checks in a different order (e.g. G4 = timer, G7 = PSCI); the guest follows DESIGN section 8 exactly.
 - G11 is judged before the call (no return is expected): its verdict is "no unexpected exception, no rejected LOG call"; the proof of the reset is the layer's `PSCI SYSTEM_RESET` line and QEMU exiting with `-no-reboot`.
+
+## 6. Review fixes (second commit)
+
+- D1: the guest bounds IRQ entries per wait window (5000) and consecutive spurious acks (64); past either it sets SPSR_EL1.I, stops both timers, logs `IRQ STORM` and FAILs the running check.
+- D2: PL011 / QEMU GIC addresses are used only with no info block **and** MIDR_EL1 implementer != 0x61. An Apple core without a valid info block logs once (if LOG works), reports `G1 FAIL` and goes straight to G11, touching no MMIO. G1 also FAILs when WEL2_LOG works but no info block arrived, so **once the vendor calls are wired, the QEMU run needs the info block too**. The info pointer is dereferenced only if non-null, 8-aligned and within 64 MB of the guest image: the layer must place the block there.
+- D3: G3 sets SCTLR_EL1.EnIA around PACIA/AUTIA, requires signed != plain and a corrupted signature not to authenticate back to the pointer.
+- D4/D5: G5a requires the IGRPEN1 and BPR1 counters to advance and ICC_SRE_EL1 not to (trap modes); with an info block, missing `WEL2_STATS` is a FAIL in G5a/G5b. `stats_fill` must therefore keep `WEL2_STAT_ICC_SRE` separate from the TALL1 pair.
+- D6/D7: G9/G10 use the running core's own index, G10 clears stale commands and requires the secondary to have issued CPU_OFF; the fatal path uses SYSTEM_RESET; a G11 reset that returns sets checkpoint G11 to FAIL.

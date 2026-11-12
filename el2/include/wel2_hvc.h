@@ -45,7 +45,8 @@ enum wel2_chk {
 /* WEL2_STATS: the layer's ICC trap counters, written to the guest buffer (x2 must be >= sizeof(struct wel2_stats),
  * else INVALID_PARAMETERS; the buffer must lie in guest RAM and be 8-byte aligned). Counters are system wide. */
 enum wel2_stat_reg {
-    WEL2_STAT_ICC_SRE, WEL2_STAT_ICC_IGRPEN1, WEL2_STAT_ICC_BPR1,        /* TALL1 group (G5a) */
+    WEL2_STAT_ICC_SRE,                                                   /* NOT a TALL1 register: must stay 0 (G5a) */
+    WEL2_STAT_ICC_IGRPEN1, WEL2_STAT_ICC_BPR1,                           /* TALL1 group (G5a) */
     WEL2_STAT_ICC_PMR, WEL2_STAT_ICC_CTLR, WEL2_STAT_ICC_RPR,            /* TC group (G5b) */
     WEL2_STAT_ICC_IAR1, WEL2_STAT_ICC_EOIR1, WEL2_STAT_ICC_DIR,          /* acknowledge path */
     WEL2_STAT_ICC_OTHER,
