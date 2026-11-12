@@ -83,3 +83,9 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Commit: c68287b. Photo-friendly framebuffer on the 2560x1600 panel: scale 6 (70 columns), fixed status band (rung/step, checkpoint state in words, guest PASS/FAIL/SKIP counts), persistent "LAST ERROR" area, legend, scrolling log; README "Reading the screen from a photo".
 - Review (Sonnet): no blocking defects; MMU-off safety and bounds checked. Hooks still to wire (T6g): `wel2_fb_set_rung` in main.c, `wel2_fb_set_error` in `fatal_msg()` (main.c:59), a SKIP checkpoint state (grey) in the vendor HVC; README fix: `fatal_msg` lives in main.c; G11 = guest check 12.
 - Opus verified: `make -C el2 test` ALL PASSED; `run-all.sh` 17/17. QEMU has no framebuffer, so no Windows boot needed.
+
+### 2026-11-13 01:10 - T11 EDK2 platform for the M1, design: done
+- Commits: 1a7cb3f (author Fable), 23d0525 (review corrections). `docs/design/watari-edk2-m1/` + `docs/adr/draft-edk2-m1-platform.md`: WatariM1Pkg on the ArmVirtQemuKernel structure; the layer builds a small guest FDT; SerialPortLib over a vendor hypercall `WEL2_CONSOLE_WRITE`; framebuffer hand-over modes `band`/`guest`; ACPI from T10 + a minimal DSDT (ACPI0007 processors only [hypothesis]); no storage/PCIe/USB at first; T12 steps E1-E14, T13 steps H1-H8. Prior art: Asahi uses U-Boot; NTASP's Project Mu tree (BSD-2-Clause) reference only.
+- Review (Sonnet): OK with corrections, all applied (guarded probe for the console HVC, EDK2 cites re-checked at edk2-stable202608 incl. the GICv5 branch, MS debug-interface and RNG requirements as risks, scope extensions of the minimal layer listed as needing Marco's yes).
+- Riskiest open question: Windows and a 30-bit x2r10g10b10 GOP framebuffer (MS requires 8-bit BGR).
+- Decisions for Marco (ADR): WEL2_CONSOLE_WRITE hypercall, framebuffer hand-over, guest FDT builder, shadow framebuffer: they extend the minimal-layer scope.
