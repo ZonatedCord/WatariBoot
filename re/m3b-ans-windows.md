@@ -21,7 +21,7 @@ Anything that gets installed (WDK, Visual Studio, tools) must be recorded in `do
 
 ### 1.2 Coprocessor (ASC / RTKit) firmware boot
 - ANS runs its own firmware on an ASC coprocessor, managed through RTKit [verified: apple.c].
-- Boot: CPU control register at `ans+0x44`, RUN = bit 4; boot status register at `ans+0x1300` reads `0xde71ce55` when up; the driver waits up to 1 s polling every 1 ms [verified: apple.c, register defines lines 37-64].
+- Boot: CPU control register at `ans+0x44`, RUN = bit 4; boot status register at `nvme+0x1300` (the `nvme` region, apple.c:1038) reads `0xde71ce55` when up; the driver waits up to 1 s polling every 1 ms [verified: apple.c, register defines lines 37-64].
 - Reset sequence: shut RTKit down, clear CPU control, assert reset, re-init RTKit, deassert reset, set RUN, boot RTKit (`apple_rtkit_boot`, apple.c:1032), poll boot status [verified: apple.c, `apple_nvme_reset_work` starts at line 982, sequence at 1005-1041; `apple_nvme_disable` at line 798].
 - **A crashed RTKit is not recoverable by a controller reset**: the crash callback `apple_nvme_rtkit_crashed` (~line 224) only warns, and `apple_nvme_reset_work` (lines 997-1003) refuses to reset after a crash. Recovery needs a reboot or an ANS power-cycle [verified: apple.c].
 - A cleanly shut-down controller is expected by U-Boot and m1n1 (shutdown disables the controller and shuts RTKit down) [verified: apple.c].
