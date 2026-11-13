@@ -76,6 +76,7 @@ bool g_hold;
 
 static void hold_notice(void)
 {
+    g_fb_mute = false;                  /* T17: the HOLD text must reach the panel */
     puts_(HOLD_MSG);
     wel2_fb_checkpoint_text(&g_fb, "HOLD: TAKE PHOTO");
 }
@@ -106,6 +107,7 @@ static const char *const vec_names[16] = {
 
 void __attribute__((noreturn)) fatal_msg(const char *why)
 {
+    g_fb_mute = false;                  /* T17: a fault inside the muted stats must still reach the panel */
     checkpoint_fail();                  /* red square on the panel, even if the text path is the broken part */
     wel2_fb_set_error(&g_fb, why);      /* T6h: the reason stays in the last-error area after the log has scrolled */
     puts_("Watari EL2: FATAL: ");
@@ -120,6 +122,7 @@ void __attribute__((noreturn)) fatal_msg(const char *why)
 /* Never hang silently (lesson F-14): dump state, then halt. */
 static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
 {
+    g_fb_mute = false;
     checkpoint_fail();
     if (g_fb.err_kind != 2)             /* fatal_dump() has set its reason already */
         wel2_fb_set_error(&g_fb, vec_names[idx & 15]);
@@ -153,6 +156,7 @@ static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
  * unexpected exception. */
 void __attribute__((noreturn)) fatal_dump(struct frame *f, unsigned idx, const char *why)
 {
+    g_fb_mute = false;
     wel2_fb_set_error(&g_fb, why);
     puts_("Watari EL2: FATAL: ");
     puts_(why);
