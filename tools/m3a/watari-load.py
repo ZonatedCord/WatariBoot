@@ -21,7 +21,7 @@ The loader writes only RAM (heap blocks, the DTB, m1n1's FDT copy). m1n1's own k
 non-persistent hardware initialisation (ISP heap, display DART lock, USB/PCIe bring-up, SEP random bytes), all reset by a
 reboot [hypothesis: not every helper was read]. Nothing is written to storage, NVRAM or the PMU by us.
 
-Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0: prepared but cannot read the FDT back.
+Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0: prepared but cannot read the FDT back, 4 L0: a heap block is not wholly inside usable RAM.
 """
 import argparse
 import hashlib
@@ -89,7 +89,11 @@ def verify_bundle(bundle, required=()):
     return loaded
 
 
-def check_image(name, data):
+GUEST_INFO_SIZE = 136      # sizeof(struct wel2_guest_info) (el2/include/wel2_guest_info.h: 8+4+4+16+3*8+4*4+8*8)
+GUEST_ALIGN = 4096         # the layer puts the info block at the first 4 KB boundary above the image end (guest_place.c)
+
+
+def check_image(name, data, guest=False):
     """arm64 Image header (DESIGN 2.4): magic at 0x38, image_size at 16; must fit one 32 MB block."""
     if len(data) < 64 or data[0x38:0x3c] != b"ARM\x64":
         raise LoadError("%s: no arm64 Image magic at offset 0x38" % name)
@@ -98,6 +102,8 @@ def check_image(name, data):
         raise LoadError("%s: larger than the 32 MB block" % name)
     if image_size < len(data):
         raise LoadError("%s: header image_size smaller than the file" % name)
+    if guest and image_size + GUEST_ALIGN + GUEST_INFO_SIZE > BLOCK:
+        raise LoadError("%s: image_size + 4 KB + guest info block does not fit the 32 MB block" % name)
 
 
 def check_dtb(data):
@@ -336,6 +342,38 @@ def find_fdt_addr(console, manual):
     return int(m.group(1), 16) if m else None
 
 
+def parse_usable(dump_text):
+    """('usable i base=0x.. size=0x..' lines of fdt_m1_dump) -> ([(base, size)], truncated)."""
+    ranges = [(int(m.group(1), 16), int(m.group(2), 16))
+              for m in re.finditer(r"^usable \d+ base=0x([0-9a-f]+) size=0x([0-9a-f]+)", dump_text, re.M)]
+    return ranges, "WARNING: a list was truncated" in dump_text
+
+
+def check_blocks(dump_text, blocks):
+    """Is each block (name -> address) wholly inside ONE usable range (FDT RAM minus reservations)? The usable ranges are
+    exact bytes; the layer rounds them inward to 32 MB, which keeps any 32 MB-aligned 32 MB block that fits. Returns
+    (all_ok, report lines)."""
+    usable, truncated = parse_usable(dump_text)
+    lines, ok_all = [], True
+    for name, addr in blocks.items():
+        end = addr + BLOCK
+        hit = [r for r in usable if r[0] <= addr and end <= r[0] + r[1]]
+        ok = bool(hit) and addr % BLOCK == 0
+        ok_all &= ok
+        if ok:
+            res = "PASS (inside usable range 0x%x..0x%x)" % (hit[0][0], hit[0][0] + hit[0][1])
+        else:
+            res = "FAIL (not wholly inside one usable range)"
+        lines.append("  %-5s block 0x%x..0x%x : %s" % (name, addr, end, res))
+    if truncated:
+        lines.append("  WARNING: the dump says a list was truncated: the check is not complete")
+        ok_all = False
+    if not usable:
+        lines.append("  no usable ranges in the dump")
+        ok_all = False
+    return ok_all, lines
+
+
 def run_dump(dump_tool, blob_path):
     say("== fdt_m1_dump (the layer's own FDT queries, nothing else of the blob) ==")
     r = subprocess.run([dump_tool, blob_path], capture_output=True, text=True)
@@ -397,7 +435,7 @@ def run(args, target):
         check_image(layer_name, layer)
     if guest_name:
         guest = load(guest_name)
-        check_image(guest_name, guest)
+        check_image(guest_name, guest, guest=True)
 
     say("rung %s: layer=%s guest=%s step=%s cpuif=%s secondaries=%s" %
         (args.rung, layer_name or "-", guest_name or "-", step if step is not None else "-",
@@ -410,6 +448,13 @@ def run(args, target):
     target.write(dtb_addr, dtb)
     say("DTB    %-22s %7d bytes at 0x%x  sha256 %s" % (dtb_name, len(dtb), dtb_addr, sha256(dtb)[:16]))
     layer_addr = guest_addr = None
+    l0_blocks = {}
+    if args.rung == "L0":
+        # L0 allocates the two blocks the jump rungs would use, WITHOUT writing them: the host then checks that m1n1's
+        # proxy heap is plain usable RAM (the main unverified risk for L3).
+        l0_blocks = {"layer": target.memalign(BLOCK, BLOCK), "guest": target.memalign(BLOCK, BLOCK)}
+        for k, v in l0_blocks.items():
+            say("BLOCK  %-5s 32 MB aligned block at 0x%x (not written)" % (k, v))
     if layer is not None:
         layer_addr = target.memalign(BLOCK, BLOCK)
         if layer_addr % BLOCK:
@@ -487,7 +532,18 @@ def run(args, target):
         say("never commit it, never paste it). sha256 %s" % sha256(blob)[:16])
         if isinstance(target, DryTarget):
             say("(dry run: the 'prepared' FDT is the unmodified DTB; on hardware m1n1 adds memory, cpus, framebuffer)")
-        run_dump(ensure_dump_tool(bundle, args.fdt_dump), path)
+        dump_text = run_dump(ensure_dump_tool(bundle, args.fdt_dump), path)
+        say("== block placement check (host side): are the layer/guest blocks wholly inside usable RAM? ==")
+        ok, lines = check_blocks(dump_text, l0_blocks)
+        for ln in lines:
+            say(ln)
+        if isinstance(target, DryTarget):
+            say("(dry run: the fake addresses are not m1n1's heap; this only exercises the check)")
+        if not ok:
+            say("BLOCK CHECK: FAIL - the heap blocks are not plain usable RAM in this FDT. Do NOT run L3-L5: the layer "
+                "would refuse the guest. L1/L2 do not need the guest block but still use the layer block.")
+            return 4
+        say("BLOCK CHECK: PASS")
         say("L0 done: no jump was made; m1n1 is still alive on the proxy.")
         return 0
 

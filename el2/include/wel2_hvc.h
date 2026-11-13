@@ -41,6 +41,7 @@ enum wel2_chk {
 #define WEL2_CHKSTATE_RUNNING 0u
 #define WEL2_CHKSTATE_PASS    1u
 #define WEL2_CHKSTATE_FAIL    2u
+#define WEL2_CHKSTATE_SKIP    3u            /* the check was not run (grey square, counted as SKIP in the status band) */
 
 /* WEL2_STATS: the layer's ICC trap counters, written to the guest buffer (x2 must be >= sizeof(struct wel2_stats),
  * else INVALID_PARAMETERS; the buffer must lie in guest RAM and be 8-byte aligned). Counters are system wide. */

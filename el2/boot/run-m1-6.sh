@@ -16,7 +16,7 @@ QEMU="${QEMU:-/private/tmp/watari-qemu/build/qemu-system-aarch64}"
 "$QEMU" -M help 2>/dev/null | grep -q '^virt ' || { echo "SKIP: $QEMU is not a QEMU with the virt machine"; exit 77; }
 "$QEMU" -M virt,help 2>&1 | grep -q 'aic=' || { echo "SKIP: $QEMU has no aic option (stock QEMU?)"; exit 77; }
 APPEND=()
-[ "${CPUIF:-hw}" = trap ] && APPEND=(-append "wel2.cpuif=trap")
+case "${CPUIF:-hw}" in trap|trap-notc) APPEND=(-append "wel2.cpuif=${CPUIF}");; esac   # trap-notc: T6g
 [ -n "${WEL2_ARGS:-}" ] && APPEND=(-append "${APPEND[1]:-} $WEL2_ARGS")
 cd "$(dirname "$0")"
 make -s || { echo "FAIL: build"; exit 2; }

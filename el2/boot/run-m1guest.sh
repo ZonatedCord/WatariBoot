@@ -4,7 +4,8 @@
 #   QEMU -kernel build-chain/wel2.bin         : the layer, chain build (x0 = FDT)
 #   QEMU -device loader,addr=0x40280000       : the guest image, entered by the layer at EL1 instead of EDK2
 # wel2.guest=1 makes the layer pass the guest info block in x0 and enter the guest at the EDK2 entry. QEMU runs with
-# -cpu max,pauth=off until T6g sets HCR_EL2.API/APK (the guest FAILs G3 if PAuth exists and the layer did not enable it).
+# -cpu max (T6g: the layer sets HCR_EL2.API|APK when the CPU has pointer authentication, so G3 does a real PACIA/AUTIA;
+# QEMU_CPU=max,pauth=off still selects the old workaround).
 # Until the layer implements the vendor hypercalls (docs/design/watari-el2-m1boot/T7-wiring.md) the guest sees
 # NOT_SUPPORTED from WEL2_LOG and falls back to the QEMU PL011 (same text), so the checks that do not need the wiring
 # work today; G5a/G5b judge the trap counters only once WEL2_STATS exists (otherwise "counters n/a").
@@ -28,7 +29,7 @@ GUEST=../guest/build/m1guest.bin
 OUT=build-chain
 LOG=$OUT/guest-uart.log
 : > "$LOG"
-"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu "${QEMU_CPU:-max,pauth=off}" -accel tcg \
+"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu "${QEMU_CPU:-max}" -accel tcg \
     -nographic -m 512M -smp 4 -nic none -no-reboot -kernel $OUT/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
     -device loader,file="$GUEST",addr=0x40280000,force-raw=on \
     -serial "file:$LOG" -monitor none >$OUT/guest-qemu.out 2>&1 &

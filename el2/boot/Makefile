@@ -17,7 +17,7 @@ ASFLAGS := --target=aarch64-none-elf -g -I../include
 
 OBJS := $(OUT)/start.o $(OUT)/util.o $(OUT)/stage1.o $(OUT)/main.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o \
         $(OUT)/pirq_qemu.o $(OUT)/plat_qemu.o $(OUT)/plat_m1.o $(OUT)/plat_select.o $(OUT)/fdt.o $(OUT)/fdt_m1.o $(OUT)/vgic.o $(OUT)/vcif.o $(OUT)/intr_map.o $(OUT)/pirq.o $(OUT)/pirq_aic.o $(OUT)/v2m.o $(OUT)/ram_map.o $(OUT)/pt.o $(OUT)/maps.o $(OUT)/uart.o $(OUT)/fb.o \
-        $(OUT)/apple_fiq.o $(OUT)/apple_sysreg.o $(OUT)/cpu_start.o $(OUT)/hvc_vendor.o $(PAYLOAD_OBJS)
+        $(OUT)/apple_fiq.o $(OUT)/apple_sysreg.o $(OUT)/cpu_start.o $(OUT)/hvc_vendor.o $(OUT)/idreg.o $(OUT)/idreg_tbl.o $(OUT)/guest_place.o $(PAYLOAD_OBJS)
 
 # The image is a PIE linked at 0 (linker.ld) and relocated by start.S: -fpie with hidden visibility and direct access
 # to external data keeps every reference PC-relative (adrp/add), so the code needs no GOT before the relocation.
@@ -34,7 +34,13 @@ all: build/wel2.bin
 chain:
 	$(MAKE) OUT=build-chain XFLAGS=-DWEL2_CHAIN=1 PAYLOAD_OBJS= build-chain/wel2.bin
 
-$(OUT)/%.o: %.c pie.h boot.h plat.h gic_phys.h fdt.h fdt_m1.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_ram.h ../include/wel2_aic.h ../include/wel2_coreidx.h ../include/wel2_uart.h ../include/wel2_fb.h ../include/wel2_maps.h ../include/wel2_apple_fiq.h ../include/wel2_apple_sysreg.h ../include/wel2_cpu_start.h ../include/wel2_hvc.h ../include/wel2_hvc_vendor.h ../include/wel2_guest_info.h | $(OUT)
+$(OUT)/%.o: %.c pie.h boot.h plat.h gic_phys.h fdt.h fdt_m1.h ../include/wel2_vgic.h ../include/wel2_vcif.h ../include/wel2_pirq.h ../include/wel2_intr_map.h ../include/wel2_ram.h ../include/wel2_aic.h ../include/wel2_coreidx.h ../include/wel2_uart.h ../include/wel2_fb.h ../include/wel2_maps.h ../include/wel2_apple_fiq.h ../include/wel2_apple_sysreg.h ../include/wel2_cpu_start.h ../include/wel2_hvc.h ../include/wel2_hvc_vendor.h ../include/wel2_guest_info.h ../include/wel2_chk.h ../include/wel2_idreg.h ../include/wel2_guest_place.h | $(OUT)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/guest_place.o: ../vgic/guest_place.c ../include/wel2_guest_place.h ../include/wel2_maps.h | $(OUT)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OUT)/idreg_tbl.o: ../vgic/idreg_tbl.c ../include/wel2_idreg.h | $(OUT)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(OUT)/apple_fiq.o: ../vgic/apple_fiq.c ../include/wel2_apple_fiq.h ../include/wel2_apple_sysreg.h ../include/wel2_vgic.h | $(OUT)

@@ -5,6 +5,7 @@
 # QEMU exits, takes a screenshot every SHOT_EVERY seconds and prints the layer statistics.
 # Knobs (environment):
 #   CPUIF=trap     virtual CPU interface in TRAP_EMULATE mode (boot argument wel2.cpuif=trap)
+#   CPUIF=trap-notc  the same without ICH_HCR_EL2.TC (T6g)
 #   SMP=4 MEM=4G   cores / RAM          TIMEOUT=3600  seconds        SHOT_EVERY=120  seconds
 #   TRACE=SKIP     log trapped GICD/GICR accesses after the first SKIP (wel2.trace=, up to 3000 lines)
 #   MSI=its|gicv2m|off|auto   MSI controller of the QEMU machine (default its = current working config;
@@ -34,7 +35,7 @@ make -s chain || { echo "FAIL: build"; exit 2; }
 
 MODE="${CPUIF:-hw}"
 ARGS=""
-[ "$MODE" = trap ] && ARGS="wel2.cpuif=trap"
+case "$MODE" in trap|trap-notc) ARGS="wel2.cpuif=$MODE";; esac   # trap-notc: T6g
 [ -n "${TRACE:-}" ] && ARGS="$ARGS wel2.trace=$TRACE"
 [ -n "${WEL2_ARGS:-}" ] && ARGS="$ARGS $WEL2_ARGS"
 APPEND=()

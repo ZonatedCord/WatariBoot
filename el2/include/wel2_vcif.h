@@ -24,6 +24,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "wel2_vgic.h"
+#include "wel2_hvc.h"
 
 #define VCIF_MAX_LRS 16
 
@@ -45,6 +46,20 @@
 #define VCIF_VMCR_VBPR1_SH  18
 #define VCIF_VMCR_VBPR0_SH  21
 #define VCIF_VMCR_VPMR_SH   24
+
+/* ICH_HCR_EL2 (12.4.5) bits the layer sets. */
+#define VCIF_HCR_EN     (1ULL << 0)
+#define VCIF_HCR_UIE    (1ULL << 1)
+#define VCIF_HCR_TC     (1ULL << 10)   /* traps ICC_PMR_EL1, ICC_CTLR_EL1, ICC_RPR_EL1 (the "common" registers) */
+#define VCIF_HCR_TALL0  (1ULL << 11)
+#define VCIF_HCR_TALL1  (1ULL << 12)
+#define VCIF_HCR_TDIR   (1ULL << 14)
+
+/* The trap configuration of a cpuif mode (WEL2_CPUIF_HW / _TRAP / _TRAP_NOTC, wel2_hvc.h), as the base value of
+ * ICH_HCR_EL2 (DESIGN 5.4): hw = En; trap = En | TALL0 | TALL1 | TC | TDIR; trap-notc = En | TALL0 | TALL1 | TDIR (PMR,
+ * CTLR and RPR are served by the hardware virtual interface, the model reads PMR and EOImode back from ICH_VMCR_EL2).
+ * tds: ICH_VTR_EL2.TDS, the ICC_DIR trap exists; without it TDIR is not set. An unknown mode counts as hw. */
+uint64_t vcif_hcr_base(unsigned mode, bool tds);
 
 struct wel2_vcif {
 	unsigned nlr;                 /* 1..VCIF_MAX_LRS */

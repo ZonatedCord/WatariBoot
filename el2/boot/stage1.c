@@ -78,6 +78,7 @@ unsigned g_gran = WEL2_DEF_GRAN;     /* granule shift of the stage-1 and stage-2
 bool g_e2h;                          /* HCR_EL2.E2H the layer runs with (the value that read back) */
 bool g_e2h_stuck;                    /* asked for 0, the bit reads 1 (the M1) */
 bool g_gran_fallback;                /* the requested granule is not implemented: the other one is used */
+unsigned g_step;                     /* T6g: boot argument wel2.step=N (0 = not given): the hardware ladder rung, DESIGN 9 */
 
 /* Read by s1_enable in start.S: offsets 0, 8, 16, 24. */
 struct s1_regs {
@@ -134,6 +135,30 @@ static bool has_arg(const char *args, const char *key)
     return false;
 }
 
+/* wel2.step=<decimal> as a whole word: its value, 0 when absent or not a number. */
+static unsigned parse_step(const char *args)
+{
+    static const char key[] = "wel2.step=";
+
+    for (const char *p = args; *p; p++) {
+        unsigned k = 0, v = 0;
+
+        if (p != args && p[-1] != ' ')
+            continue;
+        while (key[k] && p[k] == key[k])
+            k++;
+        if (key[k])
+            continue;
+        const char *q = p + k;
+
+        for (; *q >= '0' && *q <= '9' && v < 1000; q++)
+            v = v * 10 + (unsigned)(*q - '0');
+        if (q != p + k && (*q == 0 || *q == ' '))
+            return v;
+    }
+    return 0;
+}
+
 /* ID_AA64MMFR0_EL1 (D24.2.84): TGran16 [23:20] (0 = no), TGran4 [31:28] (0b1111 = no), and for stage 2
  * TGran16_2 [35:32] / TGran4_2 [43:40] (0 = as stage 1, 1 = no, 2/3 = yes). */
 static bool gran_ok(uint64_t mmfr0, unsigned gshift)
@@ -172,6 +197,22 @@ void stage1_build(uint64_t fdt)
     if (m1)
         con_select_none();      /* T6c: the M1 never touches the PL011 (unmapped there); the S5L UART replaces this below */
 
+    /* Boot arguments (/chosen/bootargs, QEMU -append); the FDT is read-only here and the MMU is off. */
+    args[0] = 0;
+    bool have_args = fdt && !(fdt & 7) && !fdt_check((void *)fdt) && fdt_get_bootargs((void *)fdt, args, sizeof(args)) >= 0;
+
+    if (!have_args)
+        args[0] = 0;
+    g_step = parse_step(args);
+    /* T6g, rung L1 (DESIGN 9, PLAN S13): wel2.step=1 resets the machine right here, after the relocation and the platform
+     * switch and before anything else: no console, no framebuffer, no stage 1. Needs only the FDT lookups above (the
+     * watchdog node on the M1). Without a watchdog node the reset cannot be made: continue, el2_main stops with a message. */
+    if (g_step == 1 && (!m1 || g_m1.wdt.found)) {
+        g_plat->system_reset();
+        for (;;)
+            __asm__ volatile("wfe");
+    }
+
     g_carve_size = m1 ? WEL2_CARVE_SIZE_M1 : WEL2_CARVE_SIZE_QEMU;
     g_carve_base = g_layer_base & ~(g_carve_size - 1);
     g_ram_base = g_carve_base;
@@ -198,6 +239,9 @@ void stage1_build(uint64_t fdt)
      * every call is a no-op. The stage-1 mapping (Normal non-cacheable) follows with the other maps below. */
     if (fdt && !(fdt & 7) && !fdt_check((void *)fdt))
         fdt_get_framebuffer((void *)fdt, &g_fb);
+    if (g_step)                                   /* status band: "RUNG L<n> STEP <s>" (T6h); rungs L1..L5 are steps 1..5 */
+        wel2_fb_set_rung(&g_fb, g_step > 5 ? 5 : g_step, g_step);
+    checkpoint(WEL2_LCHK_RELOCATED);              /* checkpoint 0: relocated, framebuffer looked up, MMU still off */
 
     /* The whole layer block (image, .bss, stacks: _start to __layer_end) must lie inside the carve-out, whatever
      * address the loader chose; the linker only checks the size. MMU off: s1_msg only; it runs after the console and the
@@ -209,9 +253,7 @@ void stage1_build(uint64_t fdt)
             __asm__ volatile("wfe");
     }
 
-    /* Options from /chosen/bootargs (QEMU -append); the FDT is read-only here and the MMU is off. */
-    args[0] = 0;
-    if (fdt && !(fdt & 7) && !fdt_check((void *)fdt) && fdt_get_bootargs((void *)fdt, args, sizeof(args)) >= 0) {
+    if (have_args) {
         if (has_arg(args, "wel2.e2h=1"))
             want_e2h = true;
         else if (has_arg(args, "wel2.e2h=0"))
@@ -388,6 +430,7 @@ void stage1_build(uint64_t fdt)
     clean_inval(&g_e2h, sizeof(g_e2h));
     clean_inval(&g_e2h_stuck, sizeof(g_e2h_stuck));
     clean_inval(&g_gran_fallback, sizeof(g_gran_fallback));
+    clean_inval(&g_step, sizeof(g_step));
     clean_inval(&s1_pt, sizeof(s1_pt));
     __asm__ volatile("dsb sy" ::: "memory");
 }
