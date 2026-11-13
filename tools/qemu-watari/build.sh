@@ -51,8 +51,16 @@ fi
 
 cd "$BLD"
 if [ ! -f build.ninja ]; then
-    "$SRC/configure" --target-list=aarch64-softmmu --disable-docs --disable-tools \
-        --disable-guest-agent --disable-user --disable-werror --disable-download >&2
+    # Offline configure (F-28, re/qemu-configure-offline.md): the Command Line Tools Python 3.9 is the only
+    # Python on the Mac that ships setuptools+wheel; it lacks tomli (shim re-exporting the copy vendored in its
+    # pip) and a user-site pip 26 would refuse the editable install (PYTHONNOUSERSITE). Nothing is installed.
+    SHIM="$W/pyshim"
+    mkdir -p "$SHIM/tomli"
+    printf 'from pip._vendor.tomli import *  # noqa\nfrom pip._vendor.tomli import loads, load  # noqa\n' > "$SHIM/tomli/__init__.py"
+    PIP_NO_INDEX=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONNOUSERSITE=1 PYTHONPATH="$SHIM" \
+    "$SRC/configure" --python=/usr/bin/python3 --target-list=aarch64-softmmu --disable-docs --disable-tools \
+        --disable-guest-agent --disable-user --disable-werror --disable-download \
+        --extra-cflags=-I/opt/homebrew/include --extra-ldflags=-L/opt/homebrew/lib >&2
 fi
-ninja >&2
+PYTHONNOUSERSITE=1 ninja >&2
 echo "$BLD/qemu-system-aarch64"
