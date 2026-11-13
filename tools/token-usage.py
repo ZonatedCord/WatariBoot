@@ -18,6 +18,8 @@ PRICES = {
     "claude-sonnet-5-5": {"in": 2.00, "out": 10.00, "cache_read": 0.20},
     "claude-haiku-5-5":  {"in": 0.10, "out": 0.50,  "cache_read": 0.01},
     "claude-fable-5-1":  {"in": 10.00, "out": 50.00, "cache_read": 0.25},
+    # Fable 5.2: in/out from Marco (2026-11-13); cache_read = 0.1x input [hypothesis].
+    "claude-fable-5-2":  {"in": 8.00, "out": 40.00, "cache_read": 0.80},
 }
 PROJECT_MARKERS = ("WatariBoot", "ProvaImpossibile")
 FIELDS = ("input", "output", "cache_write_5m", "cache_write_1h", "cache_read")
@@ -74,6 +76,8 @@ def scan_session(paths):
                 for k, v in usage_of(m["usage"]).items():  # i messaggi in streaming si ripetono: si tiene il massimo
                     cur[k] = max(cur[k], v)
         for model, c in per_msg.values():
+            if model == "<synthetic>":  # local Claude Code messages (errors, interruptions): no API call, 0 tokens
+                continue
             per_model[model].update(c)
     return per_model
 
