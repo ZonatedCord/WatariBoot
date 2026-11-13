@@ -17,6 +17,7 @@ const char *wel2_hvc_state_name(unsigned state)
     case WEL2_CHKSTATE_RUNNING: return "running";
     case WEL2_CHKSTATE_PASS:    return "PASS";
     case WEL2_CHKSTATE_FAIL:    return "FAIL";
+    case WEL2_CHKSTATE_SKIP:    return "SKIP";
     default:                    return "?";
     }
 }
@@ -72,7 +73,7 @@ static int64_t do_checkpoint(const struct wel2_hvc_ops *ops, uint64_t n, uint64_
 
     if (!ops->log_line)
         return WEL2_HVC_NOT_SUPPORTED;
-    if (n == 0 || n > WEL2_CHK_MAX || state > WEL2_CHKSTATE_FAIL)
+    if (n == 0 || n > WEL2_CHK_MAX || state > WEL2_CHKSTATE_SKIP)
         return WEL2_HVC_INVALID_PARAMETERS;
     put_s(line, sizeof(line), &k, "guest checkpoint ");
     put_dec(line, sizeof(line), &k, n);

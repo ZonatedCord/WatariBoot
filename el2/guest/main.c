@@ -173,7 +173,8 @@ static void finish(unsigned n, const char *name, bool ok, struct buf *detail)
     g_chk_running = 0;
 }
 
-static void skip(const char *name, const char *why)
+/* A check that was not run: the line "Gn SKIP <why>" and, T6g, the grey square (WEL2_CHKSTATE_SKIP). */
+static void skip(unsigned n, const char *name, const char *why)
 {
     struct buf b;
 
@@ -182,6 +183,7 @@ static void skip(const char *name, const char *why)
     b_str(&b, " SKIP ");
     b_str(&b, why);
     b_flush(&b);
+    checkpoint(n, WEL2_CHKSTATE_SKIP);
 }
 
 /* ---- exceptions and interrupts --------------------------------------------------------------------------- */
@@ -451,6 +453,49 @@ static bool pauth_test(u64 *signed_out, bool *tamper_ok)
     return a == p && s != p;
 }
 
+/* T6g (PLAN S12): every allocated register of the ID group the layer may trap (HCR_EL2.TID3), printed as
+ * "IDREG c<CRm>.<op2 base> v0 v1 v2 v3" (4 registers a line, "-" = not allocated). tools compare two runs, with and
+ * without wel2.tid3=1 (run-tid3.sh): the lines must be identical (QEMU -cpu max reports GIC = 1 itself, so no
+ * difference at all is expected there). The table copies vgic/idreg_tbl.c on purpose (no code shared with EL2). */
+static const unsigned char g_idreg_known[8] = { 0x00, 0xff, 0xff, 0x77, 0x33, 0x33, 0x07, 0x07 };
+
+#define IDRD(m, o) case (m) * 8 + (o): __asm__ volatile("mrs %0, S3_0_C0_C" #m "_" #o : "=r"(v)); break;
+#define IDRD8(m) IDRD(m, 0) IDRD(m, 1) IDRD(m, 2) IDRD(m, 3) IDRD(m, 4) IDRD(m, 5) IDRD(m, 6) IDRD(m, 7)
+
+static u64 idreg_read(unsigned crm, unsigned op2)
+{
+    u64 v = 0;
+
+    switch (crm * 8 + op2) {
+    IDRD8(1) IDRD8(2) IDRD8(3) IDRD8(4) IDRD8(5) IDRD8(6) IDRD8(7)
+    default: break;
+    }
+    return v;
+}
+
+static void idreg_dump(void)
+{
+    for (unsigned crm = 1; crm <= 7; crm++) {
+        for (unsigned half = 0; half < 8; half += 4) {
+            struct buf b;
+
+            b_init(&b);
+            b_str(&b, "IDREG c");
+            b_dec(&b, crm);
+            b_str(&b, ".");
+            b_dec(&b, half);
+            for (unsigned o = half; o < half + 4; o++) {
+                b_str(&b, " ");
+                if ((g_idreg_known[crm] >> o) & 1)
+                    b_hex(&b, idreg_read(crm, o));
+                else
+                    b_str(&b, "-");
+            }
+            b_flush(&b);
+        }
+    }
+}
+
 static void g3(void)
 {
     struct buf d;
@@ -468,6 +513,7 @@ static void g3(void)
             SYSREG_RD(id_aa64mmfr0_el1) ^ SYSREG_RD(id_aa64mmfr1_el1) ^ SYSREG_RD(id_aa64mmfr2_el1) ^
             SYSREG_RD(midr_el1) ^ SYSREG_RD(id_aa64isar2_el1) ^ SYSREG_RD(id_aa64afr0_el1);
     (void)x;
+    idreg_dump();
     if (g_exc != exc0) { ok = false; b_str(&d, " id-regs FAULTED"); }
     bool pa = ((isar1 >> 4) & 0xff) != 0 || ((isar1 >> 24) & 0xff) != 0;     /* APA/API or GPA/GPI */
     b_str(&d, " pauth ");
@@ -723,7 +769,7 @@ static void timer_test(unsigned intid, unsigned chk, const char *name, bool soft
     if ((t == ~0ull || got < 5) && soft && got == 0) {
         /* No info block = the QEMU chain build, whose layer injects only the virtual timer so far (the P gate is
          * a later step of PLAN S9): no INTID 30 at all is reported as SKIP, not as a guest failure. */
-        skip(name, "no INTID 30 delivered and no info block (layer exposes only PPI 27 so far)");
+        skip(chk, name, "no INTID 30 delivered and no info block (layer exposes only PPI 27 so far)");
         g_chk_running = 0;
         return;
     }
@@ -744,7 +790,7 @@ static void g7(void) { timer_test(27, WEL2_CHK_G7, "G7", false); }
 static void g8(void)
 {
     if (g_have_info && (g_info.flags & WEL2_GINFO_F_NO_PTIMER)) {
-        skip("G8", "physical timer PPI 30 not exposed by the layer");
+        skip(WEL2_CHK_G8, "G8", "physical timer PPI 30 not exposed by the layer");
         return;
     }
     timer_test(30, WEL2_CHK_G8, "G8", !g_have_info);

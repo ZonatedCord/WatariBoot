@@ -3,10 +3,10 @@
 # Build the M0-C skeleton, boot it in QEMU TCG headless (20 s timeout) and
 # check the UART output. Exit 0 on success.
 set -u
-# CPUIF=trap runs the same test with the virtual CPU interface in TRAP_EMULATE mode
+# CPUIF=trap (or trap-notc, T6g) runs the same test with the virtual CPU interface in TRAP_EMULATE mode
 # (boot argument wel2.cpuif=trap, see cpuif.c); the default is HW list registers.
 APPEND=()
-[ "${CPUIF:-hw}" = trap ] && APPEND=(-append "wel2.cpuif=trap")
+case "${CPUIF:-hw}" in trap|trap-notc) APPEND=(-append "wel2.cpuif=${CPUIF}");; esac   # trap-notc: T6g
 # WEL2_ARGS: extra boot arguments for the layer, e.g. "wel2.e2h=1 wel2.gran=16k" (see README, E2H and granule)
 [ -n "${WEL2_ARGS:-}" ] && APPEND=(-append "${APPEND[1]:-} $WEL2_ARGS")
 cd "$(dirname "$0")"

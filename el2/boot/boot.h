@@ -11,6 +11,7 @@
 #include "wel2_fb.h"
 #include "wel2_maps.h"
 #include "fdt_m1.h"
+#include "wel2_chk.h"
 
 /* QEMU virt GICv3 windows (hw/arm/virt.c memmap). */
 #define GICD_PHYS   0x08000000UL
@@ -62,6 +63,13 @@ extern uint64_t g_hcr;
 extern bool g_cpuif_noeoi;         /* test knob wel2.test=noeoi: LRs without EOI maintenance */
 extern bool g_trace_on;          /* main.c: wel2.trace diagnostics */
 extern bool g_cpuif_trap;          /* cpuif.c: TRAP_EMULATE (true) or HW list registers */
+unsigned cpuif_mode(void);         /* cpuif.c: WEL2_CPUIF_HW / _TRAP / _TRAP_NOTC */
+extern int g_test_tc;              /* cpuif.c: test knob, see there */
+extern bool g_cpuif_notc;          /* cpuif.c: with g_cpuif_trap, the TC registers (PMR, CTLR, RPR) go to the hardware (trap-notc) */
+extern unsigned g_step;            /* stage1.c: wel2.step=N (0 = none): the hardware ladder rung, DESIGN 9 */
+extern bool g_tid3;                /* idreg.c: HCR_EL2.TID3 set */
+extern unsigned g_idreg_n;         /* idreg.c: ID-register reads emulated */
+bool idreg_trap(struct frame *f);  /* idreg.c: a trapped read of the TID3 group (EC 0x18) */
 
 /* main.c: UART, locks and per-core helpers. */
 void putc_(char c);
@@ -79,6 +87,7 @@ extern struct wel2_fb g_fb;
 void checkpoint(unsigned n);
 void checkpoint_state(unsigned n, unsigned state);
 void checkpoint_fail(void);
+void layer_checkpoint(unsigned n, const char *name);   /* main.c: paint square n and log one line (MMU on) */
 #if !__STDC_HOSTED__                          /* util.c provides these for the layer; the host tests have libc */
 void *memcpy(void *d, const void *s, unsigned long n);
 void *memset(void *d, int c, unsigned long n);

@@ -7,8 +7,8 @@
 // register, what an emulated ICC access does) lives in ../vgic/vcif.c and is
 // host-tested; this file only moves the registers between hardware and that model.
 //
-// Two modes, chosen at boot (g_cpuif_trap; build default WEL2_CPUIF_MODE, boot
-// argument "wel2.cpuif=hw|trap" in /chosen/bootargs overrides):
+// Three modes, chosen at boot (g_cpuif_trap, g_cpuif_notc; build default WEL2_CPUIF_MODE, boot argument
+// "wel2.cpuif=hw|trap|trap-notc" in /chosen/bootargs overrides; trap-notc = trap without ICH_HCR_EL2.TC, T6g):
 //  * HW: the guest's ICC_IAR1/EOIR1/PMR/IGRPEN1/BPR1 are not trapped
 //    (ICH_HCR_EL2.TALL0/TALL1/TC = 0, HCR_EL2.IMO = 1 turns them into ICV_*);
 //    the hardware runs them against the list registers.
@@ -18,6 +18,10 @@
 //    result back. Needed on the Apple M1 because of the SEIS erratum (guest GIC
 //    register accesses must never reach the hardware); QEMU has ICH_VTR_EL2.SEIS=0
 //    so only the logic is exercised, not the erratum (F-19).
+//  * TRAP_NOTC (T6g, DESIGN 5.4): as TRAP without TC. ICC_PMR_EL1, ICC_CTLR_EL1 and ICC_RPR_EL1 are executed by the
+//    hardware virtual interface (ICV_*, against ICH_VMCR_EL2 and the ICH_AP*R_EL2); the model keeps no copy of PMR or
+//    EOImode: icc_emulate() loads ICH_VMCR_EL2 (hw_in, full) before every emulated IAR/EOIR/DIR, so the PMR and the
+//    VEOIM the guest wrote are the ones honoured [verified: vcif.c reads them only from c->vmcr, test_vcif.c].
 // ICC_SGI*R_EL1 writes trap in both modes (IMO/FMO = 1, GIC spec 4.6.4 p.4-67).
 //
 // Life cycle of one interrupt: vgic_next_pending() -> vgic_ack() (the model
@@ -50,12 +54,7 @@
 #include "wel2_ram.h"
 #include "wel2_hvc.h"
 
-#define ICH_HCR_EN     (1ULL << 0)
-#define ICH_HCR_UIE    (1ULL << 1)
-#define ICH_HCR_TC     (1ULL << 10)
-#define ICH_HCR_TALL0  (1ULL << 11)
-#define ICH_HCR_TALL1  (1ULL << 12)
-#define ICH_HCR_TDIR   (1ULL << 14)
+#define ICH_HCR_UIE    VCIF_HCR_UIE
 #define ICH_MISR_U     (1ULL << 1)
 
 #ifndef WEL2_CPUIF_TRAP_DEFAULT
@@ -63,6 +62,14 @@
 #endif
 
 bool g_cpuif_trap = WEL2_CPUIF_TRAP_DEFAULT;
+bool g_cpuif_notc;                 /* T6g: trap-notc, only meaningful with g_cpuif_trap */
+int g_test_tc;                     /* test knobs wel2.test=tcoff (-1) / tcon (+1): the TC bit differs from the reported mode (G5b negative control) */
+
+/* The WEL2_CPUIF_* mode the layer runs with (stats, info block). */
+unsigned cpuif_mode(void)
+{
+    return !g_cpuif_trap ? WEL2_CPUIF_HW : g_cpuif_notc ? WEL2_CPUIF_TRAP_NOTC : WEL2_CPUIF_TRAP;
+}
 bool g_cpuif_noeoi;
 
 struct cif {
@@ -236,9 +243,11 @@ void cpuif_init_cpu(void)
     c->nap = 1u << (c->vc.prebits - 5);
     hw_out(c);                                           /* LRs 0, VMCR reset, AP 0 */
 
-    c->hcr_base = ICH_HCR_EN;
-    if (g_cpuif_trap)
-        c->hcr_base |= ICH_HCR_TALL0 | ICH_HCR_TALL1 | ICH_HCR_TC | (tds ? ICH_HCR_TDIR : 0);
+    c->hcr_base = vcif_hcr_base(cpuif_mode(), tds);      /* host-tested: En | TALL0 | TALL1 | [TC] | [TDIR] */
+    if (g_test_tc < 0)
+        c->hcr_base &= ~VCIF_HCR_TC;                     /* test: reports trap, runs without TC: G5b must fail and name TC */
+    else if (g_test_tc > 0 && g_cpuif_trap)
+        c->hcr_base |= VCIF_HCR_TC;                      /* test: reports trap-notc, runs with TC */
     c->hcr_cur = ~0ULL;                                  /* force the write */
     hcr_set(c, false);
 
@@ -265,9 +274,9 @@ void cpuif_init(struct vgic *v)
     put_kv("Watari EL2: ICH_VTR_EL2.TDS = ", (vtr >> 19) & 1);
     if (g_cpuif_noeoi)
         puts_("Watari EL2: TEST knob wel2.test=noeoi: list registers without EOI maintenance (UIE refills)\n");
-    puts_(g_cpuif_trap
-              ? "Watari EL2: cpuif mode = TRAP_EMULATE (TALL0|TALL1|TC|TDIR, ICC_* emulated in EL2)\n"
-              : "Watari EL2: cpuif mode = HW (list registers, no ICC traps)\n");
+    puts_(!g_cpuif_trap ? "Watari EL2: cpuif mode = HW (list registers, no ICC traps)\n"
+          : g_cpuif_notc ? "Watari EL2: cpuif mode = TRAP_EMULATE without TC (TALL0|TALL1|TDIR; ICC_PMR/CTLR/RPR served by the hardware, trap-notc)\n"
+                         : "Watari EL2: cpuif mode = TRAP_EMULATE (TALL0|TALL1|TC|TDIR, ICC_* emulated in EL2)\n");
     cpuif_init_cpu();
 }
 
@@ -627,7 +636,7 @@ static unsigned icc_stat_of(uint32_t crn, uint32_t crm, uint32_t op2)
 void cpuif_stats_fill(struct wel2_stats *out)
 {
     out->version = WEL2_HVC_ABI_VERSION;
-    out->cpuif_mode = g_cpuif_trap ? WEL2_CPUIF_TRAP : WEL2_CPUIF_HW;
+    out->cpuif_mode = cpuif_mode();
     for (unsigned k = 0; k < WEL2_STAT_COUNT; k++) {
         out->count[k] = 0;
         for (unsigned i = 0; i < g_ncpu; i++)
@@ -835,6 +844,8 @@ void cpuif_stats(void)
         icc_report();
         put_kv("Watari EL2: stats: EOIR/DIR without a matching active LR = ", t[8]);
     }
+    if (g_tid3)
+        put_kv("Watari EL2: stats: TID3 ID-register reads emulated = ", g_idreg_n);
     if (g_plat->stats)
         g_plat->stats();
 }

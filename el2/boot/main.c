@@ -20,9 +20,12 @@
 #define HCR_FMO  (1ULL << 3)
 #define HCR_IMO  (1ULL << 4)
 #define HCR_AMO  (1ULL << 5)
+#define HCR_TID3 (1ULL << 18)   /* trap EL1 reads of the ID group 3 registers (EC 0x18), idreg.c */
 #define HCR_TSC  (1ULL << 19)   /* trap EL1 SMC to EL2 (EC 0x17) */
 #define HCR_RW   (1ULL << 31)
 #define HCR_E2H  (1ULL << 34)   /* VHE: EL2 hosts (Arm ARM D8.13); TGE stays 0, the guest runs at EL1 */
+#define HCR_APK  (1ULL << 40)   /* EL1 may use the pointer-authentication keys without a trap */
+#define HCR_API  (1ULL << 41)   /* EL1 may execute the pointer-authentication instructions without a trap */
 
 #define SPSR_EL1H_MASKED 0x3c5ULL   /* M=EL1h, DAIF all masked */
 
@@ -50,6 +53,18 @@ unsigned this_cpu(void)
     return (unsigned)v;
 }
 
+/* A layer checkpoint (wel2_chk.h, README "Checkpoints"): the square, the label in the status band and one log line, so a
+ * QEMU run (no framebuffer) shows the same progress the panel does. Runs with the MMU on (the two stage-1 squares are
+ * painted by stage1.c / el2_main). */
+void layer_checkpoint(unsigned n, const char *name)
+{
+    checkpoint(n);
+    wel2_fb_checkpoint_text(&g_fb, name);
+    put_kn("Watari EL2: checkpoint ", n, " ");
+    puts_(name);
+    puts_("\n");
+}
+
 /* ---- Exception handling -------------------------------------------------- */
 static const char *const vec_names[16] = {
     "cur_el_sp0 sync", "cur_el_sp0 irq", "cur_el_sp0 fiq", "cur_el_sp0 serror",
@@ -61,6 +76,7 @@ static const char *const vec_names[16] = {
 void __attribute__((noreturn)) fatal_msg(const char *why)
 {
     checkpoint_fail();                  /* red square on the panel, even if the text path is the broken part */
+    wel2_fb_set_error(&g_fb, why);      /* T6h: the reason stays in the last-error area after the log has scrolled */
     puts_("Watari EL2: FATAL: ");
     puts_(why);
     puts_("\nWatari EL2: halted\n");
@@ -72,6 +88,8 @@ void __attribute__((noreturn)) fatal_msg(const char *why)
 static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
 {
     checkpoint_fail();
+    if (g_fb.err_kind != 2)             /* fatal_dump() has set its reason already */
+        wel2_fb_set_error(&g_fb, vec_names[idx & 15]);
     put_kn("Watari EL2: cpu ", this_cpu(), " UNEXPECTED EXCEPTION: \n");
     puts_(vec_names[idx & 15]);
     puts_("\n");
@@ -100,6 +118,7 @@ static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
  * unexpected exception. */
 void __attribute__((noreturn)) fatal_dump(struct frame *f, unsigned idx, const char *why)
 {
+    wel2_fb_set_error(&g_fb, why);
     puts_("Watari EL2: FATAL: ");
     puts_(why);
     puts_("\n");
@@ -570,6 +589,8 @@ void el2_exception(struct frame *f, unsigned idx)
         handle_dabt(f, idx);
     } else if (idx == 8 && ec == EC_SYSREG && cpuif_sysreg_trap(f)) {
         /* ICC_SGI*R_EL1 write: the SGI is now pending in the model */
+    } else if (idx == 8 && ec == EC_SYSREG && idreg_trap(f)) {
+        /* T6g: a read of the ID group 3 (HCR_EL2.TID3); nothing else changed, but the flush below is harmless */
     } else if (idx == 10 && g_plat->fiq) {
         g_plat->fiq(f);                      /* T6e: the Apple FIQ (timer, IPI, PMU); QEMU has none: fatal below */
         cpuif_flush();                       /* the FIQ may have raised a vGIC line (timer, IPI): deliver it */
@@ -619,8 +640,6 @@ static void set_virtual_ids(void)
 static bool g_guest_mode;
 static uint64_t g_guest_entry;
 
-#define HCR_APK (1ULL << 40)
-#define HCR_API (1ULL << 41)
 
 /* The block lives at the end of the hand-off buffer, 4 KB below the layer: guest RAM the guest can read, within 64 MB
  * of the guest image (which it checks before it dereferences x0). */
@@ -645,8 +664,9 @@ static uint64_t write_guest_info(void)
     gi->gicr_base = g_plat->vgic_gicr_base;
     gi->gicr_stride = 0x20000;
     gi->ncores = g_ncpu < WEL2_GINFO_MAX_CORES ? g_ncpu : WEL2_GINFO_MAX_CORES;
-    gi->checks = 0;                                       /* all (wel2.step selects subsets in T6g) */
-    gi->cpuif_mode = g_cpuif_trap ? WEL2_CPUIF_TRAP : WEL2_CPUIF_HW;
+    /* Hardware ladder (DESIGN 9): L3 = G1-G6, L4 = G1-G8, L5 and no step = all (G11, the final reset, always runs). */
+    gi->checks = g_step == 3 ? (2u << WEL2_CHK_G6) - 2u : g_step == 4 ? (2u << WEL2_CHK_G8) - 2u : 0;
+    gi->cpuif_mode = cpuif_mode();
     /* PAuth only when the layer really lets the guest use the keys; PPI 30 only where the platform raises it. */
     if ((g_hcr & (HCR_API | HCR_APK)) == (HCR_API | HCR_APK))
         gi->flags |= WEL2_GINFO_F_PAUTH;
@@ -720,6 +740,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
         uint64_t info = write_guest_info();
 
         put_kv("Watari EL2: guest info block at ", info);
+        layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
         put_kv("Watari EL2: eret to the EL1 test guest, entry = ", entry);
         enter_el1(entry, 0, SPSR_EL1H_MASKED, g_hcr, info);
     }
@@ -729,13 +750,18 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
         put_kv("Watari EL2: found ", magic);
         fatal_msg("EDK2 image missing: add -device loader,file=QEMU_EFI-kernel.fd,addr=<carve end + 0x80000, 0x40280000 on QEMU>,force-raw=on");
     }
+    layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
     put_kv("Watari EL2: eret to EDK2 at EL1, entry = ", EDK2_ENTRY);
     enter_el1(EDK2_ENTRY, 0, SPSR_EL1H_MASKED, g_hcr, EDK2_FDT_ADDR);
 }
 #endif
 
 /* Boot arguments (/chosen/bootargs, QEMU -append), space separated:
- *   wel2.cpuif=hw|trap   mode of the virtual CPU interface (build default WEL2_CPUIF_TRAP_DEFAULT)
+ *   wel2.cpuif=hw|trap|trap-notc   mode of the virtual CPU interface (build default WEL2_CPUIF_TRAP_DEFAULT);
+ *                        trap-notc = trap without ICH_HCR_EL2.TC (T6g). The M1 accepts trap and trap-notc only.
+ *   wel2.tid3=1|0        HCR_EL2.TID3: emulate the ID register group, GIC forced to 1 (default: on on the M1, off on QEMU)
+ *   wel2.step=N          hardware ladder rung (DESIGN 9), read by stage1.c; 1 resets after the relocation, 2 after checkpoint 5 (CPU_INIT),
+ *                        3..5 select the guest's checks
  *   wel2.lpi=off         do not expose LPIs/ITS (default: exposed when the physical GIC has them)
  *   wel2.trace=SKIP      log trapped GICD/GICR accesses after the first SKIP (M2 diagnostics)
  *   wel2.test=noeoi      test knob: LRs without EOI maintenance, only UIE refills them (#54) */
@@ -757,20 +783,36 @@ static void parse_bootargs(uint64_t fdt)
     for (const char *p = args; *p; p++) {
         if (p != args && p[-1] != ' ')
             continue;
-        if (arg_is(p, "wel2.cpuif=trap"))
+        if (arg_is(p, "wel2.cpuif=trap")) {
             g_cpuif_trap = true;
-        else if (arg_is(p, "wel2.lpi=off"))
+            g_cpuif_notc = false;
+        } else if (arg_is(p, "wel2.cpuif=trap-notc")) {
+            g_cpuif_trap = true;
+            g_cpuif_notc = true;
+        } else if (arg_is(p, "wel2.tid3=1")) {
+            g_tid3 = true;
+        } else if (arg_is(p, "wel2.tid3=0")) {
+            g_tid3 = false;
+        } else if (arg_is(p, "wel2.test=tcoff")) {
+            g_test_tc = -1;
+        } else if (arg_is(p, "wel2.test=tcon")) {
+            g_test_tc = 1;
+        } else if (arg_is(p, "wel2.lpi=off")) {
             g_lpi = false;
-        else if (arg_is(p, "wel2.aic=off"))
+        } else if (arg_is(p, "wel2.aic=off")) {
             g_aic_allowed = false;
-        else if (arg_is(p, "wel2.cpuif=hw")) {
-            /* DESIGN 5.4: the hardware list-register mode is QEMU-only (the M1's ICH_VTR_EL2.SEIS = 1 erratum). */
+        } else if (arg_is(p, "wel2.cpuif=hw")) {
+            /* DESIGN 5.4 / PLAN S12b: the hardware list-register mode is QEMU-only (the M1's ICH_VTR_EL2.SEIS = 1 erratum):
+             * refused on the M1 with a log line, the mode stays trap. */
             if (g_plat->m1_memory)
-                fatal_msg("wel2.cpuif=hw is refused on the M1 (SEIS erratum): the cpuif mode is trap");
-            g_cpuif_trap = false;
+                puts_("Watari EL2: wel2.cpuif=hw is refused on the M1 (SEIS erratum): the cpuif mode stays trap\n");
+            else {
+                g_cpuif_trap = false;
+                g_cpuif_notc = false;
+            }
         } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'c' &&
                    p[6] == 'p' && p[7] == 'u' && p[8] == 'i' && p[9] == 'f' && p[10] == '=') {
-            /* trap and hw matched above; anything else (trap-notc is T6g) is not silently ignored */
+            /* trap, trap-notc and hw matched above; anything else is not silently ignored */
             puts_("Watari EL2: WARNING: unknown boot argument value, ignored: ");
             for (const char *q = p; *q && *q != ' '; q++)
                 putc_(*q);
@@ -852,6 +894,19 @@ static void stage1_report(void)
     put_kv("Watari EL2:   RAM end = ", g_ram_end);
 }
 
+/* Does the CPU implement pointer authentication? ID_AA64ISAR1_EL1: APA [7:4] / API [11:8] (address, architected /
+ * implementation defined algorithm), GPA [27:24] / GPI [31:28] (generic); ID_AA64ISAR2_EL1: GPA3 [11:8] / APA3 [15:12]
+ * [hypothesis: Arm ARM field positions from memory; the guest's G3 reads the same fields]. DESIGN 5.1 decision: when
+ * it does, the guest gets the keys and the instructions (HCR_EL2.API | APK), on every platform. */
+static bool cpu_has_pauth(void)
+{
+    uint64_t isar1, isar2;
+
+    __asm__ volatile("mrs %0, id_aa64isar1_el1" : "=r"(isar1));
+    __asm__ volatile("mrs %0, id_aa64isar2_el1" : "=r"(isar2));
+    return ((isar1 >> 4) & 0xff) || ((isar1 >> 24) & 0xff) || ((isar2 >> 8) & 0xff) || ((isar2 >> 12) & 0xf);
+}
+
 /* ---- EL2 main ---------------------------------------------------------------- */
 void __attribute__((noreturn)) el2_main(uint64_t fdt)
 {
@@ -859,6 +914,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     __asm__ volatile("mrs %0, CurrentEL" : "=r"(el));
     __asm__ volatile("mrs %0, vbar_el2" : "=r"(vbar));
 
+    checkpoint(WEL2_LCHK_STAGE1_ON);    /* checkpoint 1: s1_enable returned, the MMU and caches are on (before any text) */
     puts_("Watari EL2: hello from EL2\n");
     if (g_con_s5l_base) {
         put_kv("Watari EL2: console = Apple S5L UART at ", g_con_s5l_base);
@@ -875,6 +931,14 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     stage1_report();
     put_kv("Watari EL2: CurrentEL = ", el >> 2);
     put_kv("Watari EL2: VBAR_EL2  = ", vbar);
+    if (g_step) {
+        put_kv("Watari EL2: boot argument wel2.step = ", g_step);
+        if (g_step == 1)                /* stage1.c would have reset: no watchdog node on this machine, so stop here */
+            fatal_msg("wel2.step=1: the early reset did not happen (no watchdog node in the FDT?)");
+    }
+    layer_checkpoint(WEL2_LCHK_RELOCATED, "RELOCATED");      /* 0 and 1 were painted before the first text; logged now */
+    layer_checkpoint(WEL2_LCHK_STAGE1_ON, "STAGE1_ON");
+    layer_checkpoint(WEL2_LCHK_BANNER, "BANNER");
 
     /* Cores = redistributor frames (GICR_TYPER walk); vCPU i = core i. */
     regime_init_cpu();
@@ -884,6 +948,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     for (unsigned i = 0; i < g_ncpu; i++)
         g_pcpu[i].state = CPU_ST_OFF;
     g_pcpu[this_cpu()].state = CPU_ST_ON;      /* the cold-boot core is ON */
+    layer_checkpoint(WEL2_LCHK_DISCOVER, "DISCOVER");
 
     /* HCR_EL2: RW=1 (EL1 is AArch64), IMO/FMO/AMO=1 (physical IRQ/FIQ/SError
      * routed to EL2, as designed). E2H as stage1.c left it on this core (1 on the M1; the guest then runs
@@ -894,27 +959,49 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     g_hcr |= HCR_TSC;
 #endif
     if (g_plat->m1_memory) {
-        /* DESIGN 5.4 / 5.1: the M1 runs the trap mode (SEIS erratum) and needs VHE (E2H stuck at 1). */
+        /* DESIGN 5.4 / 5.1: the M1 runs a trap mode (SEIS erratum: trap or trap-notc) and needs VHE (E2H stuck at 1). */
         if (!g_e2h)
             fatal_msg("M1 platform without HCR_EL2.E2H: the layer cannot run here");
         g_cpuif_trap = true;
+        g_tid3 = true;                          /* DESIGN 5.4: EDK2's GIC code and Windows read ID_AA64PFR0_EL1.GIC; wel2.tid3=0 overrides */
     }
     parse_bootargs(fdt);
+    /* T6g: pointer authentication (DESIGN 5.1) and the ID register group (DESIGN 5.4). */
+    if (cpu_has_pauth()) {
+        g_hcr |= HCR_API | HCR_APK;
+        puts_("Watari EL2: CPU implements pointer authentication: HCR_EL2.API|APK set, the guest owns the keys\n");
+    }
+    if (g_tid3) {
+        g_hcr |= HCR_TID3;
+        puts_("Watari EL2: HCR_EL2.TID3 set: ID registers emulated, ID_AA64PFR0_EL1.GIC presented as 1\n");
+    }
     vgic_setup(fdt);
     pirq_vcpu_on(&g_pirq, this_cpu());          /* the cold-boot core can take SPIs */
+    layer_checkpoint(WEL2_LCHK_IRQ_READY, "IRQ_READY");
+    /* PLAN S13: platform init (the interrupt controller's shared part, the Apple FIQ module / GIC cpu interface, the
+     * WHOAMI check) comes before the guest stage 2 (it needs none of it; it only was written after it) = 5. */
+    g_plat->init_boot();
+    if (g_plat->init_cpu(this_cpu()))
+        fatal_msg("AIC: WHOAMI of the boot core differs from its index");
+    layer_checkpoint(WEL2_LCHK_CPU_INIT, "CPU_INIT");
+    if (g_step == 2) {                          /* rung L2 (DESIGN 9): the layer alone, then the watchdog */
+        puts_("Watari EL2: wel2.step=2: platform and interrupt controller are up, resetting the machine\n");
+        g_plat->system_reset();
+        fatal_msg("wel2.step=2: the platform reset returned");
+    }
     stage2_init();
     stage2_enable();
     set_virtual_ids();
     puts_("Watari EL2: stage-2 on (identity, GICD/GICR unmapped), vGIC ready\n");
-    g_plat->init_boot();
-    if (g_plat->init_cpu(this_cpu()))
-        fatal_msg("AIC: WHOAMI of the boot core differs from its index");
+    layer_checkpoint(WEL2_LCHK_STAGE2_ON, "STAGE2_ON");
     cpuif_init(&g_vgic);
     puts_("Watari EL2: physical GIC owned by EL2, virtual CPU interface on\n");
+    layer_checkpoint(WEL2_LCHK_CPUIF, "CPUIF");
 #ifdef WEL2_CHAIN
     chain_to_edk2(fdt);
 #else
     (void)fdt;
+    layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
     puts_("Watari EL2: eret to EL1h payload\n");
     enter_el1((uint64_t)el1_main, (uint64_t)__el1_stack_top, SPSR_EL1H_MASKED, g_hcr, 0);
 #endif
