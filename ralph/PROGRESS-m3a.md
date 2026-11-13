@@ -101,3 +101,11 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Review (Sonnet, against m1n1 v1.6.1 kboot/proxy/linux.py): no blocking defects; fixed in d1b45cf: L0 starts the secondaries so the 8-cpu parse is validated before any jump; no `cc` on Ciani's Mac (prebuilt dump tool; build only if Command Line Tools already present); dc_cvac; 40 s boot timeout; bundle file list enforced.
 - Opus verified: `python3 -I tools/m3a/test_watari_load.py` ALL PASSED; `make -C el2 test` ALL PASSED; run-m1guest G1-G11 on QEMU (earlier entries).
 - Gap found by Opus: the M1 hand-off from the layer to the test guest was still QEMU-only (chain_to_edk2) -> new task T7b, in progress.
+
+### 2026-11-13 05:35 - T6g and T7b done; `wel2.hold`; loader L0 block check
+- T6g commits f4edd99, 4a2a008, 1ad0b5c: `wel2.cpuif=trap-notc` (no TC; G5b tells TC from notc, run-g5b-negative), TID3 ID-register emulation (GIC field = 1; AArch32/SVE/SME registers never read at EL2 when absent), HCR_EL2.API|APK when PAuth exists, `wel2.step` ladder (1 = reset after relocation, 2 = after checkpoint 5, 3/4 = guest checks G1-G6/G1-G8), checkpoint table `el2/include/wel2_chk.h` + README, T6h hooks wired, unknown ICC access logged before the fatal.
+- T7b commit 7794c2b: M1 guest hand-off `m1_enter_guest()` (guest image in one guest RAM range, info block above it, x0 = info block, EL1h with DAIF masked, caches off). `wel2.hold=1` commit 1512899: the final screen is held for the photo (step 2, guest SYSTEM_RESET, fatal paths); step 1 still resets.
+- Loader (5af7e45): L0 memaligns the layer and guest blocks and checks on the host that both lie in usable RAM minus reservations (`BLOCK CHECK`, exit 4 = do not run L3-L5); guest image size bound leaves room for the info block.
+- Reviews (Sonnet): no blocking defects. Main unverified risk: whether m1n1's proxy heap is plain usable RAM (now checked at L0 before any jump).
+- Opus verified: `make -C el2 test` ALL PASSED; `run-all.sh` 29/29 both configs (hw, trap, trap-notc + run-step, run-hold, run-tid3, run-g5b-negative); run-moved PASS; loader test ALL PASSED; Windows boot on the merged branch (TAG=t6g-merged, PAuth no longer trapped) reached the desktop.
+- T8 procedure merged (ef16541, 8b08016, cdadac5); its final independent check was interrupted by the usage limit and is being finished in the closing window.
