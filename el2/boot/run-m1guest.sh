@@ -73,6 +73,13 @@ else
     echo "---- summary"; echo "$SUMMARY"
 fi
 grep -q "UNEXPECTED\|FATAL\|unhandled guest\|non-PSCI SMC" $OUT/guest-uart.txt && { echo "FAIL: unexpected event reported"; rc=1; }
+# T17, over ALL UART lines: QEMU has no panel, so the mute of the final statistics (psci.c final_stats, UART only) cannot be
+# seen directly. What is testable: after the SUMMARY header only the block, "Watari EL2: stats:" lines (muted on the panel)
+# and the reset line follow, and the panel-bound lines (everything but stats) stay within the 18 reserved rows (18).
+AFTER=$(awk '/Watari EL1: SUMMARY /{f=1} f' $OUT/guest-uart.txt | grep -av "^Watari EL2: stats:\|^Watari EL2:   \|^Watari EL2: trapped " | grep -a .)
+NPANEL=$(echo "$AFTER" | wc -l | tr -d ' ')
+[ "$NPANEL" -le 18 ] || { echo "FAIL: $NPANEL panel-bound lines after the SUMMARY header (reserve is 18)"; rc=1; }
+echo "$AFTER" | grep -av "^Watari EL1: \(SUMMARY\|G[0-9]\|MPIDR\)" | grep -aqv "^Watari EL2: PSCI SYSTEM_\(RESET\|OFF\)" && { echo "FAIL: unexpected line after the SUMMARY block:"; echo "$AFTER" | grep -av "^Watari EL1: \(SUMMARY\|G[0-9]\|MPIDR\)" | grep -av "^Watari EL2: PSCI SYSTEM_"; rc=1; }
 grep -aq "PSCI SYSTEM_\(RESET\|OFF\)" $OUT/guest-uart.txt || { echo "MISSING: the layer's SYSTEM_RESET/OFF line"; rc=1; }
 [ "$EXITED" = 1 ] || { echo "FAIL: QEMU still running after 60 s (SYSTEM_RESET not honoured?)"; rc=1; }
 [ $rc = 0 ] && echo "PASS: EL1 test guest G1-G11 under Watari EL2 (CPUIF=${CPUIF:-hw})"

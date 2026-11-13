@@ -221,7 +221,10 @@ static void hvc_log_line(void *ctx, const char *line, unsigned n)
         while (m < sizeof(WEL2_SUMMARY_MARK) - 1 && line[m] == WEL2_SUMMARY_MARK[m])
             m++;
         if (m == sizeof(WEL2_SUMMARY_MARK) - 1)
+        {
             wel2_fb_reserve(&g_fb, WEL2_SUMMARY_LINES);
+            g_summary_on_panel = true;
+        }
     }
     for (unsigned i = 0; i < sizeof(pre) - 1; i++)
         buf[k++] = pre[i];

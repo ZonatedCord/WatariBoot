@@ -641,17 +641,36 @@ static void t_summary_block(void)
 			snprintf(buf, sizeof(buf), "%s\n", L[i]);
 			wel2_fb_puts(&s.fb, buf);
 		}
-		wel2_fb_puts(&s.fb, "WATARI EL2: HOLD: TAKE THE PHOTO\nWATARI EL2: PSCI SYSTEM_RESET\n");
+		/* The real tail (psci.c final_stats, util.c g_fb_mute): about 25 statistics lines go to the UART only, so
+		 * the panel sees none of them; then the reset line and the HOLD line. */
+		wel2_fb_puts(&s.fb, "WATARI EL2: PSCI SYSTEM_RESET -> WATCHDOG (NO FIRMWARE)\nWATARI EL2: HOLD: TAKE THE PHOTO\n");
 		CHECK_EQ(s.fb.cy, row0 + 17);               /* no scroll in the middle of the block */
 		for (unsigned i = 0; i < 15; i++)
 			CHECK(line_is(&s, s.fb.text_y + (row0 + i) * 54, L[i], WEL2_RGB_WHITE, WEL2_RGB_BLACK));
 		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
-		CHECK(line_is(&s, s.fb.text_y + (row0 + 16) * 54, "WATARI EL2: PSCI SYSTEM_RESET", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y + (row0 + 16) * 54, "WATARI EL2: HOLD: TAKE THE PHOTO", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y + (row0 + 15) * 54, "WATARI EL2: PSCI SYSTEM_RESET -> WATCHDOG (NO FIRMWARE)", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
 		CHECK(row0 >= 2 && s.fb.text_y + (row0 + 17) * 54 <= s.h);   /* below the legend, inside the panel */
 		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG L3 STEP 0", WEL2_RGB_WHITE, C_BAND));
 		CHECK(line_is(&s, E0(&s), "LAST ERROR: NONE", C_NOERR, WEL2_RGB_BLACK));
+		if (pre == 0) {                 /* control: the same 25 lines sent to the panel DO wipe the block's start */
+			for (unsigned i = 0; i < 25; i++)
+				wel2_fb_puts(&s.fb, "WATARI EL2: STATS: LR INJECTIONS = 0X000000000000000A\n");
+			CHECK(!line_is(&s, s.fb.text_y + row0 * 54, L[0], WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		}
 		if (pre == 44 && getenv("WEL2_FB_PPM_SUMMARY"))
 			write_ppm(&s, getenv("WEL2_FB_PPM_SUMMARY"));
+		CHECK(scr_canaries_ok(&s));
+		scr_free(&s);
+	}
+	/* a reserve in the middle of a line starts on a new row */
+	{
+		struct screen s;
+
+		scr_new(&s, WEL2_FB_X8R8G8B8, 2560, 1600, 0);
+		wel2_fb_puts(&s.fb, "PARTIAL");
+		wel2_fb_reserve(&s.fb, WEL2_SUMMARY_LINES);
+		CHECK_EQ(s.fb.cx, 0);
 		CHECK(scr_canaries_ok(&s));
 		scr_free(&s);
 	}

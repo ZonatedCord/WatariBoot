@@ -85,6 +85,10 @@ void con_select_s5l(uint64_t base)
  * goes to the UART is also drawn as text, and checkpoint() paints the squares of the boot stages. Aligned 32-bit
  * stores only (fb.c), so all of it works with the MMU off too. */
 struct wel2_fb g_fb;
+/* T17: while set, text goes to the UART only (the panel keeps what it shows). Set around the final statistics when the
+ * guest's SUMMARY block is on the panel (psci.c); plain flag, no allocation, MMU-safe. */
+bool g_fb_mute;
+bool g_summary_on_panel;
 
 void checkpoint(unsigned n)
 {
@@ -105,7 +109,8 @@ void checkpoint_fail(void)
 
 void putc_(char c)
 {
-    wel2_fb_putc(&g_fb, c);                  /* T6c: the panel first, a stuck UART must not delay or lose it */
+    if (!g_fb_mute)
+        wel2_fb_putc(&g_fb, c);              /* T6c: the panel first, a stuck UART must not delay or lose it */
     wel2_uart_putc(&g_con, (uint8_t)c);
 }
 
@@ -113,7 +118,8 @@ void puts_(const char *s)
 {
     bool got = spin_lock(&g_uart, 1UL << 24);
 
-    wel2_fb_puts(&g_fb, s);
+    if (!g_fb_mute)
+        wel2_fb_puts(&g_fb, s);
     wel2_uart_puts(&g_con, s);
     if (got)
         spin_unlock(&g_uart);

@@ -251,7 +251,7 @@ wl() {
 
 Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0 prepared but the FDT cannot be read back, **4 L0 BLOCK CHECK failed (do not run L3-L5)**.
 
-**Note on what the held screen shows.** The log area fills and restarts before the hold, so the per-check lines, timer tick counts and MPIDRs are **not** on the final photo (only the band, squares and `LAST ERROR` are). Record a video from before the command and transcribe those values from it; (future layer change) keep a per-check summary visible in the band or stop the log before the summary.
+**Note on what the held screen shows (T17).** Besides the band, squares and `LAST ERROR`, the held screen ends with the guest's summary block: `SUMMARY G1-G11 PASS <p> FAIL <f>`, one line per check `Gn PASS|FAIL|SKIP <key>` (checks that did not run in this rung show `NOT RUN`), then the MPIDR line(s), then the reset and `HOLD` lines. The final statistics are written to the UART only so they do not scroll the block away (`el2/boot/README.md`, "Guest summary block"). Not yet seen on a real panel **[hypothesis]**: if the block is missing from the photo, fall back to the video.
 
 **After "handed over" the loader waits up to 40 s** (`--boot-timeout`) for a reply that may never come. Once the Mac has restarted or the screen is frozen/held, press **Ctrl-C** in that terminal (the target is gone anyway); do not wait out the 40 s, and do not close the terminal before the log file is saved.
 
@@ -426,9 +426,9 @@ wl L4 --rung L4 --go [--cpuif trap-notc] --args wel2.hold=1
 
 **PHOTOS.** As L3 (end-of-run full screen, close-up on failure). Add a photo during the run if a timer check seems to take long: **each timer check waits for 5 ticks**, so a stuck square stays amber for the bounded wait.
 
-**Expected.** Band 1 `RUNG L4 STEP 4`; band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; band 3 `GUEST PASS 10 FAIL 0 SKIP 0`; layer squares 0-8 green, squares 24 (G7) and 25 (G8) green (G8 is **not** a SKIP any more), 28 green; the tick counts are in the video, not on the held screen.
+**Expected.** Band 1 `RUNG L4 STEP 4`; band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; band 3 `GUEST PASS 10 FAIL 0 SKIP 0`; layer squares 0-8 green, squares 24 (G7) and 25 (G8) green (G8 is **not** a SKIP any more), 28 green; the tick counts are in the summary block of the held screen (`G7 PASS INTID 27 TICKS 5`, `G8 PASS INTID 30 TICKS 5`; header `SUMMARY G1-G11 PASS 10 FAIL 0`), the video is optional.
 
-**PASS.** `PASS 10 FAIL 0 SKIP 0`, G7 PASS (5 ticks), G8 PASS (5 ticks), `LAST ERROR: NONE`.
+**PASS.** `PASS 10 FAIL 0 SKIP 0`, G7 PASS (5 ticks), G8 PASS (5 ticks) in the summary block, `LAST ERROR: NONE`.
 
 **FAIL meanings.**
 
@@ -458,9 +458,9 @@ L5 starts the secondaries from the host (`smp_start_secondaries`; volatile, rese
 
 **PHOTOS.** As L4, one extra photo after G9 starts (squares 9 and 10 show a core accepted/arrived), and the end screen.
 
-**Expected.** Band 3 `GUEST PASS 12 FAIL 0 SKIP 0`, band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; layer squares 0-10 green (9 and 10: CPU_ON accepted, core arrived), 26 (G9) and 27 (G10) green; the MPIDR each core reports (`0x80000000`..`0x80000003`, `0x80010100`..`0x80010103` **[verified: ehw0]**) is in the video only.
+**Expected.** Band 3 `GUEST PASS 12 FAIL 0 SKIP 0`, band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; layer squares 0-10 green (9 and 10: CPU_ON accepted, core arrived), 26 (G9) and 27 (G10) green; the MPIDR each core reports (`0x80000000`..`0x80000003`, `0x80010100`..`0x80010103` **[verified: ehw0]**) is on the held screen in the summary block (`MPIDR ...` lines, 4 per line) and `G9 PASS UP 7 SGI2 7`; the video is optional.
 
-**PASS.** `PASS 12 FAIL 0 SKIP 0`, G9 and G10 green, all 7 secondaries reported (from the video), `LAST ERROR: NONE`.
+**PASS.** `PASS 12 FAIL 0 SKIP 0`, G9 and G10 green, all 7 secondaries reported (`G9 PASS UP 7 SGI2 7` and the 8 MPIDRs in the summary block), `LAST ERROR: NONE`.
 
 **FAIL meanings.**
 
@@ -516,8 +516,8 @@ L5 starts the secondaries from the host (`smp_start_secondaries`; volatile, rese
 | L1 | `--rung L1 --go` | yes | none (only if it fails) | the Mac restarts within ~1 s | restart | no restart in 5 s |
 | L2 | `--rung L2 --go --args wel2.hold=1` | yes | video + final photo | squares 0-5 green, band `RUNG L2 STEP 2`, error NONE, HOLD label | held screen (restart without hold) | 60 s without progress, red square |
 | L3 | `--rung L3 --go --args wel2.hold=1` then `--cpuif trap-notc` | yes | video + final photo per run | `PASS 8 FAIL 0`, squares 0-8 and G1-G6 green, square 28 green | held screen (restart without hold) | as L2 |
-| L4 | `--rung L4 --go --args wel2.hold=1` | yes | video + final photo | `PASS 10 FAIL 0`, G7 and G8 green | held screen | as L2 |
-| L5 | `--rung L5 --go --args wel2.hold=1` | yes | video + final photo | `PASS 12 FAIL 0`, squares 0-10, G9, G10 green | held screen | as L2 |
+| L4 | `--rung L4 --go --args wel2.hold=1` | yes | final photo (video optional) | `PASS 10 FAIL 0`, G7 and G8 green | held screen | as L2 |
+| L5 | `--rung L5 --go --args wel2.hold=1` | yes | final photo (video optional) | `PASS 12 FAIL 0`, squares 0-10, G9, G10 green | held screen | as L2 |
 
 ---
 
@@ -546,7 +546,7 @@ Claude fills this during the day. Never include serial numbers, MAC addresses, t
 - Result: PASS / FAIL / not run / ABORT (criterion).
 - Photos (file name, time): transcription in the 3.5 shape.
 - Reached checkpoint (last green square), last red square, `LAST ERROR` text.
-- Guest checks G1..G11: PASS / FAIL / SKIP per check, trap counters (G5a/G5b), tick counts (G7/G8), MPIDRs (G9).
+- Guest checks G1..G11: PASS / FAIL / SKIP per check, trap counters (G5a/G5b), tick counts (G7/G8), MPIDRs (G9): all from the summary block of the final photo.
 - Time from "handed over" to the observed behaviour; how long the screen stayed readable.
 - Anomalies.
 

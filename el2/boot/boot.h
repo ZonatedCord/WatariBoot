@@ -84,6 +84,8 @@ void puts_(const char *s);
  * s = 0 running / 1 pass / 2 fail, checkpoint_fail() repaints the current one red. All use aligned 32-bit stores
  * only and need no stack-heavy or lock-taking code, so they run with the MMU off. */
 extern struct wel2_fb g_fb;
+extern bool g_fb_mute;                       /* util.c: text to the UART only, not to the panel */
+extern bool g_summary_on_panel;              /* util.c: the guest's SUMMARY block is on the panel (main.c sets it) */
 void checkpoint(unsigned n);
 void checkpoint_state(unsigned n, unsigned state);
 void checkpoint_fail(void);

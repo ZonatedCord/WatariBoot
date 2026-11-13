@@ -469,6 +469,8 @@ void wel2_fb_reserve(struct wel2_fb *fb, unsigned lines)
 	if (!fb->fmt || !fb->cols || !fb->rows)
 		return;
 	ensure_init(fb);
+	if (fb->cx)                         /* a block starts on its own row */
+		putc_raw(fb, '\n');
 	if (fb->cy + lines > fb->rows && lines + 2u <= fb->rows) {
 		clear_text(fb);
 		legend(fb);
