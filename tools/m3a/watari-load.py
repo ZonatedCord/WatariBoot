@@ -17,7 +17,9 @@ Call order of a run (the unit test test_watari_load.py asserts it):
   8. DAIF = 0xc0, kboot_boot(layer). USB goes away during this request: a lost reply or a timeout AFTER the request was
      sent counts as "handed over".
 
-Writes on the target are RAM only (heap blocks, the DTB, m1n1's FDT copy). Nothing persistent.
+The loader writes only RAM (heap blocks, the DTB, m1n1's FDT copy). m1n1's own kboot_prepare_dt / kboot_boot do
+non-persistent hardware initialisation (ISP heap, display DART lock, USB/PCIe bring-up, SEP random bytes), all reset by a
+reboot [hypothesis: not every helper was read]. Nothing is written to storage, NVRAM or the PMU by us.
 
 Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0: prepared but cannot read the FDT back.
 """
@@ -34,7 +36,7 @@ BLOCK = 32 * 1024 * 1024          # DESIGN D-2: one stage-2 block of the 16 KB g
 
 # rung -> (layer image, guest image or None, step or None, start secondaries)
 RUNGS = {
-    "L0": (None, None, None, False),
+    "L0": (None, None, None, True),
     "L1": ("wel2-m1.bin", None, 1, False),
     "L2": ("wel2-m1.bin", None, 2, False),
     "L3": ("wel2-chain.bin", "m1guest.bin", 3, False),
@@ -57,12 +59,13 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def verify_bundle(bundle):
-    """Check every line of SHA256SUMS. Returns the number of files checked; raises LoadError on any mismatch."""
+def verify_bundle(bundle, required=()):
+    """Check every line of SHA256SUMS, reading each file once (hash and content from the same bytes).
+    `required` names must be listed. Returns {name: bytes}; raises LoadError on any problem."""
     sums = os.path.join(bundle, "SHA256SUMS")
     if not os.path.isfile(sums):
         raise LoadError("no SHA256SUMS in %s: not a bundle made by build-m1-payload.sh" % bundle, 2)
-    n = 0
+    loaded = {}
     with open(sums) as f:
         for line in f:
             line = line.strip()
@@ -70,19 +73,20 @@ def verify_bundle(bundle):
                 continue
             m = re.match(r"^([0-9a-f]{64})\s+\*?(.+)$", line)
             if not m:
-                raise LoadError("malformed line in SHA256SUMS: %r" % line)
+                raise LoadError("malformed line in SHA256SUMS: %r" % line, 2)
             want, name = m.group(1), m.group(2)
             path = os.path.join(bundle, name)
             if not os.path.isfile(path):
-                raise LoadError("bundle file missing: %s" % name)
+                raise LoadError("bundle file missing: %s" % name, 2)
             with open(path, "rb") as g:
-                got = sha256(g.read())
-            if got != want:
+                data = g.read()
+            if sha256(data) != want:
                 raise LoadError("SHA-256 mismatch for %s (bundle damaged or edited): refusing to run" % name, 2)
-            n += 1
-    if n == 0:
-        raise LoadError("SHA256SUMS is empty")
-    return n
+            loaded[name] = data
+    for name in required:
+        if name not in loaded:
+            raise LoadError("%s is not listed in SHA256SUMS: refusing to use an unverified file" % name, 2)
+    return loaded
 
 
 def check_image(name, data):
@@ -179,6 +183,12 @@ class DryTarget:
     def ic_ivau(self, addr, n):
         self._log("ic_ivau", addr, n)
 
+    def dc_cvac(self, addr, n):
+        self._log("dc_cvac", addr, n)
+
+    def cpufreq_init(self):
+        self._log("cpufreq_init")
+
     def set_chosen(self, name, value):
         self._log("kboot_set_chosen", name, value)
 
@@ -253,6 +263,12 @@ class M1n1Target:
 
     def ic_ivau(self, addr, n):
         self.p.ic_ivau(addr, n)
+
+    def dc_cvac(self, addr, n):
+        self.p.dc_cvac(addr, n)
+
+    def cpufreq_init(self):
+        self.p.cpufreq_init()
 
     def set_chosen(self, name, value):
         self.p.kboot_set_chosen(name, value)
@@ -331,21 +347,26 @@ def run_dump(dump_tool, blob_path):
 
 
 def ensure_dump_tool(bundle, given):
-    if given:
-        if not os.access(given, os.X_OK):
-            raise LoadError("--fdt-dump %s is not executable" % given)
-        return given
-    tool = os.path.join(bundle, "fdt_m1_dump")
-    if os.access(tool, os.X_OK):
-        return tool
+    """Prefer the prebuilt arm64 fdt_m1_dump of the bundle (covered by SHA256SUMS). Never run `cc` blind: on a Mac
+    without the Command Line Tools /usr/bin/cc can open the installer (an install on a zero-footprint host)."""
+    for tool in (given, os.path.join(bundle, "fdt_m1_dump")):
+        if not tool:
+            continue
+        if os.path.isfile(tool) and not os.access(tool, os.X_OK):
+            os.chmod(tool, 0o755)
+        if os.access(tool, os.X_OK):
+            return tool
+        if tool == given:
+            raise LoadError("--fdt-dump %s is not usable" % given)
     build = os.path.join(bundle, "fdt-dump-src", "build.sh")
-    if os.path.isfile(build) and shutil.which("cc"):
-        say("building fdt_m1_dump with the host cc (output stays in the bundle folder) ...")
+    if os.path.isfile(build) and subprocess.run(["xcode-select", "-p"], capture_output=True).returncode == 0:
+        say("building fdt_m1_dump with the installed Command Line Tools (output stays in the bundle folder) ...")
         subprocess.run(["sh", build], check=True)
         built = os.path.join(bundle, "fdt-dump-src", "fdt_m1_dump")
         if os.access(built, os.X_OK):
             return built
-    raise LoadError("no fdt_m1_dump: run 'sh fdt-dump-src/build.sh' in the bundle (needs cc) or pass --fdt-dump")
+    raise LoadError("no usable fdt_m1_dump (prebuilt one missing or not runnable, Command Line Tools not installed): "
+                    "the prepared FDT is saved; check it on Marco's Mac with the same tool")
 
 
 def run(args, target):
@@ -355,15 +376,20 @@ def run(args, target):
     if args.smp is not None:
         smp = args.smp
 
-    n = verify_bundle(bundle)
-    say("bundle OK: %d files match SHA256SUMS (%s)" % (n, bundle))
-
-    def load(name):
-        with open(os.path.join(bundle, name), "rb") as f:
-            return f.read()
+    required = [x for x in (layer_name, guest_name) if x]
+    if not args.dtb:
+        required.append("j293-minimal.dtb")
+    verified = verify_bundle(bundle, required)
+    say("bundle OK: %d files match SHA256SUMS (%s)" % (len(verified), bundle))
+    load = verified.__getitem__
 
     dtb_name = os.path.basename(args.dtb) if args.dtb else "j293-minimal.dtb"
-    dtb = open(args.dtb, "rb").read() if args.dtb else load("j293-minimal.dtb")
+    if args.dtb:
+        with open(args.dtb, "rb") as f:
+            dtb = f.read()
+        say("NOTE: --dtb is outside SHA256SUMS; its hash is printed below.")
+    else:
+        dtb = load("j293-minimal.dtb")
     check_dtb(dtb)
     layer = guest = None
     if layer_name:
@@ -401,6 +427,7 @@ def run(args, target):
     for addr, data in ((layer_addr, layer), (guest_addr, guest)):
         if data is not None:
             target.dc_cvau(addr, len(data))
+            target.dc_cvac(addr, len(data))      # to the point of coherency; the real guarantee is m1n1's set/way flush in mmu_shutdown
             target.ic_ivau(addr, len(data))
 
     # --- 4. boot arguments, after the allocations --------------------------------------------------------------------
@@ -413,6 +440,9 @@ def run(args, target):
 
     # --- 5. secondaries ----------------------------------------------------------------------------------------------
     if smp:
+        # linux.py calls cpufreq_init() before smp_start_secondaries() [check: needed here]. Without alive secondaries
+        # m1n1's dt_set_cpus removes their nodes: the FDT would have 1 cpu and never validate the 8-cpu parse.
+        target.cpufreq_init()
         target.smp_start_secondaries()
 
     # --- 6. m1n1 prepares the FDT ------------------------------------------------------------------------------------
@@ -471,7 +501,7 @@ def run(args, target):
         if not target.request_sent:
             say("kboot_boot: the request was NOT sent (%s: %s). Nothing was handed over." % (type(e).__name__, e))
             return 1
-        say("kboot_boot: no reply (%s), as expected once USB is gone." % type(e).__name__)
+        say("kboot_boot: no reply (%s: %s). Usually the USB link going away; the screen tells." % (type(e).__name__, e))
     except Exception as e:
         say("kboot_boot: unexpected error %s: %s. Not treated as a hand-over." % (type(e).__name__, e))
         return 1
@@ -493,7 +523,7 @@ def parse_args(argv):
     ap.add_argument("--args", default="", help="extra boot arguments, appended")
     ap.add_argument("--fdt-addr", type=lambda s: int(s, 0), help="address of the prepared FDT if the console line is not captured")
     ap.add_argument("--fdt-dump", help="path of the fdt_m1_dump binary (default: built from the bundle's sources)")
-    ap.add_argument("--boot-timeout", type=float, default=5.0, help="seconds to wait for kboot_boot's reply (default 5)")
+    ap.add_argument("--boot-timeout", type=float, default=40.0, help="seconds to wait for kboot_boot's reply (default 40, as linux.py)")
     ap.add_argument("--dry-run", action="store_true", help="no device: print every proxy call (the 'prepared' FDT is the DTB itself)")
     ap.add_argument("--go", action="store_true", help="required for rungs L1-L5 on a real device (they jump)")
     a = ap.parse_args(argv)

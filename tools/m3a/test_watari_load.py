@@ -95,6 +95,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check(idx(t, "kboot_prepare_dt") < idx(t, "msr_daif") < idx(t, "kboot_boot"), "prepare_dt -> DAIF -> boot")
     check(n.index("kboot_boot") == len(n) - 1, "kboot_boot is the last call")
     check("smp_start_secondaries" not in n, "no secondaries at L3")
+    check(n.count("dc_cvac") == 2 and n.count("dc_cvau") == 2, "dc_cvau and dc_cvac over both images")
     allocs = [c for c in t.calls if c[0] == "memalign"]
     check(all(c[1] == wl.BLOCK and c[2] == wl.BLOCK for c in allocs), "blocks are 32 MB aligned and 32 MB long")
     layer_addr = [c for c in t.calls if c[0] == "kboot_boot"][0][1]
@@ -112,6 +113,8 @@ with tempfile.TemporaryDirectory() as tmp:
     n = names(t)
     check(rc == 0, "L0 exits 0")
     check("kboot_boot" not in n and "msr_daif" not in n, "L0 never jumps")
+    check(idx(t, "cpufreq_init") < idx(t, "smp_start_secondaries") < idx(t, "kboot_prepare_dt"),
+          "L0 starts the secondaries (cpufreq_init first) before prepare_dt so the FDT keeps 8 cpus")
     check("kboot_set_chosen" not in n and "memalign" not in n, "L0 sets no wel2 arguments and allocates no blocks")
     check(n.count("readmem") == 2 and idx(t, "readmem") > idx(t, "kboot_prepare_dt"), "L0 reads the FDT back after prepare_dt")
     check(os.path.isfile(os.path.join(tmp, "out", "prepared-fdt.dtb")), "L0 saves the prepared FDT locally")
@@ -167,6 +170,14 @@ with tempfile.TemporaryDirectory() as tmp:
     # --- jump rungs need --go on a real device; refused before any m1n1 import ----------------------------------------
     rc, out = run(["--rung", "L1", "--m1n1", "/nonexistent"], None, tmp)
     check(rc == 2 and "--go" in out, "L1 without --go is refused")
+
+    # --- a file the loader reads must be listed in SHA256SUMS ------------------------------------------------------
+    sums = open(os.path.join(tmp, "SHA256SUMS")).read()
+    open(os.path.join(tmp, "SHA256SUMS"), "w").write("".join(l for l in sums.splitlines(True) if "m1guest.bin" not in l))
+    t = Fake()
+    rc, out = run(["--rung", "L3", "--go"], t, tmp)
+    check(rc == 2 and t.calls == [] and "not listed" in out, "an unlisted file is refused")
+    open(os.path.join(tmp, "SHA256SUMS"), "w").write(sums)
 
     # --- bundle integrity ------------------------------------------------------------------------------------------
     with open(os.path.join(tmp, "m1guest.bin"), "ab") as f:

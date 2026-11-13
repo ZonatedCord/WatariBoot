@@ -12,7 +12,8 @@
 #   m1guest.bin          EL1 test guest G1-G11                           (rungs L3, L4, L5)
 #   j293-minimal.dtb/.dts minimal device tree for m1n1's kboot_prepare_dt
 #   watari-load.py       host loader (needs the m1n1 proxyclient of the host, never m1n1.setup)
-#   fdt-dump-src/        fdt_m1_dump as plain C + build.sh (cc), to build on the host if needed
+#   fdt_m1_dump          prebuilt arm64 host tool (no cc needed on the host)
+#   fdt-dump-src/        its source + build.sh (used only if the host has the Command Line Tools)
 #   README-m1-payload.md the rung guide
 #   SHA256SUMS           the loader refuses to run if these do not match
 set -euo pipefail
@@ -105,6 +106,10 @@ chmod +x "$SRC/build.sh"
 (cd "$SRC" && cc -std=c11 -Wall -Wextra -O1 -I. fdt_m1_dump.c fdt_m1.c fdt.c fb.c ram_map.c -o "$WORK/fdt_m1_dump") \
     || die "fdt_m1_dump does not build from the bundle sources"
 "$WORK/fdt_m1_dump" "$OUT/j293-minimal.dtb" > "$WORK/dtb-dump.txt"
+# prebuilt for the host (arm64 macOS): the host never has to run cc (the cc shim can open the CLT installer)
+(cd "$SRC" && cc -arch arm64 -std=c11 -O1 -I. fdt_m1_dump.c fdt_m1.c fdt.c fb.c ram_map.c -o "$OUT/fdt_m1_dump") \
+    || die "prebuilt fdt_m1_dump (arm64) does not build"
+chmod 755 "$OUT/fdt_m1_dump"
 grep -q '^platform m1' "$WORK/dtb-dump.txt" || die "the DTB is not recognised as an M1 tree"
 [ "$(grep -c '^cpu [0-9]' "$WORK/dtb-dump.txt")" = 8 ] || die "the DTB does not give 8 cpus"
 grep -q '^aic 0 base=0x23b100000' "$WORK/dtb-dump.txt" || die "AIC missing"
@@ -125,7 +130,7 @@ Bundle ready: $OUT
 Manual steps for the hardware day (docs/procedures/m3a-day2-hardware.md, README-m1-payload.md):
   1. Copy the bundle folder to the host Mac (Ciani's) into a temp folder inside ~/WatariBoot-host/ (zero footprint).
   2. The m1n1 checkout of day 1 must be there; point the loader at it: --m1n1 <m1n1>/proxyclient or env M1N1_DIR.
-  3. (only if needed) sh fdt-dump-src/build.sh builds fdt_m1_dump with the host's cc; pass it with --fdt-dump.
+  3. fdt_m1_dump is prebuilt (arm64) in the bundle; never run cc on the host without the Command Line Tools.
   4. python3 watari-load.py --rung L0 --dry-run first; then L1 ... L5, one rung at a time.
   5. Afterwards remove the bundle folder.
 EOF
