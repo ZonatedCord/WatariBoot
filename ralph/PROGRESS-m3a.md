@@ -95,3 +95,9 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Review (Sonnet): no blocking defect in the diff; the hw-default-on-M1 hang risk (outside the diff) fixed in 1024042.
 - Opus verified: `make -C el2 test` ALL PASSED (check-pie, check-apple-enc on the linked image, check-nosmc); `run-all.sh` 17/17 both configs; run-moved PASS; run-m1guest G1-G11 PASS through WEL2_LOG in hw and trap (G5a/G5b judged on counters); Windows boot on the merged branch (TAG=t6def-merged) reached the desktop.
 - Open: none of the M1-only branches can run on QEMU (they run first on the M1, rungs L1-L3).
+
+### 2026-11-13 02:10 - T7 EL1 test payload + packaging for m1n1: done (M1 hand-off split out as T7b)
+- Commits: guest 8657894, 7ca9980 (T7a), wiring 948859d, packaging 1757c6b, d1b45cf. `tools/m3a/j293-minimal.dts`, `build-m1-payload.sh` (bundle outside the repo: layer images, guest, DTB, prebuilt arm64 `fdt_m1_dump` + source, loader, README, SHA256SUMS), `watari-load.py` (rungs L0-L5 over the m1n1 proxyclient: never imports `m1n1.setup`, `--go` required for L1-L5, `--dry-run`, SHA check before any proxy call), fake-proxy test, `README-m1-payload.md`.
+- Review (Sonnet, against m1n1 v1.6.1 kboot/proxy/linux.py): no blocking defects; fixed in d1b45cf: L0 starts the secondaries so the 8-cpu parse is validated before any jump; no `cc` on Ciani's Mac (prebuilt dump tool; build only if Command Line Tools already present); dc_cvac; 40 s boot timeout; bundle file list enforced.
+- Opus verified: `python3 -I tools/m3a/test_watari_load.py` ALL PASSED; `make -C el2 test` ALL PASSED; run-m1guest G1-G11 on QEMU (earlier entries).
+- Gap found by Opus: the M1 hand-off from the layer to the test guest was still QEMU-only (chain_to_edk2) -> new task T7b, in progress.
