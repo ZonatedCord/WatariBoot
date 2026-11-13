@@ -409,7 +409,9 @@ int guest_fdt_build(void *buf, uint32_t cap, const struct wel2_gfdt_in *in, uint
 	}
 	wel2_fdtw_end(&w);
 
-	/* The architected timer: PPIs 13, 14, 11, 10 = INTIDs 29, 30, 27, 26 (secure phys, phys, virt, hyp), level, active low. */
+	/* The architected timer: PPIs 13, 14, 11, 10 = INTIDs 29, 30, 27, 26 (secure phys, phys, virt, hyp), flags 4 = IRQ_TYPE_LEVEL_HIGH:
+	 * the GICv3 form (no CPU mask; QEMU's own virt FDT with gic-version=3 carries the same <1 N 4> cells [verified: dumpdtb
+	 * on the bench], and DESIGN 4.2 says 4). EDK2's timer library reads only type and number [verified: DESIGN 4.1]. */
 	wel2_fdtw_begin(&w, "timer");
 	{
 		static const uint32_t irq[12] = { 1, 13, 4, 1, 14, 4, 1, 11, 4, 1, 10, 4 };

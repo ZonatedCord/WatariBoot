@@ -169,12 +169,17 @@ static bool hvc_range_ok(void *ctx, uint64_t pa, uint64_t len)
     (void)ctx;
     if (len == 0 || pa + len < pa)
         return false;
+    /* The whole range inside ONE guest RAM range (the endpoints alone could straddle a hole). */
+    if (g_plat->m1_memory || g_nguest_ram) {
+        if (!wel2_ranges_cover(g_guest_ram, g_nguest_ram, pa, len))
+            return false;
+    } else if (pa < g_ram_base || len > g_ram_end - pa || pa >= g_ram_end) {
+        return false;
+    }
     uint64_t last = pa + len - 1;
 
-    if (!guest_ram_contains(pa) || !guest_ram_contains(last))
-        return false;
-    /* QEMU: guest RAM is one span that includes the layer's carve-out; the layer itself is never readable. The M1
-     * list (g_guest_ram) already excludes it. */
+    /* QEMU: guest RAM is one span that includes the layer's carve-out; the layer itself is never readable. The M1 list
+     * (g_guest_ram) already excludes it. */
     if (!g_plat->m1_memory && pa < g_carve_base + g_carve_size && last >= g_layer_base)
         return false;
     return true;
@@ -868,6 +873,8 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
     vgic_vcpu_wake(&g_vgic, this_cpu());
     if (g_gfdt_build && !g_abi_fdt)
         fatal_msg("wel2.gfdt=build needs wel2.abi=fdt");
+    if (!g_plat->m1_memory && g_nguest_ram && !g_abi_fdt)       /* the patched QEMU FDT would list the split holes as RAM */
+        fatal_msg("wel2.split needs wel2.abi=fdt (and wel2.gfdt=build)");
     if (g_abi_fdt)
         chain_fdt();
     if (g_plat->m1_memory)

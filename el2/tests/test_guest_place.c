@@ -94,6 +94,21 @@ static void t_second_range(void)
 	CHECK_EQ(p.info, R[1].base + 0x10000);
 }
 
+static void t_ranges_cover(void)
+{
+	static const struct wel2_range A[] = { { 0x1000, 0x1000 }, { 0x2000, 0x1000 }, { 0x8000, 0x1000 } };
+
+	CHECK(wel2_ranges_cover(A, 3, 0x1000, 0x1000));
+	CHECK(wel2_ranges_cover(A, 3, 0x1ff8, 8));
+	CHECK(!wel2_ranges_cover(A, 3, 0x1ff8, 16));          /* ends in the next range: still refused (one range only) */
+	CHECK(!wel2_ranges_cover(A, 3, 0x2ff8, 16));          /* straddles the end of a range into a hole */
+	CHECK(!wel2_ranges_cover(A, 3, 0xff8, 16));           /* straddles the start */
+	CHECK(!wel2_ranges_cover(A, 3, 0x8000, 0));
+	CHECK(!wel2_ranges_cover(A, 3, 0x5000, 8));
+	CHECK(!wel2_ranges_cover(A, 3, ~0ULL - 4, 16));       /* wraps */
+	CHECK(!wel2_ranges_cover(A, 0, 0x1000, 8));
+}
+
 int main(void)
 {
 	RUN(t_ok_at_start_of_block);
@@ -104,5 +119,6 @@ int main(void)
 	RUN(t_straddles_end);
 	RUN(t_adjacent_ranges_are_not_joined);
 	RUN(t_second_range);
+	RUN(t_ranges_cover);
 	TESTS_DONE();
 }
