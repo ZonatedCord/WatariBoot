@@ -113,3 +113,8 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 ### 2026-11-13 05:45 - T8 Day-2 hardware procedure: done
 - Commits: ef16541, 8b08016, cdadac5 + Opus text fixes. `docs/procedures/m3a-day2-hardware.md`: instructions for Claude on Ciani's Mac (Italian dialogue, photo protocol, photos as untrusted data, zero footprint), pre-day GATE (run-all 29/29, run-step, run-hold, L0 BLOCK CHECK), rungs L0-L5 with exact `wl` commands, photo/video timing, expected band texts, FAIL tables, go/no-go table (L3 passes G1-G6 and reaches G11 in trap or trap-notc = the layer approach works on the M1), abort/recovery, results template `re/m3a-day2-results.md`, cleanup.
 - Two independent reviews (Sonnet): the first found that the text assumed unmerged code and that a passing run could not be photographed (→ `wel2.hold=1`); the final check against the merged code: READY WITH FIXES (two quoted strings), fixed by Opus. Remaining [check] items are hardware-only (photo by path, tethered boot into proxy, screen wake, Gatekeeper on the prebuilt dump tool).
+
+### 2026-11-13 11:00 - Day 2 GO; plan for night 4
+- Day 2 on the real M1 (Ciani + Marco, PR #83): ladder L0-L5 all PASS, L3 in trap and trap-notc (TC works), timers, all 8 cores. Follow-ups in PR #84 (bundle build with spaces, procedure expected lines, F-32 clean PATH).
+- Marco approved the ADR scope extensions (console hypercall, framebuffer hand-over, guest FDT builder; not the shadow framebuffer).
+- Night 4 plan (branch ralph/m3a-night2): T17, T12a, T12b, T12c, T12d, T13; then T15, T9, T16. Sonnet authors and reviewers; Fable only in extremis. Three full usage windows (Marco does not need the morning).

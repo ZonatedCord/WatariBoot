@@ -1,6 +1,6 @@
 # Draft ADR: The EDK2 platform for the M1 on top of Watari EL2 (package, guest FDT, console, framebuffer, ACPI)
 
-- Status: **draft** (proposed 2026-11-12 by Ralph task T11, to be numbered at merge; reviewed by an independent agent (Sonnet), corrections applied; needs Marco's approval)
+- Status: **draft** (proposed 2026-11-12 by Ralph task T11, to be numbered at merge; reviewed by an independent agent (Sonnet), corrections applied; Marco approved on 2026-11-13 the scope extensions below: decision 5 console hypercall, decision 6 framebuffer hand-over, the guest FDT builder; the shadow framebuffer is NOT approved and stays a later decision)
 - Design: `docs/design/watari-edk2-m1/` (README, DESIGN, PLAN, RISKS)
 - Related: ADR-0002 (EDK2 instead of U-Boot), ADR-0005 (no Microsoft binaries), ADR-0007 (independent from NTASP), `docs/adr/draft-m1-first-boot.md`, `docs/adr/draft-plan-b-el2-layer.md`, `docs/adr/draft-el2-license.md`, `tools/acpigen/README.md` (model `j293`)
 - Marking and short source names as in DESIGN section 0 (`E:` = the EDK2 tree `edk2-stable202608` on the data disk, `MS-…` = Microsoft Learn pages, `A:`/`U:` = Asahi and U-Boot documentation, `N:` = NTASP's Project Mu tree, `HW` = day-1 measurements, `R:` = this repository).
