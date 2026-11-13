@@ -62,7 +62,7 @@
 - An LLM's confidence is an estimate, not a calibrated probability: do not rely on it for irreversible choices.
 
 ### Design
-- A new project or subsystem first gets a design session with `morasca-agent` (PRD, architecture, risks, ADRs in `docs/design/<subsystem>/`).
+- A new project or subsystem first gets a design session with `morasca-agent` (`.claude/agents/morasca-agent.md`, shared through the repo; PRD, architecture, risks, ADRs in `docs/design/<subsystem>/`).
 
 ---
 
