@@ -42,6 +42,7 @@ def make_bundle(tmp):
         "wel2-chain.bin": image(0x100000, b"CHAIN"),
         "m1guest.bin": image(0x20000, b"GUEST"),
         "j293-minimal.dtb": b"\xd0\x0d\xfe\xed" + struct.pack(">I", 64) + b"\0" * 56,
+        "WATARI_M1_EFI.fd": image(0x300000, b"EDK2"),
     }
     for n, d in files.items():
         with open(os.path.join(tmp, n), "wb") as f:
@@ -52,6 +53,13 @@ def make_bundle(tmp):
     with open(os.path.join(tmp, "usable.txt"), "w") as f:
         f.write("usable 0 base=0x800000000 size=0x200000000 end=0xa00000000\n")
     os.chmod(dump, 0o755)
+    gdump = os.path.join(tmp, "gfdt_dump")            # stub: records its arguments, exit code from gfdt-rc.txt
+    with open(gdump, "w") as f:
+        f.write("#!/bin/sh\necho \"$@\" >> \"$(dirname \"$0\")/gfdt-args.txt\"\necho 'guest tree (stub)'\n"
+                "exit $(cat \"$(dirname \"$0\")/gfdt-rc.txt\")\n")
+    with open(os.path.join(tmp, "gfdt-rc.txt"), "w") as f:
+        f.write("0\n")
+    os.chmod(gdump, 0o755)
     with open(os.path.join(tmp, "SHA256SUMS"), "w") as f:
         for n in sorted(files):
             f.write("%s  %s\n" % (hashlib.sha256(files[n]).hexdigest(), n))
@@ -75,6 +83,8 @@ def idx(t, name, nth=0):
 
 class Fake(wl.DryTarget):
     """DryTarget that is quiet and lets the test read back the 'prepared' FDT."""
+    dry_run = False                    # behaves like a device for the checks that a real dry run only reports
+
     def __init__(self):
         super().__init__(echo=False)
 
@@ -199,6 +209,169 @@ with tempfile.TemporaryDirectory() as tmp:
     t = NoConsole()
     rc, _ = run(["--rung", "L0", "--fdt-addr", "0x840000000", "--fdt-dump", os.path.join(tmp, "fdt_m1_dump")], t, tmp)
     check(rc == 0, "L0 with --fdt-addr works")
+
+    # --- E14: --edk2, the third block, wel2.abi=fdt / wel2.gfdt=build / wel2.fb ----------------------------------------
+    FD = os.path.join(tmp, "fdt_m1_dump")
+    GD = os.path.join(tmp, "gfdt_dump")
+    gargs = os.path.join(tmp, "gfdt-args.txt")
+    edk2_size = len(files["WATARI_M1_EFI.fd"])
+
+    def gfdt_calls():
+        return open(gargs).read().splitlines() if os.path.exists(gargs) else []
+
+    if os.path.exists(gargs):
+        os.remove(gargs)
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--fb", "band", "--cpuif", "trap-notc", "--go",
+                   "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    n = names(t)
+    check(rc == 0, "D2 exits 0 after the hand-over")
+    check(n[0] == "malloc" and n[1] == "writemem", "D2: the DTB is allocated and written first")
+    check(n.count("memalign") == 3 and n.count("writemem") == 3, "D2: three 32 MB blocks (layer, spacer, edk2), three writes (DTB, layer, edk2)")
+    allocs = [c for c in t.calls if c[0] == "memalign"]
+    check(all(c[1] == wl.BLOCK and c[2] == wl.BLOCK for c in allocs), "D2: blocks are 32 MB aligned and 32 MB long")
+    wr = [c for c in t.calls if c[0] == "writemem"]
+    edk2_addr = wr[2][1]
+    layer_addr = wr[1][1]
+    check(wr[1][2] == len(files["wel2-chain.bin"]) and wr[2][2] == edk2_size, "D2: the chain layer and the EDK2 image are the two blocks written")
+    check(layer_addr % wl.BLOCK == 0 and edk2_addr % wl.BLOCK == 0 and layer_addr != edk2_addr, "D2: distinct aligned addresses")
+    last_alloc = max(i for i, c in enumerate(t.calls) if c[0] in ("memalign", "writemem"))
+    check(last_alloc < idx(t, "dc_cvau"), "D2: all allocations and copies precede the cache maintenance")
+    check(n.count("dc_cvau") == 2 and n.count("ic_ivau") == 2, "D2: cache maintenance over the layer and EDK2 only")
+    check(idx(t, "ic_ivau", 1) < idx(t, "kboot_set_chosen") < idx(t, "kboot_prepare_dt"), "D2: cache maintenance -> boot arguments -> prepare_dt")
+    want = "wel2.cpuif=trap-notc wel2.guest=0x%x wel2.abi=fdt wel2.gfdt=build wel2.fb=band" % edk2_addr
+    got = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
+    check(got == want, "D2 boot arguments: %r" % got)
+    check("wel2.step" not in got, "D2 passes no wel2.step")
+    check(idx(t, "kboot_prepare_dt") < idx(t, "readmem") < idx(t, "msr_daif") < idx(t, "kboot_boot"),
+          "D2: prepare_dt -> read-back of the FDT -> DAIF -> boot")
+    check(n.index("kboot_boot") == len(n) - 1 and [c for c in t.calls if c[0] == "kboot_boot"][0][1] == layer_addr,
+          "D2: kboot_boot(layer) is the last call")
+    check("smp_start_secondaries" not in n, "D2 starts no secondaries unless --smp")
+    g = gfdt_calls()
+    check(len(g) == 1 and ("--layer 0x%x" % layer_addr) in g[0] and ("--entry 0x%x" % edk2_addr) in g[0] and
+          "--image-size 0x300000" in g[0] and "--fb band" in g[0], "D2 runs gfdt_dump with the layer, entry, image size and fb: %s" % g)
+    check("BLOCK CHECK: PASS" in out and "GUEST FDT CHECK: PASS" in out, "D2: block and guest FDT checks pass before the jump")
+
+    # D2 default --fb is layer and is passed as such
+    t = Fake()
+    rc, _ = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    a = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
+    check(rc == 0 and a.endswith("wel2.abi=fdt wel2.gfdt=build wel2.fb=layer") and "wel2.cpuif=trap " in a, "D2 default: wel2.fb=layer is passed: %r" % a)
+    t = Fake()
+    rc, _ = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--smp", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    check(rc == 0 and idx(t, "kboot_set_chosen") < idx(t, "smp_start_secondaries") < idx(t, "kboot_prepare_dt"),
+          "D2 --smp: set_chosen -> smp_start_secondaries -> prepare_dt")
+
+    # D0: three blocks, nothing written but the DTB, never jumps, no boot arguments
+    os.remove(gargs)
+    t = Fake()
+    rc, out = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd", "--fb", "guest", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    n = names(t)
+    check(rc == 0 and "kboot_boot" not in n and "msr_daif" not in n, "D0 exits 0 and never jumps")
+    check(n.count("memalign") == 3 and n.count("writemem") == 1, "D0 memaligns three blocks and writes only the DTB")
+    check("kboot_set_chosen" not in n, "D0 sets no wel2 arguments")
+    check(all(("%-5s block" % k) in out for k in ("layer", "guest", "edk2")) and "BLOCK CHECK: PASS" in out,
+          "D0 block check covers three blocks and passes")
+    g = gfdt_calls()
+    d0_blocks = [c[1] for c in t.calls if c[0] == "memalign"]
+    check(len(g) == 1 and "--fb guest" in g[0] and "--image-size 0x300000" in g[0], "D0 runs gfdt_dump: %s" % g)
+    check(os.path.isfile(os.path.join(tmp, "out", "prepared-fdt.dtb")), "D0 saves the prepared FDT locally")
+    # the addresses D0 checked are the ones D2 gets (same allocation sequence)
+    t2 = Fake()
+    run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--fdt-dump", FD, "--gfdt-dump", GD], t2, tmp)
+    check([c[1] for c in t.calls if c[0] == "writemem"][0] == [c[1] for c in t2.calls if c[0] == "writemem"][0], "D0 and D2 allocate the DTB at the same place")
+    check(len(d0_blocks) == 3, "D0 allocated three blocks")
+
+    # a heap block (the third) outside usable RAM: block check FAIL, exit 4, no jump (also D2, which reads the FDT back)
+    open(usable_path, "w").write("usable 0 base=0x840000000 size=0x6000000 end=0x846000000\n")
+    t = Fake()
+    rc, out = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    check(rc == 4 and "BLOCK CHECK: FAIL" in out and "edk2  block" in out, "D0: the third (edk2) block outside usable RAM fails the block check")
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    check(rc == 4 and "kboot_boot" not in names(t), "D2: the same failure stops before the jump")
+    open(usable_path, "w").write(good)
+
+    # the layer's placement rule (gfdt_dump exit 1) stops D2; a privacy hit (exit 3) stops it too
+    for code, want_rc, label in ((1, 4, "a placement refusal"), (3, 1, "a privacy self-check hit")):
+        open(os.path.join(tmp, "gfdt-rc.txt"), "w").write("%d\n" % code)
+        t = Fake()
+        rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+        check(rc == want_rc and "kboot_boot" not in names(t), "D2 stops before the jump on %s (exit %d)" % (label, rc))
+    open(os.path.join(tmp, "gfdt-rc.txt"), "w").write("0\n")
+
+    # D2 whose FDT cannot be read back warns and goes on (the checks could not be done); D0 exits 3
+    t = NoConsole()
+    rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--gfdt-dump", GD], t, tmp)
+    check(rc == 0 and "no read-back" in out and "kboot_boot" in names(t), "D2 without a captured FDT address warns and jumps")
+    t = NoConsole()
+    rc, _ = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd"], t, tmp)
+    check(rc == 3, "D0 without a captured FDT address exits 3")
+
+    # --dry-run makes no proxy call: the real connection function is never reached, every call is only recorded
+    connected = []
+    real_connect = wl.connect
+    wl.connect = lambda *a, **k: connected.append(a) or (_ for _ in ()).throw(AssertionError("connect called"))
+    try:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = wl.main(["--bundle", tmp, "--out", os.path.join(tmp, "out"), "--rung", "D0", "--edk2", "WATARI_M1_EFI.fd",
+                          "--dry-run", "--fdt-dump", FD, "--gfdt-dump", GD])
+        check(rc == 0 and not connected and "DRY RUN" in out.getvalue(), "D0 --dry-run opens no device (connect never called)")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = wl.main(["--bundle", tmp, "--out", os.path.join(tmp, "out"), "--rung", "D2", "--edk2", "WATARI_M1_EFI.fd",
+                          "--dry-run", "--fdt-dump", FD, "--gfdt-dump", GD])
+        check(rc == 0 and not connected and "[proxy] kboot_boot" in out.getvalue(), "D2 --dry-run opens no device and only prints the proxy calls")
+    finally:
+        wl.connect = real_connect
+
+    # refusals: no proxy call is made
+    for argv, label in ((["--rung", "D2", "--go"], "D2 without --edk2"),
+                        (["--rung", "D0"], "D0 without --edk2"),
+                        (["--rung", "L3", "--go", "--edk2", "WATARI_M1_EFI.fd"], "--edk2 with L3"),
+                        (["--rung", "D2", "--go", "--edk2", "/etc/hosts"], "--edk2 outside the bundle"),
+                        (["--rung", "D2", "--go", "--edk2", "../WATARI_M1_EFI.fd"], "--edk2 with ..")):
+        t = Fake()
+        rc, out = run(argv, t, tmp)
+        check(rc == 2 and t.calls == [], "%s is refused (exit 2) before any proxy call" % label)
+
+    # an EDK2 image that is not listed in SHA256SUMS, or that was changed, is refused before any proxy call
+    sums = open(os.path.join(tmp, "SHA256SUMS")).read()
+    open(os.path.join(tmp, "SHA256SUMS"), "w").write("".join(l for l in sums.splitlines(True) if "WATARI_M1_EFI.fd" not in l))
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go", "--edk2", "WATARI_M1_EFI.fd"], t, tmp)
+    check(rc == 2 and t.calls == [] and "not listed" in out, "an unlisted EDK2 image is refused")
+    open(os.path.join(tmp, "SHA256SUMS"), "w").write(sums)
+    efi = os.path.join(tmp, "WATARI_M1_EFI.fd")
+    orig_efi = open(efi, "rb").read()
+    open(efi, "ab").write(b"x")
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go", "--edk2", "WATARI_M1_EFI.fd"], t, tmp)
+    check(rc == 2 and t.calls == [] and "mismatch" in out, "a modified EDK2 image is refused (SHA-256)")
+    open(efi, "wb").write(orig_efi)
+    open(efi, "wb").write(image(wl.BLOCK + 16))
+    t = Fake()
+    sums_save = open(os.path.join(tmp, "SHA256SUMS")).read()
+    open(os.path.join(tmp, "SHA256SUMS"), "w").write("".join(
+        (hashlib.sha256(open(efi, "rb").read()).hexdigest() + "  WATARI_M1_EFI.fd\n") if "WATARI_M1_EFI.fd" in l else l
+        for l in sums_save.splitlines(True)))
+    rc, out = run(["--rung", "D2", "--go", "--edk2", "WATARI_M1_EFI.fd"], t, tmp)
+    check(rc == 1 and t.calls == [] and "32 MB block" in out, "an EDK2 image larger than its 32 MB block is refused")
+    open(efi, "wb").write(orig_efi)
+    open(os.path.join(tmp, "SHA256SUMS"), "w").write(sums)
+    t = Fake()
+    rc, _ = run(["--rung", "D2", "--go", "--edk2", "WATARI_M1_EFI.fd", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    check(rc == 0, "the bundle is back to a good state")
+
+    # wel2.fb on the non-EDK2 rungs: only when it is not the default
+    t = Fake()
+    run(["--rung", "L3", "--go", "--fb", "band"], t, tmp)
+    a = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
+    check(a.endswith(" wel2.fb=band") and "wel2.abi" not in a, "L3 --fb band appends wel2.fb=band only: %r" % a)
+    check(wl.build_bootargs(3, "trap", 0x840000000, "", edk2=False, fb="layer") == "wel2.step=3 wel2.cpuif=trap wel2.guest=0x840000000",
+          "build_bootargs: the default fb adds nothing on the test-guest rungs")
 
     # --- jump rungs need --go on a real device; refused before any m1n1 import ----------------------------------------
     rc, out = run(["--rung", "L1", "--m1n1", "/nonexistent"], None, tmp)

@@ -156,6 +156,7 @@ def build_bootargs(step, cpuif, guest_addr, extra, edk2=False, fb="layer"):
 class DryTarget:
     """No device. Prints every proxy call and records it in self.calls. Also the base of the unit test's fake."""
     transport_errors = (OSError,)
+    dry_run = True                          # a real --dry-run (fake addresses, the "prepared" FDT is the DTB); the unit test's fake says False
 
     def __init__(self, echo=True):
         self.calls = []
@@ -245,6 +246,7 @@ class DryTarget:
 
 class M1n1Target:
     """The real thing: m1n1 proxyclient objects (proxy, proxyutils). Built by connect()."""
+    dry_run = False
 
     def __init__(self, iface, p, u, errors, daif_reg):
         self.iface, self.p, self.u = iface, p, u
@@ -428,20 +430,21 @@ def ensure_dump_tool(bundle, given, name="fdt_m1_dump"):
 def run_gfdt(tool, blob_path, layer_addr, entry, image_size, fb):
     """gfdt_dump on the prepared FDT: the guest FDT the layer would build. Returns (rc, stdout). Prints the tool's stdout;
     its stderr lines (NOTE / PRIVACY / refusal reasons) are echoed. Output is the guest tree, never the prepared FDT."""
+    out = os.path.join(os.path.dirname(blob_path), "guest-fdt.dtb")
+    if os.path.exists(out):
+        os.remove(out)
     cmd = [tool, blob_path, "--layer", "0x%x" % layer_addr, "--entry", "0x%x" % entry,
-           "--image-size", "0x%x" % image_size, "--fb", fb]
+           "--image-size", "0x%x" % image_size, "--fb", fb, "-o", out]
     r = subprocess.run(cmd, capture_output=True, text=True)
     say("== gfdt_dump (the guest FDT the layer would build; no serial number, MAC or seed can appear) ==")
     sys.stdout.write(r.stdout)
     for ln in r.stderr.splitlines():
         say("  gfdt_dump: " + ln)
-    if shutil.which("dtc") and r.returncode == 0:
-        out = os.path.join(os.path.dirname(blob_path), "guest-fdt.dtb")
-        if subprocess.run(cmd + ["-o", out], capture_output=True).returncode == 0:
-            d = subprocess.run(["dtc", "-q", "-I", "dtb", "-O", "dts", out], capture_output=True, text=True)
-            if d.returncode == 0:
-                say("== the same guest FDT through dtc ==")
-                sys.stdout.write(d.stdout)
+    if r.returncode == 0 and os.path.isfile(out) and shutil.which("dtc"):
+        d = subprocess.run(["dtc", "-q", "-I", "dtb", "-O", "dts", out], capture_output=True, text=True)
+        if d.returncode == 0:
+            say("== the same guest FDT through dtc ==")
+            sys.stdout.write(d.stdout)
     return r.returncode, r.stdout
 
 
@@ -542,7 +545,7 @@ def run(args, target):
 
     # --- 4. boot arguments, after the allocations --------------------------------------------------------------------
     bootargs = build_bootargs(step, args.cpuif, edk2_addr if edk2_addr is not None else guest_addr, args.args,
-                              edk2=edk2_addr is not None, fb=args.fb)
+                              edk2=edk2_addr is not None, fb="layer" if preview else args.fb)
     if bootargs:
         say('boot arguments: "%s"' % bootargs)
         target.set_chosen("bootargs", bootargs)
@@ -632,7 +635,7 @@ def run(args, target):
                 if grc == 3:
                     say("GUEST FDT CHECK: FAIL - privacy self-check hit; do not use or share this output.")
                     return 1
-                if grc and not isinstance(target, DryTarget):
+                if grc and not target.dry_run:
                     say("GUEST FDT CHECK: FAIL - the layer's placement rule or the builder would refuse this (rc %d); the "
                         "layer would stop with a FATAL line. Nothing was jumped to." % grc)
                     return 4
