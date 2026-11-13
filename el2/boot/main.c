@@ -587,10 +587,10 @@ void el2_exception(struct frame *f, unsigned idx)
         handle_smc(f);
     } else if (idx == 8 && ec == EC_DABT_LOWER) {
         handle_dabt(f, idx);
+    } else if (idx == 8 && ec == EC_SYSREG && idreg_trap(f)) {
+        /* T6g: a read of the ID group 3 (HCR_EL2.TID3), decoded first: it is cheap and touches no ICH register */
     } else if (idx == 8 && ec == EC_SYSREG && cpuif_sysreg_trap(f)) {
         /* ICC_SGI*R_EL1 write: the SGI is now pending in the model */
-    } else if (idx == 8 && ec == EC_SYSREG && idreg_trap(f)) {
-        /* T6g: a read of the ID group 3 (HCR_EL2.TID3); nothing else changed, but the flush below is harmless */
     } else if (idx == 10 && g_plat->fiq) {
         g_plat->fiq(f);                      /* T6e: the Apple FIQ (timer, IPI, PMU); QEMU has none: fatal below */
         cpuif_flush();                       /* the FIQ may have raised a vGIC line (timer, IPI): deliver it */
@@ -904,7 +904,7 @@ static bool cpu_has_pauth(void)
 
     __asm__ volatile("mrs %0, id_aa64isar1_el1" : "=r"(isar1));
     __asm__ volatile("mrs %0, id_aa64isar2_el1" : "=r"(isar2));
-    return ((isar1 >> 4) & 0xff) || ((isar1 >> 24) & 0xff) || ((isar2 >> 8) & 0xff) || ((isar2 >> 12) & 0xf);
+    return ((isar1 >> 4) & 0xff) || ((isar1 >> 24) & 0xff) || ((isar2 >> 8) & 0xff);   /* ISAR2: GPA3 [11:8], APA3 [15:12] */
 }
 
 /* ---- EL2 main ---------------------------------------------------------------- */

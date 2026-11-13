@@ -74,11 +74,36 @@ bool wel2_idreg_nth(unsigned n, unsigned *crm, unsigned *op2)
 	return false;
 }
 
+// A known register the CPU may not implement as an accessible register: reading it at EL2 could be an UNDEF, which would
+// be fatal in the middle of the boot. The decision comes from ID_AA64PFR0/1, which every ARMv8 core has:
+//   CRm 1..3 (the AArch32 ID registers: ID_PFR*, ID_DFR*, ID_MMFR*, ID_ISAR*, MVFR*)  AArch64 only at EL0 and EL1
+//   ID_AA64ZFR0_EL1 (4,4)    ID_AA64PFR0_EL1.SVE [35:32] = 0
+//   ID_AA64SMFR0_EL1 (4,5)   ID_AA64PFR1_EL1.SME [27:24] = 0
+// [hypothesis: such registers are RAZ or UNDEF depending on the core; zero is the architectural value of "not implemented"]
+static bool skip_read(wel2_idreg_read_fn rd, void *ctx, unsigned crm, unsigned op2)
+{
+	uint64_t pfr;
+
+	if (crm >= 1 && crm <= 3) {
+		pfr = rd(ctx, WEL2_IDREG_PFR0_CRM, 0);
+		return (pfr & 0xf) == 1 && ((pfr >> 4) & 0xf) == 1;       // EL0 and EL1 AArch64 only
+	}
+	if (crm == 4 && op2 == 4) {
+		pfr = rd(ctx, WEL2_IDREG_PFR0_CRM, 0);
+		return ((pfr >> 32) & 0xf) == 0;
+	}
+	if (crm == 4 && op2 == 5) {
+		pfr = rd(ctx, WEL2_IDREG_PFR0_CRM, 1);
+		return ((pfr >> 24) & 0xf) == 0;
+	}
+	return false;
+}
+
 uint64_t wel2_idreg_value(wel2_idreg_read_fn rd, void *ctx, unsigned crm, unsigned op2)
 {
 	uint64_t v;
 
-	if (!wel2_idreg_known(crm, op2))
+	if (!wel2_idreg_known(crm, op2) || skip_read(rd, ctx, crm, op2))
 		return 0;
 	v = rd(ctx, crm, op2);
 	if (crm == WEL2_IDREG_PFR0_CRM && op2 == WEL2_IDREG_PFR0_OP2)

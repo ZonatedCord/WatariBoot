@@ -757,9 +757,35 @@ bool cpuif_sysreg_trap(struct frame *f)
         f->elr += 4;
         return true;
     }
-    if (!g_cpuif_trap)
+    if (!g_cpuif_trap || (crn != 12 && crn != 4))     /* ICC_* are CRn 12 (and ICC_PMR_EL1 CRn 4): nothing else reads the ICH registers */
         return false;
-    return icc_emulate(f, crn, crm, op2, rt, dir);
+    if (icc_emulate(f, crn, crm, op2, rt, dir))
+        return true;
+    /* T6g review: an ICC access in trap mode that nothing emulates (e.g. ICC_SRE_EL1 if ICH_HCR_EL2.TC turns out to trap it,
+     * [hypothesis], or a register the model lacks): say which one, on the UART and in the panel's error line, before the
+     * caller's register dump halts. Name format S3_<op1>_C<CRn>_C<CRm>_<op2>. */
+    {
+        char nm[48] = "unemulated ICC access S3_0_C";
+        unsigned k = 0;
+
+        while (nm[k])
+            k++;
+        if (crn >= 10)
+            nm[k++] = (char)('0' + crn / 10);
+        nm[k++] = (char)('0' + crn % 10);
+        nm[k++] = '_'; nm[k++] = 'C';
+        if (crm >= 10)
+            nm[k++] = (char)('0' + crm / 10);
+        nm[k++] = (char)('0' + crm % 10);
+        nm[k++] = '_'; nm[k++] = (char)('0' + op2);
+        nm[k++] = dir ? 'R' : 'W';                       /* R = MRS (read), W = MSR (write) */
+        nm[k] = 0;
+        puts_("Watari EL2: ");
+        puts_(nm);
+        puts_("\n");
+        wel2_fb_set_error(&g_fb, nm);
+    }
+    return false;
 }
 
 static unsigned lpi_total(void)

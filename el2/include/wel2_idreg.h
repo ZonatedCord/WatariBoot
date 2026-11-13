@@ -48,7 +48,10 @@ bool wel2_idreg_known(unsigned crm, unsigned op2);
 unsigned wel2_idreg_count(void);
 bool wel2_idreg_nth(unsigned n, unsigned *crm, unsigned *op2);
 
-/* The value the guest reads. rd(ctx, crm, op2) returns the real register and is called only for known encodings. */
+/* The value the guest reads. rd(ctx, crm, op2) returns the real register and is called only for known encodings; it is not
+ * called for the AArch32 ID group (CRm 1..3) when ID_AA64PFR0_EL1 shows AArch64-only EL0 and EL1, nor for ID_AA64ZFR0_EL1
+ * when PFR0.SVE = 0 or ID_AA64SMFR0_EL1 when PFR1.SME = 0 (those read 0; a possible UNDEF at EL2 must not happen). The
+ * decision itself reads ID_AA64PFR0_EL1 / PFR1_EL1 through rd. */
 typedef uint64_t (*wel2_idreg_read_fn)(void *ctx, unsigned crm, unsigned op2);
 uint64_t wel2_idreg_value(wel2_idreg_read_fn rd, void *ctx, unsigned crm, unsigned op2);
 
