@@ -15,6 +15,7 @@ Claims are marked **[verified: source]** or **[hypothesis]**; everything not yet
 | `m1guest.bin` | EL1 test guest, checks G1-G11 (rungs L3-L5) |
 | `j293-minimal.dts/.dtb` | minimal j293 device tree that m1n1's `kboot_prepare_dt` fills (DESIGN 4.2) |
 | `watari-load.py` | the host loader |
+| `ehw2.py` | optional read-only inventory of the state inherited from iBoot/m1n1 (`docs/procedures/m3a-ehw2-rung.md`) |
 | `fdt_m1_dump` | prebuilt arm64 host tool (the layer's FDT parser), covered by `SHA256SUMS`; no compiler needed on the host |
 | `fdt-dump-src/` | its source plus `build.sh`; the loader builds from it only if `xcode-select -p` succeeds, never otherwise (the `cc` shim can open the Command Line Tools installer) |
 | `SHA256SUMS` | the loader refuses to run if any file differs |

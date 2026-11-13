@@ -5,8 +5,10 @@
 What it does: PMGR power states, ASC (coprocessor) control/status, SART entries, DART stream state, DWC3/ATC words, ADT facts.
 What it never does: any write (no write*, set32, clear32, mask32, memcpy...), no NVRAM access of any kind, no import of m1n1.setup
 (that module writes the PMU), no chainload, no SMP start. The only proxy calls are read32, read64, set_exc_guard and get_exc_count.
-Rules: a block is read only if the PS register of its power domain says ACTUAL == 0xf; the exception guard is set before the first read,
-the exception count is checked after every read, and the guard is restored to OFF at exit. Every address is derived from the ADT and
+Rules: a block is read only if the PS register of its power domain says ACTUAL == 0xf. P_READ32/P_READ64 already run under GUARD_MARK
+inside the proxy (a faulting read returns a marker and bumps the exception count, m1n1 does not reboot); we still set GUARD.SKIP|SILENT
+before the first read and restore GUARD.OFF at exit (harmless). get_exc_count() returns the count AND resets it: any value > 0 after a
+read means that read faulted; the marker values 0xacce5515abad1dea / low32 0xabad1dea are rejected too. Every address is derived from the ADT and
 checked against the constant from the public sources; a mismatch or a missing ADT entry means SKIP (never a guess).
 Caveat: this runs while m1n1 serves the proxy, i.e. BEFORE kboot_boot and the shutdowns of m1n1_main's tail: it is not the final
 hand-over state (DWC3 of the console port is running, pcie_init has not run, display/mmu shutdown not yet done).
@@ -52,9 +54,8 @@ ASCS = [
     ("SEP ASC", "/arm-io/sep", 0, 0x242400000, "sep"),
     ("SMC ASC", "/arm-io/smc", 0, 0x23e400000, None),
     ("AOP ASC", "/arm-io/aop", 0, 0x24a400000, None),
-    ("PMP ASC", "/arm-io/pmp", 0, None, "pmp"),
 ]
-NVME = ("ANS NVMe", "/arm-io/ans", 3, 0x27bcc0000, "ans2")
+NVME = ("ANS NVMe", "/arm-io/ans", 3, 0x27bcc0000, ("ans2", "apcie_st"))
 SART = ("SART ans", "/arm-io/sart-ans", 0, 0x27bc50000, "ans2")
 DARTS = [
     ("dart-disp0", "/arm-io/dart-disp0", 0, 0x231304000, "disp0_cpu0"),
@@ -80,19 +81,22 @@ def decode_ps(v):
     return "actual=0x%x(%s) target=0x%x %s" % ((v >> 4) & 0xf, t, v & 0xf, " ".join(fl))
 
 
-class Reader:
-    """The only object that touches the proxy. Methods: read32/read64 + guard handling. Faulting reads return None."""
+MARKERS = (0xacce5515abad1dea,)
 
-    def __init__(self, p, guard_skip_silent):
+
+class Reader:
+    """The only object that touches the proxy (read32/read64 + get_exc_count). Faulting reads return None.
+    get_exc_count() returns the count and RESETS it (proxy.c:91-94): fault = count > 0."""
+
+    def __init__(self, p):
         self.p, self.faults, self.reads = p, 0, 0
-        self.p.set_exc_guard(guard_skip_silent)            # BEFORE the first read
-        self.last = self.p.get_exc_count()
+        self.p.get_exc_count()                               # drain any old count
 
     def _chk(self, v):
         self.reads += 1
         c = self.p.get_exc_count()
-        if c != self.last:
-            self.last, self.faults = c, self.faults + 1
+        if c > 0 or v in MARKERS or (v is not None and (v & 0xffffffff) == 0xabad1dea):
+            self.faults += 1
             return None
         return v
 
@@ -101,9 +105,6 @@ class Reader:
 
     def r64(self, a):
         return self._chk(self.p.read64(a))
-
-    def restore(self, guard_off):
-        self.p.set_exc_guard(guard_off)
 
 
 def adt_index(adt):
@@ -145,28 +146,44 @@ def resolve(adt, idx, name, path, reg, const, say):
 
 
 def pmgr_devices(adt, say):
-    """Best-effort parse of /arm-io/pmgr `devices` + `ps-regs` (m1n1 src/pmgr.c struct pmgr_device, 0x30 bytes).
-    Returns {id: (name, gate_address)}; {} if anything looks different from what was read in the sources."""
+    """Parse /arm-io/pmgr `devices` + `ps-regs` (m1n1 v1.6.1 src/pmgr.c:23-48 struct pmgr_device, 0x30 bytes, and proxyclient adt.py:84-112):
+    flags@0 (0x10 = virtual), id1@3, parents@4-7, addr_offset@0x0a, psreg_idx@0x0b, id2@0x1a, name@0x20.
+    Returns {id: (name, PS register address)}; {} if the table fails a sanity check, a derived address is outside the PMGR windows,
+    or "ANS2" does not resolve to PMGR0+0x3f0 (then the ADT-gate feature is off)."""
     try:
         node = adt["/arm-io/pmgr"]
         props = node._properties
         dev, ps = bytes(props["devices"]), bytes(props["ps-regs"])
-        regs = [node.get_reg(i)[0] for i in range(3)]
+        wins = [node.get_reg(0), node.get_reg(1)]
         n = len(dev) // 0x30
-        u8id = n >= 2 and dev[3] != dev[0x30 + 3]
-        out = {}
+        if n < 2 or len(dev) % 0x30:
+            raise ValueError("devices length 0x%x is not a multiple of 0x30" % len(dev))
+        u8id = dev[3] != dev[0x30 + 3]
+        out, named = {}, 0
         for i in range(n):
             d = dev[i * 0x30:(i + 1) * 0x30]
-            flags, id1, addr_off, psidx = d[0], d[3], d[0x0b], d[0x0c]
-            id2 = struct.unpack_from("<H", d, 0x1c)[0]
-            name = d[0x20:0x30].split(b"\0")[0].decode("ascii", "replace")
+            flags, id1, addr_off, psidx = d[0], d[3], d[0x0a], d[0x0b]
+            id2 = struct.unpack_from("<H", d, 0x1a)[0]
+            raw = d[0x20:0x30].split(b"\0")[0]
+            if not raw or not all(32 <= c < 127 for c in raw):
+                raise ValueError("device %d has no printable name" % i)
+            named += 1
             if flags & 0x10 or psidx * 12 + 12 > len(ps):
                 continue
             ridx, roff = struct.unpack_from("<II", ps, psidx * 12)
-            out[id1 if u8id else id2] = (name, regs[ridx] + roff + (addr_off << 3))
+            if ridx > 1:
+                continue
+            a = wins[ridx][0] + roff + (addr_off << 3)
+            if a % 4 or not (wins[ridx][0] <= a < wins[ridx][0] + wins[ridx][1]):
+                say("  (PMGR device %s: derived address 0x%x outside its window, ignored)" % (raw.decode(), a))
+                continue
+            out[id1 if u8id else id2] = (raw.decode(), a)
+        names = {v[0]: v[1] for v in out.values()}
+        if names.get("ANS2") != wins[0][0] + 0x3f0:
+            raise ValueError("cross-check failed: ANS2 -> %s, expected 0x%x" % ("0x%x" % names["ANS2"] if "ANS2" in names else "absent", wins[0][0] + 0x3f0))
         return out
     except Exception as e:
-        say("  (PMGR device table not parsed: %s %s)" % (type(e).__name__, e))
+        say("  (PMGR device table not used: %s %s)" % (type(e).__name__, e))
         return {}
 
 
@@ -176,9 +193,11 @@ def gate_from_adt(adt, path, devs):
         cg = adt[path]._properties.get("clock-gates")
         if cg is None:
             return None
-        cg = cg if hasattr(cg, "__len__") else [cg]
-        ids = [int(x) & 0xffff for x in cg]
-        return devs[ids[0]][1] if ids and ids[0] in devs else None
+        cg = list(cg) if hasattr(cg, "__len__") else [cg]
+        if not cg or (int(cg[0]) >> 28) != 0:
+            return None                                  # die 0 only
+        i0 = int(cg[0]) & 0xffff
+        return devs[i0][1] if i0 in devs else None
     except Exception:
         return None
 
@@ -191,9 +210,12 @@ def run(p, adt, guard_skip_silent, guard_off, ram, out, devs_parse=True):
         if out:
             out(s)
 
-    rd = Reader(p, guard_skip_silent)
+    guard_set, rd = False, None
     try:
-        say("== ehw2: read-only; guard SKIP|SILENT set before the first read; faults are counted per read ==")
+        p.set_exc_guard(guard_skip_silent)                   # BEFORE the first read (harmless: reads run under GUARD_MARK anyway)
+        guard_set = True
+        rd = Reader(p)
+        say("== ehw2: read-only; guard SKIP|SILENT set before the first read; a fault is get_exc_count() > 0 after a read ==")
         idx = adt_index(adt)
         bases = {}
         for k, (const, path) in {0: (PMGR0, "/arm-io/pmgr"), 1: (PMGR1, None)}.items():
@@ -220,8 +242,11 @@ def run(p, adt, guard_skip_silent, guard_off, ram, out, devs_parse=True):
                 vals = [rd.r32(bases[k] + start + 8 * i) for i in range(cnt)]
                 say("  PMGR%d PS block +0x%x x%d: %s" % (k, start, cnt, " ".join("-" if v is None else "%02x" % (v & 0xff) for v in vals)))
         try:
-            clk = adt["/arm-io/pmgr"].get_reg(2)[0]
+            clk, clk_size = adt["/arm-io/pmgr"].get_reg(2)
             for start, cnt in CLK_RANGES:
+                if start + 4 * cnt > clk_size:
+                    say("  CLK_CFG +0x%x x%d skipped: beyond ADT reg 2 size 0x%x" % (start, cnt, clk_size))
+                    continue
                 vals = [rd.r32(clk + start + 4 * i) for i in range(cnt)]
                 say("  CLK_CFG (reg2)+0x%x x%d: %s" % (start, cnt, " ".join("-" if v is None else "%08x" % v for v in vals)))
         except Exception as e:
@@ -231,11 +256,12 @@ def run(p, adt, guard_skip_silent, guard_off, ram, out, devs_parse=True):
         def gate_ok(name, gate):
             if gate is None:
                 return False, "no known power domain"
-            v = ps_val.get(gate)
-            if v is None:
-                return False, "gate %s unreadable" % gate
-            if (v >> 4) & 0xf != PS_ACTIVE:
-                return False, "gate %s not ACTIVE (0x%08x)" % (gate, v)
+            for g in ((gate,) if isinstance(gate, str) else gate):
+                v = ps_val.get(g)
+                if v is None:
+                    return False, "gate %s unreadable" % g
+                if (v >> 4) & 0xf != PS_ACTIVE:
+                    return False, "gate %s not ACTIVE (0x%08x)" % (g, v)
             return True, ""
 
         def block(spec, regs, extra_gate=None):
@@ -349,7 +375,8 @@ def run(p, adt, guard_skip_silent, guard_off, ram, out, devs_parse=True):
             say("  /chosen/memory-map: not available (%s)" % type(e).__name__)
         say("done: %d reads, %d faulted" % (rd.reads, rd.faults))
     finally:
-        rd.restore(guard_off)
+        if guard_set:
+            p.set_exc_guard(guard_off)
     return lines
 
 
@@ -361,7 +388,7 @@ def dry_run(say):
         say("  %-14s %s+0x%05x" % (nm, "main" if k == 0 else "mini", off))
     for spec in ASCS + [NVME, SART] + DARTS + DWC3 + PHY + PIPE:
         name, path, reg, const, gate = spec
-        say("block %-14s adt=%s reg[%d] const=%s gate=%s" % (name, path, reg, "0x%x" % const if const else "-", gate or "ADT clock-gates or skip"))
+        say("block %-14s adt=%s reg[%d] const=%s gate=%s" % (name, path, reg, "0x%x" % const if const else "-", "+".join((gate,) if isinstance(gate, str) else gate) if gate else "ADT clock-gates or skip"))
     say("never read: NVRAM (not on the proxy), /options and /chosen values (names only)")
 
 

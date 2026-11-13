@@ -12,6 +12,7 @@
 #   m1guest.bin          EL1 test guest G1-G11                           (rungs L3, L4, L5)
 #   j293-minimal.dtb/.dts minimal device tree for m1n1's kboot_prepare_dt
 #   watari-load.py       host loader (needs the m1n1 proxyclient of the host, never m1n1.setup)
+#   ehw2.py              optional read-only inherited-state inventory (docs/procedures/m3a-ehw2-rung.md)
 #   fdt_m1_dump          prebuilt arm64 host tool (no cc needed on the host)
 #   fdt-dump-src/        its source + build.sh (used only if the host has the Command Line Tools)
 #   README-m1-payload.md the rung guide
@@ -128,6 +129,7 @@ grep -q '^wdt base=0x23d2b0000' "$WORK/dtb-dump.txt" || die "WDT missing"
 sed 's/^/  /' "$WORK/dtb-dump.txt"
 
 cp "$HERE/watari-load.py" "$OUT/"
+cp "$HERE/ehw2.py" "$OUT/"
 cp "$HERE/README-m1-payload.md" "$OUT/"
 
 echo "== SHA256SUMS =="
