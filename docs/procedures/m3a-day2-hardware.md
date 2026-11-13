@@ -14,7 +14,7 @@ Status: procedure, never run yet. Written 2026-11-13. Repository text is English
 
 **Observability.** The only channel from the M1 to Claude is **photos of the M1's own screen**, taken from Ciani's Mac (webcam) or a phone, and read by Claude. There is no serial console unless the people explicitly decide on the optional kit (DESIGN 7; section 1.6 says why we do not plan on it). So this procedure is a **dialogue protocol**: Marco acts on the M1, Claude asks for a photo at defined moments, reads it according to `el2/boot/README.md` "Reading the screen from a photo", and decides: next step, retry, or abort.
 
-Marking: **[verified: source]** read in the repository while writing this document (2026-11-13); **[hypothesis]** a belief not yet measured; **[check]** not verified, confirm on the spot before relying on it. The rungs L3-L5 depend on the M1 guest hand-off (T7b, being implemented when this was written): **[check: needs T7b]** is attached to everything that does.
+Marking: **[verified: source]** read in the repository while writing this document (2026-11-13); **[hypothesis]** a belief not yet measured; **[check]** not verified, confirm on the spot before relying on it. T6g (ladder, `trap-notc`, checkpoints), the T6h wiring, T7b (M1 guest hand-off) and `wel2.hold=1` were merged into `ralph/m3a-night` before the last revision of this text and the band texts below were checked against the code (`el2/vgic/fb.c`, `el2/boot/main.c`, `el2/boot/stage1.c`, `el2/guest/main.c`). What remains **[check]** can only be known on the hardware.
 
 Sources used: `docs/procedures/m3a-day1-hardware.md`, `re/m3a-ehw0-measurements.md`, `docs/FAILURES.md` (F-29), `docs/design/watari-el2-m1boot/{DESIGN,PLAN,RISKS,T7-wiring}.md`, `tools/m3a/README-m1-payload.md`, `tools/m3a/watari-load.py`, `tools/m3a/build-m1-payload.sh`, `el2/boot/README.md`.
 
@@ -22,18 +22,20 @@ Sources used: `docs/procedures/m3a-day1-hardware.md`, `re/m3a-ehw0-measurements.
 
 ## Pre-day GATE: the bundle's commit must contain this (Marco/Opus check on Marco's Mac, before anything else)
 
-The text below describes the layer **after** these items. Until each one is merged into the commit the bundle is built from, everything marked **[check: needs T6g merge]**, **[check: needs T7b]** or **[check: needs the hold option]** is a hypothesis about the screen, and the day does not start.
+The text below describes the layer **with** these items (all merged into `ralph/m3a-night`). The bundle must be built from a commit that contains them; if any gate fails the day does not start.
 
 | # | Item | Concrete check |
 |---|---|---|
-| G-1 | **T6g**: `wel2.step`, `wel2.cpuif=trap-notc`, layer checkpoints 0-11 (`el2/include/wel2_chk.h`, README "Checkpoints" table), the SKIP state | `git log` contains the T6g merge; `./run-all.sh` ends **28/28** (it includes `test_chk.c`, which compares the README table with the code); `el2/boot/run-step.sh` passes |
-| G-2 | **T6h wiring**: `wel2_fb_set_rung` and `wel2_fb_set_error` called from the boot code (band line 1 `RUNG L<n> STEP <s>`, `LAST ERROR` text) | `grep -n 'wel2_fb_set_rung\|wel2_fb_set_error' el2/boot/*.c` finds calls in `main.c`/`util.c`; `make -C el2 test` green |
-| G-3 | **T7b**: M1 guest hand-off (`wel2.guest=0x<addr>`, info block in guest RAM, stage-2 map, `eret` to the guest) | `./run-all.sh` 28/28 includes `run-m1guest.sh`; the L3 dry run (G-6) prints the `wel2.guest=` argument |
+| G-1 | **T6g**: `wel2.step`, `wel2.cpuif=trap-notc`, layer checkpoints 0-11 (`el2/include/wel2_chk.h`, README "Checkpoints" table), the SKIP state | `git log` contains the T6g merge; `el2/boot/run-all.sh` ends with **29 PASS lines and no FAIL** (host tests incl. `test_chk.c`, which compares the README table with the code; 3 modes x 8 QEMU runs incl. `run-m1guest`; `run-step`, `run-hold`, `run-tid3`, `run-g5b-negative`; the count assumes the data disk for `run-m1-4`, `SKIP_M14` unset and the optional hybrid-AIC QEMU absent; a SKIP line is not a failure) |
+| G-2 | **T6h wiring**: `wel2_fb_set_rung` and `wel2_fb_set_error` called from the boot code (band line 1 `RUNG L<n> STEP <s>`, `LAST ERROR` text) | `grep -n 'wel2_fb_set_rung\|wel2_fb_set_error' el2/boot/*.c` finds `stage1.c` (set_rung) and `main.c`/`cpuif.c` (set_error); `make -C el2 test` green |
+| G-3 | **T7b**: M1 guest hand-off (`wel2.guest=0x<addr>`, info block in guest RAM, stage-2 map, `eret` to the guest) | `run-all.sh` includes `run-m1guest` in all three modes (hw, trap, trap-notc); the L3 dry run (G-6) prints the `wel2.guest=` argument; `docs/design/watari-el2-m1boot/T7-wiring.md` section 6 describes what the loader must pass |
 | G-4 | **`wel2.hold=1`**: hold the final screen instead of resetting (step 2 after checkpoint 5, and the guest's final `SYSTEM_RESET`); `wel2.step=1` is not held | `el2/boot/run-hold.sh` passes (HOLD message, QEMU still alive 5 s later) |
-| G-5 | **Core index** in `start.S` (`wel2_core_index`, Aff0 + 4 x Aff1; the P cores have Aff1 = 1, `re/m3a-ehw0-measurements.md`) | `grep -n 'wel2_core_index' el2/boot/start.S` finds it |
+| G-5 | **Core index** in `start.S` (`wel2_core_index`, Aff0 + 4 x Aff1; the P cores have Aff1 = 1, `re/m3a-ehw0-measurements.md`) | `grep -n 'wel2_core_index' el2/boot/start.S` finds it (verified present in the tree on 2026-11-13) |
 | G-6 | Bundle built from that commit on Marco's Mac; `shasum -c` OK; the dry-run lines | `python3 watari-load.py --rung L3 --dry-run ... \| grep 'boot arguments'` prints a line containing `wel2.step=3 wel2.cpuif=trap wel2.guest=0x`; likewise with `--cpuif trap-notc`; for L2-L5 with `--args wel2.hold=1` the line ends with `wel2.hold=1` |
 
-If G-4 is missing, L2-L5 end in a reset within seconds: use a phone VIDEO (section 1.4) and expect to lose the final screen. If G-3 is missing, run only L0-L2.
+Also at the start of the day: **L0 must print `BLOCK CHECK: PASS`** (exit 0) before any of L3-L5 (L0 section). If the layer or guest block is not plain usable RAM in the prepared FDT the loader prints `BLOCK CHECK: FAIL`, exits with **4**, and L3-L5 are not run (the layer would refuse the guest).
+
+If `wel2.hold` were missing from the bundle, L2-L5 would end in a reset within seconds: use the phone VIDEO and expect to lose the final screen.
 
 ---
 
@@ -61,9 +63,9 @@ You (Claude Code) guide two people through this procedure. Read `CLAUDE.md` firs
 - [ ] Time Machine backup finished today and verified (open Time Machine, check the date). Mains power, battery above 80 %, charger plugged into a **second** port of the target (not the DFU port).
 - [ ] The day-1 Asahi tethered-boot volume ("Tethered boot (m1n1, for development)") is still there and boots into m1n1 proxy mode **[check: boot it once, then shut down]**. macOS is the default startup disk (to be restored at the end).
 - [ ] Screen: brightness at maximum, automatic brightness off, display sleep off while on power **[check: m1n1 tethered boot is not macOS, so these settings may not apply; the layer's first drawing call wipes the panel to black]**. A dark room is better for photos (glare).
-- [ ] The bundle was built on Marco's Mac with `tools/m3a/build-m1-payload.sh` (default folder `$WATARI_DATA/m3a-payload`, bundle in its `bundle/` subfolder **[check: exact subfolder name]**), from the commit of the day-2 branch; **its `SHA256SUMS` verified there**: `cd <bundle> && shasum -a 256 -c SHA256SUMS` prints OK for every file. Note the commit hash and the SHA-256 of `wel2-m1.bin`, `wel2-chain.bin`, `m1guest.bin` in the results file.
+- [ ] The bundle was built on Marco's Mac with `tools/m3a/build-m1-payload.sh` (default folder `$WATARI_DATA/m3a-payload`, bundle in its `bundle/` subfolder, i.e. `$WATARI_DATA/m3a-payload/bundle` **[verified: build-m1-payload.sh `OUT="$DIR/bundle"`]**), from the commit of the day-2 branch; **its `SHA256SUMS` verified there**: `cd <bundle> && shasum -a 256 -c SHA256SUMS` prints OK for every file. Note the commit hash and the SHA-256 of `wel2-m1.bin`, `wel2-chain.bin`, `m1guest.bin` in the results file.
 - [ ] The QEMU bench was green on that commit (`./run-all.sh`, `make -C el2 test`, `make -C tools/acpigen test`) and `el2/boot/run-m1guest.sh` passes: the same guest binary is what runs on the M1.
-- [ ] T7b (M1 guest hand-off) is merged and in the bundle **[check: needs T7b]**. If it is not, rungs L3-L5 are not run today (section 11).
+- [ ] T6g, T6h wiring, T7b (M1 guest hand-off) and `wel2.hold` are in the bundle's commit (gate G-1 to G-4). If T7b is not, rungs L3-L5 are not run today (section 11).
 
 **Ciani's Mac**
 - [ ] `~/WatariBoot-host/` from day 1 still exists with `env.sh`, the venv and the m1n1 checkout (`work/m1n1-main`). If not: STOP, ask Ciani; re-creating it means the downloads of day 1 section 2 and his explicit confirmation.
@@ -87,7 +89,7 @@ You (Claude Code) guide two people through this procedure. Read `CLAUDE.md` firs
 | Results, cleanup | 45 min |
 | Total, no failure | about 3 h 30 min; with a root-cause round per failing rung add 30-60 min each |
 
-Plan a day. Every jumping rung needs a fresh m1n1 boot (the layer replaces m1n1 and the reset goes through the watchdog, back to the boot picker or macOS **[check which]**).
+Plan a day. Every jumping rung needs a fresh m1n1 boot (the layer replaces m1n1 and the reset goes through the watchdog, afterwards it boots macOS, the tethered volume is not the default; power off before the next m1n1 boot).
 
 ### 1.3 What can and cannot go wrong, in one paragraph
 All our writes are RAM or CPU/AIC/UART/framebuffer/watchdog state; nothing persistent is written (DESIGN 9; README-m1-payload "Abort and recovery"). The worst realistic outcome is a hang or black screen needing a ~10 s power-button hold. Repeated forced power-offs may touch a PMU panic counter (F-29, R-13 **[hypothesis]**): **boot macOS once between hardware sessions** and if the Mac ever starts in recovery, choose macOS as startup disk and continue.
@@ -137,7 +139,7 @@ cd "$HOSTDIR/work/m3a-payload"
 for r in L0 L1 L2 L3 L4 L5; do echo "== $r"; python3 watari-load.py --rung $r --dry-run --m1n1 "$HOSTDIR/work/m1n1-main" | tail -n 15; done
 python3 watari-load.py --rung L3 --cpuif trap-notc --dry-run --m1n1 "$HOSTDIR/work/m1n1-main" | grep 'boot arguments'
 ```
-Claude checks: the bundle verifies, the call order matches the README ("verify sums, malloc DTB, memalign layer then guest, cache maintenance, then `kboot_set_chosen bootargs`, ..., `kboot_boot`"), the `boot arguments:` line shows `wel2.step=<n>`, `wel2.cpuif=<mode>` for L2+ and `wel2.guest=0x<addr>` for L3+ **[check: needs T7b for the guest hand-off]**. Do not use `python3 -I` (it ignores `PYTHONPATH`; the loader sets its own path).
+Claude checks: the bundle verifies, the call order matches the README ("verify sums, malloc DTB, memalign layer then guest, cache maintenance, then `kboot_set_chosen bootargs`, ..., `kboot_boot`"), the `boot arguments:` line shows `wel2.step=<n>`, `wel2.cpuif=<mode>` for L2+ and `wel2.guest=0x<addr>` for L3+. Do not use `python3 -I` (it ignores `PYTHONPATH`; the loader sets its own path).
 
 ### 2.4 Read-only look at the target before L3 (R-11, Q-7)
 No separate measurement session: the L0 read-back FDT (rung L0, step 3) lists every `reg` range. Claude checks, with `fdt_m1_dump`'s output **only**, that nothing is mapped at the emulated GICD/GICR windows `0xF_0000_0000` and `0xF_1000_0000` (up to about `0xF_1100_0000`) **[hypothesis: free; R-11, Q-7]**. A collision is a stop for L3.
@@ -155,11 +157,11 @@ No separate measurement session: the L0 read-back FDT (rung L0, step 3) lists ev
 | `LAST ERROR:` (2 lines) | `LAST ERROR: NONE` (grey) or red text up to 128 chars; set to `CHECKPOINT <n> FAILED` when a square turns red, `FATAL AT CHECKPOINT <n>` by `fatal()` | **copy exactly if not NONE**; it survives scrolling |
 | Grey rule, then the scrolling log | the layer's text (same as UART) including the guest's lines `Watari EL1: ...`; the legend `SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11` / `GREEN = OK  AMBER = RUNNING  RED = FAIL  GREY = SKIP` at the top | only the last lines before the stop matter; older lines are wiped when the area fills |
 
-**[check: needs T6g merge]**: band line 1 (`RUNG L<n> STEP <s>`, set by `wel2_fb_set_rung`), the `LAST ERROR` text (`wel2_fb_set_error`), `wel2.step` and `wel2.cpuif=trap-notc` are only as described here once the bundle's commit contains the T6g and T6h wiring (gate G-1, G-2). Before that, the band line 1 shows `STEP -` and the error line may stay `NONE` after a fatal.
+Exact strings printed by `el2/vgic/fb.c` **[verified]**: line 1 `WATARI EL2  RUNG L<n> STEP <s>` (`RUNG -` / `STEP -` until known; two spaces before RUNG); line 2 `CHECKPOINT NONE`, or `CHECKPOINT <n> OK|FAIL|SKIP|RUNNING`, for squares of 16 and up followed by ` (GUEST CHECK <k>)`, then a label if any (e.g. `HOLD: TAKE PHOTO`); line 3 `GUEST PASS <p> FAIL <f> SKIP <k>`; then `LAST ERROR: NONE` or the red error text. The rung/step line is set by `stage1.c` right after the relocation (steps 1-5 = rungs L1-L5).
 
 **Fixed rules for the transcription.** Lower case is drawn as upper case (the font has one case), so `0` and `O`, `1` and `I`, `8` and `B` can be confused: quote hex values in context (`0x...`) and ask for a closer photo when a digit matters (ESR, ELR, FAR, HPFAR, counters). A black screen with nothing at all: see 3.4.
 
-### 3.2 The layer's own checkpoints (squares 0-11) [verified: `el2/include/wel2_chk.h` and the README "Checkpoints" table on the T6g branch; **[check: needs T6g merge]** until the bundle's commit contains them]
+### 3.2 The layer's own checkpoints (squares 0-11) [verified: `el2/include/wel2_chk.h` and the README "Checkpoints" table, compared by `test_chk.c`]
 
 Each layer checkpoint also prints a log line `Watari EL2: checkpoint <n> <NAME>` (decimal).
 
@@ -196,7 +198,7 @@ Each layer checkpoint also prints a log line `Watari EL2: checkpoint <n> <NAME>`
 | 27 | G10 `CPU_OFF` on one core, `AFFINITY_INFO`, `CPU_ON` again | the park loop | L5 |
 | 28 | G11 `SYSTEM_RESET` | the watchdog reset (no return expected) | L3+ (last) |
 
-Check numbering: G1..G4 = 1..4, G5a = 5, G5b = 6, G6..G11 = 7..12, hence squares 17..28 (square 16 is unused) **[verified: T7-wiring section 5]**. Which G-checks run at which rung (`wel2.step`) is [hypothesis] from the bundle README (L3: G1-G6 on one core; L4 adds G7-G8; L5 adds G9-G10; G11 ends the run); if the band shows more or fewer checks, record what it shows.
+Check numbering: G1..G4 = 1..4, G5a = 5, G5b = 6, G6..G11 = 7..12, hence squares 17..28 (square 16 is unused) **[verified: T7-wiring section 5]**. Which checks run at which `wel2.step` **[verified: README "Boot ladder", `el2/boot/main.c` mask]**: step 3 = G1-G6 (G5a and G5b included), step 4 = G1-G8, step 5 = all (G9 and G10 included); G11, the final `SYSTEM_RESET`, always runs. A check that does not apply reports SKIP (grey square, counted in `SKIP`).
 
 ### 3.4 A black screen: what to do
 1. Press a key / touch the trackpad on the M1, photograph again (display sleep, F-10 analogue) **[check: the M1 in m1n1/layer state has no keyboard handling; the key may do nothing]**.
@@ -245,11 +247,11 @@ wl() {
   echo "exit=${pipestatus[1]}"      # zsh; in bash: set -o pipefail and echo $?
 }
 ```
-Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0 prepared but the FDT cannot be read back.
+Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0 prepared but the FDT cannot be read back, **4 L0 BLOCK CHECK failed (do not run L3-L5)**.
 
 **After "handed over" the loader waits up to 40 s** (`--boot-timeout`) for a reply that may never come. Once the Mac has restarted or the screen is frozen/held, press **Ctrl-C** in that terminal (the target is gone anyway); do not wait out the 40 s, and do not close the terminal before the log file is saved.
 
-**Observation default for L2-L5: a phone VIDEO of the panel from before the command until after the end, plus a final photo of the held screen.** PASS is judged on the **held final screen** (`wel2.hold=1`, **[check: needs the hold option]**): the layer parks and the band, squares and `LAST ERROR` stay until the power button is held. Without the hold option the final screen is lost within seconds and the video is the only record (pause the video frame by frame).
+**Observation default for L2-L5: a phone VIDEO of the panel from before the command until after the end, plus a final photo of the held screen.** PASS is judged on the **held final screen** (`wel2.hold=1`): the layer prints `Watari EL2: HOLD: take the photo, then hold the power button`, sets the band label `HOLD: TAKE PHOTO`, masks interrupts and parks the calling core **[verified: el2/boot/main.c, README]**; the layer parks and the band, squares and `LAST ERROR` stay until the power button is held. Without the hold option the final screen is lost within seconds and the video is the only record (pause the video frame by frame).
 
 All commands below run on Ciani's Mac through `wl <log name> <loader arguments>` (equivalent to `source env.sh`, `cd` into the bundle, `python3 watari-load.py <arguments> --m1n1 "$HOSTDIR/work/m1n1-main"`). Rungs are in order; a rung is attempted only if the previous one passed. **Between jumping rungs: back to section 4 (fresh m1n1 boot).**
 
@@ -267,7 +269,7 @@ Exit codes: 0 ok, 1 error, 2 usage/bundle problem, 3 prepared but cannot read th
 
 **Expected text.** `kboot_prepare_dt OK`, then the layer's FDT dump: `platform m1 (apple,aic found)`, 8 cpus with `release_addr` set for the secondaries, memory/usable/reserved ranges, aic, uart, wdt, framebuffer 2560x1600, and the proxy still alive afterwards. The prepared FDT is saved as `out/prepared-fdt.dtb` (contains the serial number, MAC addresses and RNG seeds: **never commit or paste it**; `fdt_m1_dump` prints only what the layer uses) **[verified: README-m1-payload "Privacy"]**.
 
-**PASS.** `kboot_prepare_dt OK`, `platform m1`, 8 cpus, secondary `release_addr`s set, a memory map, aic, uart, wdt, framebuffer 2560x1600 present, exit code 0, proxy alive, nothing in the R-11 windows (2.4). Record the framebuffer format and stride, and the memory ranges (without identifiers).
+**PASS.** `kboot_prepare_dt OK`, `platform m1`, 8 cpus, secondary `release_addr`s set, a memory map, aic, uart, wdt, framebuffer 2560x1600 present, **`BLOCK CHECK: PASS`** (the 32 MB layer block and guest block m1n1's heap gave are wholly inside usable RAM in the prepared FDT), exit code 0, proxy alive, nothing in the R-11 windows (2.4). Record the framebuffer format and stride, and the memory ranges (without identifiers).
 
 **FAIL meanings.**
 
@@ -277,6 +279,7 @@ Exit codes: 0 ok, 1 error, 2 usage/bundle problem, 3 prepared but cannot read th
 | Transport error before any call, "no such device" | wrong `M1N1DEVICE`, m1n1 left proxy mode | section 4 again |
 | Proxy call error (unknown call, bad reply) | proxyclient/m1n1 ABI mismatch (R-9) | record version of both; fall back to the proxyclient of the m1n1 v1.6.1 tag: **a download, needs Ciani's confirmation** |
 | `kboot_prepare_dt` non-zero | m1n1 rejected `j293-minimal.dtb` (R-3) | try `--dtb <upstream t8103-j293.dtb>` built beforehand on Marco's Mac (README-m1-payload "Fallback DTB"); nothing of ours has run |
+| **exit 4, `BLOCK CHECK: FAIL`** | the heap blocks are not plain usable RAM in this FDT: the layer would refuse the guest (L1 and L2 still use the layer block) | **FAIL: stop, do not run L3-L5. Bring the dump home** (the block lines of the loader output and `fdt_m1_dump`'s memory/reserved ranges, no identifiers) for a loader/placement fix; L1/L2 may still be tried if the layer block lines are fine |
 | exit 3 | the `FDT prepared at ...` console line was not captured (Q-13) | retry with `--fdt-addr 0x<address>` typed from the proxy console text **[check]** |
 | FDT shows 1 cpu / no secondaries | `smp_start_secondaries` did not run or `cpufreq_init` needed | note; L1-L4 use 1 cpu anyway (README: "L1-L4 start no secondaries") |
 | No `framebuffer` in the dump | `/chosen/framebuffer` not filled when the node starts disabled (Q-3) | L2 and later cannot be read from the screen: decide with the people (section 11, serial kit) |
@@ -325,13 +328,13 @@ wl L1 --rung L1 --go
 
 **Command.**
 ```sh
-wl L2 --rung L2 --go --args wel2.hold=1      # [check: needs the hold option]; without it drop --args and expect the reset
+wl L2 --rung L2 --go --args wel2.hold=1      # without --args the layer resets at the end instead of holding
 ```
 The loader builds `wel2.step=2 wel2.cpuif=trap` (default `--cpuif trap` for L2-L5 **[verified]**).
 
-**PHOTO timing.** With `wel2.hold=1` the layer stops on the final screen **[check: needs the hold option]**: record a video from before the command, then take the final photo L2-1 once the band shows `CHECKPOINT 5` and the HOLD label (and a second one if the first is unreadable). Without the hold option the reset takes the screen away within seconds: the video is then the record. Claude should say in advance: "the screen will go back to black or restart within seconds, take the photo as soon as the band appears." If the log scrolls past quickly it does not matter: the band and the error line stay.
+**PHOTO timing.** With `wel2.hold=1` the layer stops on the final screen record a video from before the command, then take the final photo L2-1 once the band shows `CHECKPOINT 5` and the HOLD label (and a second one if the first is unreadable). Without the hold option the reset takes the screen away within seconds: the video is then the record. Claude should say in advance: "the screen will go back to black or restart within seconds, take the photo as soon as the band appears." If the log scrolls past quickly it does not matter: the band and the error line stay.
 
-**Expected screen at the end (before the reset).** **[check: needs T6g merge]** for band line 1, the square numbers and the label. Band line 1: `WATARI EL2  RUNG L2 STEP 2`. Squares 0 to 5 green. Band line 2: `CHECKPOINT 5 OK` (label `HOLD: TAKE PHOTO` with the hold option). Line 3: `GUEST PASS 0 FAIL 0 SKIP 0`. `LAST ERROR: NONE`. Log: the legend, the banner and the lines of discovery: platform m1, UART base, AIC found with NR_IRQ 896 **[verified: measured]**, FIQ init, `wel2.e2h` result (E2H "stuck" at 1 is expected, logged, not an error), granule 16K. Then, with `wel2.hold=1`, the screen stays (hold the power button ~10 s afterwards); without it the watchdog reset and a restart.
+**Expected screen at the end (before the reset).** Band line 1: `WATARI EL2  RUNG L2 STEP 2`. Squares 0 to 5 green. Band line 2: `CHECKPOINT 5 OK` (label `HOLD: TAKE PHOTO` with the hold option). Line 3: `GUEST PASS 0 FAIL 0 SKIP 0`. `LAST ERROR: NONE`. Log: the legend, the banner and the lines of discovery: platform m1, UART base, AIC found with NR_IRQ 896 **[verified: measured]**, FIQ init, `wel2.e2h` result (E2H "stuck" at 1 is expected, logged, not an error), granule 16K. Then, with `wel2.hold=1`, the screen stays (hold the power button ~10 s afterwards); without it the watchdog reset and a restart.
 
 **PASS.** Squares 0-5 green and no red; error line NONE; and on the held final screen (`wel2.hold=1`) the log shows `Watari EL2: HOLD: take the photo, then hold the power button` and the band label `HOLD: TAKE PHOTO`. Without `wel2.hold` the Mac restarts instead. (If a reset does not happen the screen simply stays; the text `SYSTEM_RESET: no watchdog node in the FDT, halting instead` appears only when the FDT has no watchdog node.)
 
@@ -354,7 +357,7 @@ The loader builds `wel2.step=2 wel2.cpuif=trap` (default `--cpuif trap` for L2-L
 
 ---
 
-### L3: the guest on one core, G1-G6, twice (`trap`, then `trap-notc`)  [check: needs T7b]
+### L3: the guest on one core, G1-G6, twice (`trap`, then `trap-notc`)
 
 **Purpose.** **The go/no-go rung.** Stage 2, the EL1 test guest, the virtual CPU interface on the real M1: does a guest see a working GICv3 CPU interface and GIC through the layer? This settles R-1a (do the `TALL0/TALL1/TDIR` traps behave as KVM's M1 precedent), R-1b (do the `TC` traps, with no precedent on this CPU), Q-1, the `API/APK` and TID3 path, and the guest-to-screen hypercall path.
 
@@ -368,7 +371,7 @@ wl L3-notc --rung L3 --go --cpuif trap-notc --args wel2.hold=1
 ```
 `trap-notc` = KVM's configuration (`TALL0|TALL1|TDIR`, no `TC`); `trap` adds `TC` (DESIGN 5.4, RISKS R-1b).
 
-**PHOTOS (per run, in order).** The guest runs fast; the log and the squares fill in seconds, and the run ends with `SYSTEM_RESET` (G11) so the screen is only available briefly **[check: whether the layer waits before the reset to let the people photograph; if not, Claude should ask the developers (Opus) for a "hold on screen" variant before the day]**. Ask for:
+**PHOTOS (per run, in order).** The guest runs fast; the log and the squares fill in seconds, and the run ends with `SYSTEM_RESET` (G11) so without `wel2.hold=1` the screen is only available briefly; with it (the default in every L3 command) the final screen is held. Ask for:
 - **L3-1**: the full screen as soon as the band shows `RUNG L3`.
 - **L3-2**: the full screen at the end (all squares, band, error line, last log lines), before the reset hits.
 - **L3-3** (only if the run stops before the reset): a close-up of the top strip (squares) and the error line.
@@ -408,7 +411,7 @@ wl L3-notc --rung L3 --go --cpuif trap-notc --args wel2.hold=1
 
 ---
 
-### L4: L3 plus timers G7-G8  [check: needs T7b]
+### L4: L3 plus timers G7-G8
 
 **Purpose.** FIQ-to-gate-to-virtual-PPI path for the EL1 virtual timer (G7, INTID 27) and the EL1 physical timer (G8, INTID 30, **SKIP while the P gate is not implemented**).
 
@@ -439,7 +442,7 @@ wl L4 --rung L4 --go [--cpuif trap-notc] --args wel2.hold=1
 
 ---
 
-### L5: L4 plus the secondary cores, G9-G10  [check: needs T7b]
+### L5: L4 plus the secondary cores, G9-G10
 
 **Purpose.** Per-core init, the spin-table release for the 7 other cores, the fast-IPI kick, and the park loop on the real M1 (R-7, R-8). Note the important MPIDR fact from day 1: the P cores have **Aff2 = 1 and Aff1 = 1** (`0x80010100`...), so the layer's per-core stack slot must be indexed by Aff0 + 4 x Aff1 (or WHOAMI); the `start.S` core-index fix (`wel2_core_index`) is a **precondition** to check The fix is done in the tree: confirm `wel2_core_index` in the bundle's `el2/boot/start.S` (gate G-5) before running L5; without it two cores would share a stack.
 
