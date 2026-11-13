@@ -88,14 +88,14 @@ Watari Boot is developed by a small team with AI agents doing much of the resear
 
 ## Tokens and costs
 <!-- TOKEN-COUNTER:START -->
-**Total tokens: 1,853,755,365 · Estimated cost: $734.97** (updated 2026-11-13; ciani: 5 sessions, $22.81, marco: 12 sessions, $712.17)
+**Total tokens: 1,897,914,822 · Estimated cost: $748.94** (updated 2026-11-13; ciani: 5 sessions, $36.77, marco: 12 sessions, $712.17)
 
 | Model | Input | Output | Cache written | Cache read | Estimated cost |
 |---|---:|---:|---:|---:|---:|
 | `<synthetic>` | 0 | 0 | 0 | 0 | n/d |
 | `claude-fable-5-2` | 492 | 445,448 | 3,182,474 | 36,831,998 | n/d |
 | `claude-haiku-5-5` | 92 | 8,939 | 632,978 | 2,330,797 | $0.11 |
-| `claude-opus-5-5` | 5,480 | 1,863,496 | 26,253,835 | 901,519,242 | $427.63 |
+| `claude-opus-5-5` | 5,682 | 1,924,630 | 26,756,555 | 945,114,643 | $441.59 |
 | `claude-sonnet-5-5` | 11,938 | 3,693,760 | 41,064,325 | 835,910,071 | $307.24 |
 
 <sub>Estimate at Anthropic API prices, computed from local Claude Code transcripts with `tools/token-usage.py`. With a subscription (Pro/Max) the real cost is the subscription fee: this is the equivalent pay-as-you-go cost. Subagent output may be under-reported in the logs.</sub>
