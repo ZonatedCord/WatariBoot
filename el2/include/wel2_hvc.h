@@ -34,10 +34,10 @@
 
 /* T17: the guest's per-check summary block. Its first line starts with WEL2_SUMMARY_MARK; the layer then makes sure
  * WEL2_SUMMARY_LINES text rows are free on the panel (clearing the scrolling area first if they are not), so the block
- * is never cut by a scroll. Block = header + 12 checks + up to 2 MPIDR lines, plus slack for the layer's own last
+ * is never cut by a scroll. Block = header + 13 checks (G1-G12, E9 added G12) + up to 2 MPIDR lines, plus slack for the layer's own last
  * lines (hold / reset message). */
 #define WEL2_SUMMARY_MARK     "SUMMARY"
-#define WEL2_SUMMARY_LINES    18u
+#define WEL2_SUMMARY_LINES    19u
 
 /* WEL2_CONSOLE_WRITE (T12b/E7, DESIGN watari-edk2-m1 7): a raw byte stream, the console of a firmware without a UART. The bytes
  * go to the UART unchanged (CR, LF, escape sequences, 0x00-0xFF alike); the framebuffer text shows the printable ones
@@ -52,7 +52,8 @@
 enum wel2_chk {
     WEL2_CHK_G1 = 1, WEL2_CHK_G2, WEL2_CHK_G3, WEL2_CHK_G4, WEL2_CHK_G5A, WEL2_CHK_G5B,
     WEL2_CHK_G6, WEL2_CHK_G7, WEL2_CHK_G8, WEL2_CHK_G9, WEL2_CHK_G10, WEL2_CHK_G11,
-    WEL2_CHK_LAST = WEL2_CHK_G11
+    WEL2_CHK_G12,                                   /* E9: four colour bars in the framebuffer the layer handed over; runs before G11 */
+    WEL2_CHK_LAST = WEL2_CHK_G12
 };
 #define WEL2_CHKSTATE_RUNNING 0u
 #define WEL2_CHKSTATE_PASS    1u

@@ -110,6 +110,11 @@ int wel2_s1_map_fb_free(struct wel2_pt *pt, uint64_t base, uint64_t size, bool e
 /* Guest stage 2 of the M1: exactly the ranges (already rounded) as Normal WB, no device, nothing else. */
 int wel2_s2_build_ram(struct wel2_pt *pt, const struct wel2_range *ranges, unsigned n);
 
+/* E9: map [base, base+size) (rounded outward to the granule) in the guest stage 2 as framebuffer: Normal non-cacheable,
+ * read/write, never executable. Anything already mapped there (the bench's fake panel is guest RAM) is replaced. Call
+ * after wel2_s2_build / wel2_s2_build_ram. 0, or -1 (wraps, beyond the IPA range, pool exhausted). */
+int wel2_s2_map_fb(struct wel2_pt *pt, uint64_t base, uint64_t size);
+
 /* 0, or -1 on bad arguments / pool exhausted. */
 int wel2_s2_build(struct wel2_pt *pt, const struct wel2_ram *ram, const struct wel2_range *holes, unsigned nholes);
 

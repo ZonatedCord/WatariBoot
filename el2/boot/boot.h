@@ -90,6 +90,10 @@ extern bool g_summary_on_panel;              /* util.c: the guest's SUMMARY bloc
 void checkpoint(unsigned n);
 void checkpoint_state(unsigned n, unsigned state);
 void checkpoint_fail(void);
+extern struct wel2_fb_plan g_fb_plan;        /* stage1.c: E9, what the guest gets of the panel (mode layer = nothing) */
+extern uint64_t g_fake_fb_lo;                /* stage1.c: bench fake panel [lo, RAM end), 0 = none */
+extern bool g_fb_fake;
+void fb_handover(void);                      /* stage1.c: E9, the switch at the eret (no-op for wel2.fb=layer) */
 extern bool g_hold;                           /* main.c: wel2.hold=1, stop on the screen instead of resetting */
 void layer_reset(bool locked) __attribute__((noreturn));   /* main.c: the guest's / the ladder's reset, or the hold with wel2.hold=1 */
 void layer_checkpoint(unsigned n, const char *name);   /* main.c: paint square n and log one line (MMU on) */

@@ -38,7 +38,7 @@ static void t_readme_guest_rows(void)
 	static const struct { unsigned n; const char *name; } g[] = {
 		{ WEL2_CHK_G1, "G1" }, { WEL2_CHK_G2, "G2" }, { WEL2_CHK_G3, "G3" }, { WEL2_CHK_G4, "G4" },
 		{ WEL2_CHK_G5A, "G5a" }, { WEL2_CHK_G5B, "G5b" }, { WEL2_CHK_G6, "G6" }, { WEL2_CHK_G7, "G7" },
-		{ WEL2_CHK_G8, "G8" }, { WEL2_CHK_G9, "G9" }, { WEL2_CHK_G10, "G10" }, { WEL2_CHK_G11, "G11" },
+		{ WEL2_CHK_G8, "G8" }, { WEL2_CHK_G9, "G9" }, { WEL2_CHK_G10, "G10" }, { WEL2_CHK_G11, "G11" }, { WEL2_CHK_G12, "G12" },
 	};
 
 	for (unsigned i = 0; i < sizeof(g) / sizeof(g[0]); i++) {
@@ -46,7 +46,7 @@ static void t_readme_guest_rows(void)
 			printf("    README row missing: | %u | `%s` |\n", WEL2_CHK_SQUARE_BASE + g[i].n, g[i].name);
 		CHECK(row(WEL2_CHK_SQUARE_BASE + g[i].n, g[i].name));
 	}
-	CHECK_EQ(WEL2_CHK_LAST, 12);
+	CHECK_EQ(WEL2_CHK_LAST, 13);
 }
 
 int main(void)
