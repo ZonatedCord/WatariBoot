@@ -129,6 +129,7 @@ _Static_assert(WEL2_MAX_GUEST_RANGES == M1_MAX_USABLE + 2, "one cut can split on
 extern struct m1_platform g_m1;
 extern struct wel2_range g_guest_ram[WEL2_MAX_GUEST_RANGES];
 extern unsigned g_nguest_ram;
+unsigned guest_ranges(struct wel2_range *out);   /* stage1.c: the ranges the guest FDT lists, out[WEL2_MAX_GUEST_RANGES] */
 bool guest_ram_contains(uint64_t pa);        /* pa is guest RAM (M1: inside one of g_guest_ram[]) */
 struct fdt_aic_info;
 extern struct fdt_aic_info g_aic_info;       /* main.c: the QEMU hybrid machine's Watari AIC node (#42) */

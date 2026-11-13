@@ -62,12 +62,26 @@ unsigned g_nguest_ram;
 
 bool guest_ram_contains(uint64_t pa)
 {
-    if (!g_plat->m1_memory)
+    if (!g_plat->m1_memory && !g_nguest_ram)     /* QEMU: one span, unless wel2.split cut it into g_guest_ram[] */
         return pa >= g_ram_base && pa < g_ram_end;
     for (unsigned i = 0; i < g_nguest_ram; i++)
         if (pa >= g_guest_ram[i].base && pa - g_guest_ram[i].base < g_guest_ram[i].size)
             return true;
     return false;
+}
+
+/* The ranges the guest FDT lists (T12b/E6): M1 and QEMU with wel2.split = g_guest_ram[]; QEMU without = the one span from
+ * the end of the carve-out (the guest never sees the layer's block) to the end of RAM. out must hold WEL2_MAX_GUEST_RANGES. */
+unsigned guest_ranges(struct wel2_range *out)
+{
+    if (g_nguest_ram) {
+        for (unsigned i = 0; i < g_nguest_ram; i++)
+            out[i] = g_guest_ram[i];
+        return g_nguest_ram;
+    }
+    out[0].base = g_carve_base + g_carve_size;
+    out[0].size = g_ram_end > out[0].base ? g_ram_end - out[0].base : 0;
+    return out[0].size ? 1 : 0;
 }
 
 /* The S5L console UART window found in the FDT (0 = none: PL011). Read by stage2_init to keep it from the guest. */
@@ -135,11 +149,9 @@ static bool has_arg(const char *args, const char *key)
     return false;
 }
 
-/* wel2.step=<decimal> as a whole word: its value, 0 when absent or not a number. */
-static unsigned parse_step(const char *args)
+/* <key><decimal> as a whole word (key = "wel2.step="): its value, 0 when absent or not a number. */
+static unsigned parse_uarg(const char *args, const char *key)
 {
-    static const char key[] = "wel2.step=";
-
     for (const char *p = args; *p; p++) {
         unsigned k = 0, v = 0;
 
@@ -158,6 +170,12 @@ static unsigned parse_step(const char *args)
     }
     return 0;
 }
+
+/* wel2.split=<n> on the QEMU bench (T12b/E6): the guest's RAM is cut into n ranges with holes between them, so that EDK2
+ * sees a multi-range, M1-like memory map. The holes are WEL2_SPLIT_HOLE bytes (one level-2 block of the 16 KB granule, so
+ * they cost no extra stage-2 tables) at multiples of `unit` from the RAM base; stage 2 leaves them unmapped. */
+#define WEL2_SPLIT_HOLE 0x2000000ULL
+#define WEL2_SPLIT_MAX  4u
 
 /* ID_AA64MMFR0_EL1 (D24.2.84): TGran16 [23:20] (0 = no), TGran4 [31:28] (0b1111 = no), and for stage 2
  * TGran16_2 [35:32] / TGran4_2 [43:40] (0 = as stage 1, 1 = no, 2/3 = yes). */
@@ -203,7 +221,7 @@ void stage1_build(uint64_t fdt)
 
     if (!have_args)
         args[0] = 0;
-    g_step = parse_step(args);
+    g_step = parse_uarg(args, "wel2.step=");
     /* T6g, rung L1 (DESIGN 9, PLAN S13): wel2.step=1 resets the machine right here, after the relocation and the platform
      * switch and before anything else: no console, no framebuffer, no stage 1. Needs only the FDT lookups above (the
      * watchdog node on the M1). Without a watchdog node the reset cannot be made: continue, el2_main stops with a message. */
@@ -324,6 +342,31 @@ void stage1_build(uint64_t fdt)
     } else {
         ram.base = g_ram_base;
         ram.end = g_ram_end;
+    }
+
+    /* wel2.split=<n> (QEMU bench only): cut the guest's RAM into n ranges with holes (see WEL2_SPLIT_HOLE). */
+    unsigned want_split = have_args ? parse_uarg(args, "wel2.split=") : 0;
+
+    if (want_split && m1) {
+        s1_msg("Watari EL2: WARNING: wel2.split is for the QEMU bench only, ignored on the M1\n");
+    } else if (want_split) {
+        uint64_t first = g_carve_base + g_carve_size;
+        unsigned n = want_split > WEL2_SPLIT_MAX ? WEL2_SPLIT_MAX : want_split;
+        uint64_t unit = ((g_ram_end - g_ram_base) / n) & ~(WEL2_SPLIT_HOLE - 1);
+
+        if (n < 2 || unit < 2 * WEL2_SPLIT_HOLE || g_ram_base + unit <= first) {
+            s1_msg("Watari EL2: WARNING: wel2.split needs 2 to 4 pieces and RAM for them, ignored\n");
+        } else {
+            g_nguest_ram = 0;
+            for (unsigned i = 0; i < n; i++) {
+                uint64_t lo = i == 0 ? first : g_ram_base + i * unit + WEL2_SPLIT_HOLE;
+                uint64_t hi = i == n - 1 ? g_ram_end : g_ram_base + (i + 1) * unit;
+
+                g_guest_ram[g_nguest_ram].base = lo;
+                g_guest_ram[g_nguest_ram].size = hi - lo;
+                g_nguest_ram++;
+            }
+        }
     }
 
     struct wel2_s1_layout layout = {

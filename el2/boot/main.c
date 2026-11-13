@@ -16,6 +16,7 @@
 #include "wel2_hvc_vendor.h"
 #include "wel2_guest_info.h"
 #include "wel2_guest_place.h"
+#include "wel2_fdt_build.h"
 
 #define HCR_VM   (1ULL << 0)
 #define HCR_FMO  (1ULL << 3)
@@ -374,7 +375,7 @@ static void v2m_bell_log(void *ctx, uint32_t val)
 
 /* Capacity of the stage-2 hole list: GICD, GICR, MSI frame, AIC, console UART and the chain carve-out are six; two
  * spare for the M1 devices T6 adds (WDT, ...). */
-#define HOLES_MAX 8
+#define HOLES_MAX 16
 
 static void stage2_init(void)
 {
@@ -414,6 +415,14 @@ static void stage2_init(void)
      * is RAM plus these holes; unmapping the framebuffer pages makes a guest access fault to EL2 and be reported. */
     if (!g_plat->m1_memory && g_fb.fmt && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, wel2_fb_bytes(&g_fb), g_gran))
         fatal_msg("stage-2 holes: framebuffer does not fit");
+
+    /* wel2.split (QEMU bench): the gaps between the guest's RAM pieces are holes, so a guest access there is reported. */
+    for (unsigned i = 0; !g_plat->m1_memory && i + 1 < g_nguest_ram; i++) {
+        uint64_t gap_lo = g_guest_ram[i].base + g_guest_ram[i].size;
+
+        if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, gap_lo, g_guest_ram[i + 1].base - gap_lo, g_gran))
+            fatal_msg("stage-2 holes: wel2.split gap does not fit");
+    }
 
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
@@ -773,6 +782,81 @@ static void __attribute__((noreturn)) m1_enter_guest(void)
     enter_el1(entry, 0, SPSR_EL1H_MASKED, g_hcr, info);
 }
 
+/* T12b/E6: the generalised hand-off (DESIGN watari-edk2-m1 3.3). wel2.abi=fdt: x0 = a guest FDT the layer BUILDS
+ * (guest_fdt_build, include/wel2_fdt_build.h) from what it knows (the guest's RAM ranges, the vGIC windows, the cores),
+ * not a patched copy of the loader's. The image entry is wel2.guest=0x<entry> (the bench: the EDK2 entry when absent;
+ * the M1: required), 4 KB aligned; its arm64 Image header gives image_size, the FDT goes at entry + image_size rounded
+ * up to 16 KB, the range that holds the entry is listed first and must hold the image, the FDT and PrePi's 64 MB UEFI
+ * region (wel2_gfdt_place, host-tested). Entry state as everywhere: EL1h, MMU and caches off, DAIF masked, x0 = FDT. */
+static bool g_abi_fdt;          /* wel2.abi=fdt */
+static bool g_gfdt_build;       /* wel2.gfdt=build */
+
+static void __attribute__((noreturn)) chain_fdt(void)
+{
+    static struct wel2_range ranges[WEL2_MAX_GUEST_RANGES];
+    static struct wel2_gfdt_place gp;
+    struct wel2_gfdt_in gi;
+    uint64_t entry = g_guest_entry, image_size;
+    uint32_t size = 0;
+    unsigned n;
+
+    if (g_plat->m1_memory ? !g_guest_entry : !g_gfdt_build)
+        fatal_msg(g_plat->m1_memory ? "wel2.abi=fdt: wel2.guest=0x<entry> is required on the M1"
+                                    : "wel2.abi=fdt on the bench needs wel2.gfdt=build");
+    if (!entry)
+        entry = EDK2_ENTRY;                                  /* the bench's EDK2 convention: behind the carve-out */
+    if (!guest_ram_contains(entry) || (entry & 0xfff))
+        fatal_msg("wel2.guest: entry is not 4 KB aligned guest RAM");
+    hvc_clean_inv(entry, 0x40);                              /* the loader wrote it past our caches */
+    if (*(volatile uint32_t *)(uintptr_t)(entry + 0x38) != 0x644d5241)
+        fatal_msg("wel2.guest: no arm64 Image header at the guest entry");
+    image_size = *(volatile uint64_t *)(uintptr_t)(entry + 0x10);
+    n = guest_ranges(ranges);
+    {
+        static const char *const why[] = {
+            "ok", "wel2.guest: bad entry", "wel2.guest: bad image_size in the Image header (0 or above 32 MB)",
+            "wel2.guest: entry is not in guest RAM",
+            "wel2.guest: the image and the guest FDT do not end inside the RAM range the image starts in",
+            "wel2.guest: the first /memory range is below 128 MB, PrePi cannot work in it",
+            "wel2.guest: the image is within 64 MB of the top of its range (PrePi's UEFI region): load it lower",
+            "wel2.guest: too many RAM ranges",
+        };
+        int rc = wel2_gfdt_place(ranges, n, entry, image_size, WEL2_GFDT_MAX, &gp);
+
+        if (rc != WEL2_GFP_OK)
+            fatal_msg(why[(unsigned)rc < sizeof(why) / sizeof(why[0]) ? (unsigned)rc : 0]);
+    }
+    if (!gp.entry_2mb_aligned)
+        puts_("Watari EL2: WARNING: wel2.guest is not 2 MB aligned (the arm64 boot protocol asks for it) [hypothesis: PrePi copes]\n");
+
+    memset(&gi, 0, sizeof(gi));
+    gi.platform = g_plat->name;
+    gi.ranges = gp.ordered;
+    gi.nranges = gp.n;
+    gi.gicd_base = g_plat->vgic_gicd_base;
+    gi.gicr_base = g_plat->vgic_gicr_base;
+    gi.gicr_stride = 0x20000;
+    gi.ncores = g_ncpu < WEL2_GFDT_MAX_CORES ? g_ncpu : WEL2_GFDT_MAX_CORES;
+    for (unsigned i = 0; i < gi.ncores; i++)
+        gi.mpidr[i] = ((uint64_t)(g_pcpu[i].aff >> 24) << 32) | (g_pcpu[i].aff & 0xffffff);
+    gi.msi_frame_base = g_plat->m1_memory && g_v2m_on ? V2M_T8103_BASE : 0;
+    gi.fb_mode = "none";                                     /* the framebuffer stays the layer's (wel2.fb is a later step) */
+    if (guest_fdt_build((void *)(uintptr_t)gp.fdt, WEL2_GFDT_MAX, &gi, &size))
+        fatal_msg("guest FDT: the builder refused the input or the result does not fit 32 KB");
+    dcache_clean_range((const void *)(uintptr_t)gp.fdt, size);   /* EL2 wrote through its cacheable map; the guest reads with caches off */
+    for (unsigned i = 0; i < gp.n; i++) {
+        put_kv("Watari EL2: guest FDT /memory base = ", gp.ordered[i].base);
+        put_kv("Watari EL2:   size = ", gp.ordered[i].size);
+    }
+    put_kv("Watari EL2: guest image at ", gp.entry);
+    put_kv("Watari EL2:   image end = ", gp.image_end);
+    put_kv("Watari EL2: guest FDT at ", gp.fdt);
+    put_kn("Watari EL2:   built, ", size, " bytes\n");
+    layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
+    put_kv("Watari EL2: eret to the guest at EL1, entry = ", gp.entry);
+    enter_el1(gp.entry, 0, SPSR_EL1H_MASKED, g_hcr, gp.fdt);
+}
+
 static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
 {
     struct fdt_patch_info pi;
@@ -782,6 +866,10 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
      * nothing and the first timer tick would be lost for good (F-21). The boot vCPU
      * (here) and each vCPU PSCI starts (el2_secondary_main) are handed over awake. */
     vgic_vcpu_wake(&g_vgic, this_cpu());
+    if (g_gfdt_build && !g_abi_fdt)
+        fatal_msg("wel2.gfdt=build needs wel2.abi=fdt");
+    if (g_abi_fdt)
+        chain_fdt();
     if (g_plat->m1_memory)
         m1_enter_guest();
     put_kv("Watari EL2: FDT from QEMU at ", fdt);
@@ -915,6 +1003,20 @@ static void parse_bootargs(uint64_t fdt)
         } else if (arg_is(p, "wel2.test=noeoi")) {
             g_cpuif_noeoi = true;
 #ifdef WEL2_CHAIN
+        } else if (arg_is(p, "wel2.abi=fdt")) {
+            g_abi_fdt = true;
+        } else if (arg_is(p, "wel2.abi=info")) {
+            g_abi_fdt = false;                       /* the default with wel2.guest: the test guest's info block */
+        } else if (arg_is(p, "wel2.gfdt=build")) {
+            g_gfdt_build = true;
+        } else if ((p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'a' &&
+                    p[6] == 'b' && p[7] == 'i' && p[8] == '=') ||
+                   (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'g' &&
+                    p[6] == 'f' && p[7] == 'd' && p[8] == 't' && p[9] == '=')) {
+            puts_("Watari EL2: WARNING: unknown boot argument value, ignored: ");
+            for (const char *q = p; *q && *q != ' '; q++)
+                putc_(*q);
+            puts_("\n");
         } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'g' &&
                    p[6] == 'u' && p[7] == 'e' && p[8] == 's' && p[9] == 't' && p[10] == '=') {
             uint64_t v = 0;
