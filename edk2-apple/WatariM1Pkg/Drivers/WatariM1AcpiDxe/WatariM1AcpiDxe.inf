@@ -1,0 +1,59 @@
+## @file
+#  DXE driver that installs the ACPI tables of the Apple M1 platform: FADT, MADT, GTDT and PPTT from
+#  tools/acpigen (model chosen at build time: j293, or qemu-virt for the bench) and the DSDT from
+#  AcpiTables/Dsdt.asl. The acpigen sources are compiled as they are; their libc use (memcpy,
+#  memset, strcmp) is covered by the string.h shim in this directory.
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WatariM1AcpiDxe
+  FILE_GUID                      = d3f90a64-8e21-4b75-a6c8-15b7e0492f3d
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariM1AcpiDxeEntry
+
+[Sources]
+  WatariM1AcpiDxe.c
+  string.h
+  ../../../../tools/acpigen/src/common.c
+  ../../../../tools/acpigen/src/madt.c
+  ../../../../tools/acpigen/src/gtdt.c
+  ../../../../tools/acpigen/src/fadt.c
+  ../../../../tools/acpigen/src/pptt.c
+  ../../../../tools/acpigen/src/t8103_model.c
+  ../../../../tools/acpigen/src/j293_model.c
+  ../../../../tools/acpigen/src/qemu_virt_model.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
+
+[LibraryClasses]
+  UefiDriverEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  DxeServicesLib
+  MemoryAllocationLib
+
+[Protocols]
+  gEfiAcpiTableProtocolGuid     ## CONSUMES
+
+[Guids]
+  gWatariM1DsdtFileGuid         ## CONSUMES
+  gEfiAcpiTableGuid             ## CONSUMES
+
+[BuildOptions]
+  # WATARI_ACPIGEN is exported by tools/build-edk2-m1.sh (the acpigen directory, outside the
+  # package path). The model switch (-DWATARI_M1_MODEL_QEMU_VIRT) is added by the DSC entry.
+  GCC:*_*_*_CC_FLAGS = -I$(WATARI_ACPIGEN)/include -I$(WATARI_ACPIGEN)/src -Wno-unused-function
+
+[Depex]
+  gEfiAcpiTableProtocolGuid

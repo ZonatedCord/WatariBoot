@@ -1,0 +1,29 @@
+## @file
+#  Watari Boot: EDK2 platform package for the Apple M1 (t8103, j293) running at EL1 on top of
+#  Watari EL2. Design: docs/design/watari-edk2-m1/ . Decisions: docs/adr/draft-edk2-m1-platform.md .
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  DEC_SPECIFICATION              = 0x0001001A
+  PACKAGE_NAME                   = WatariM1Pkg
+  PACKAGE_GUID                   = 7d2e4b90-1c58-4a37-b6f3-0a9d58e1c426
+  PACKAGE_VERSION                = 0.1
+
+[Includes]
+  Include
+
+[Guids]
+  gWatariM1TokenSpaceGuid = { 0xc61e90b3, 0x5d27, 0x4a08, { 0x9b, 0x4e, 0x71, 0xa3, 0x0f, 0xd8, 0x26, 0xc5 } }
+
+  ## FILE_GUID of AcpiTables/Dsdt.inf: the DSDT is stored in the firmware volume as a raw section
+  #  under this name and WatariM1AcpiDxe reads it from there.
+  gWatariM1DsdtFileGuid = { 0x4b1a6d2e, 0x93c7, 0x4f08, { 0x8e, 0x15, 0xd6, 0x2a, 0x7c, 0x39, 0xb0, 0x54 } }
+
+[PcdsFixedAtBuild]
+  ## BENCH ONLY (-D WATARI_M1_BENCH_PL011=TRUE): physical address of the PL011 that the QEMU bench
+  #  gives the firmware as its console. WatariM1MemInfoLib maps this one page as device memory in
+  #  the PEI MMU map. Zero (the production value) = no peripheral is mapped at all.
+  gWatariM1TokenSpaceGuid.PcdWatariM1BenchUartBase|0x0|UINT64|0x00000001

@@ -84,6 +84,9 @@ Mode: **hardware list registers** (`ICH_HCR_EL2` = En only, TALL0/TALL1/TC = 0).
 
 **Not done / open (M1-3).** EL2 stage-1 MMU (needed for the locks on hardware, F-18/F-20); LR overflow (`UIE`) and a real fix for the kick-storm guard; secondary stack-slot formula is M1-shaped but untested on hardware; edge-triggered physical SPIs and `GICD_ICFGR` forwarding; SPI priority fixed at 0x40 at EL2 (the guest's priority only orders vIRQs); `HW=1` LRs; the TRAP_EMULATE path for the M1 SEIS erratum (F-19) is still untested; CPU_SUSPEND / SYSTEM_RESET.
 
+## M1-7: the M1 platform firmware (edk2-apple/WatariM1Pkg) on the same chain (T12a, E3/E4)
+`./run-m1-7.sh` is `run-m1-4.sh` with `WATARI_M1_EFI-bench.fd` (`tools/build-edk2-m1.sh --bench`, once) at `0x40280000`; the layer is unchanged and still takes the QEMU-bench chain path (QEMU's FDT, PL011 console). It reaches BDS and the UEFI Shell in `CPUIF=hw`, `trap` and `trap-notc` and checks that the lines of our own MemInfoLib and ACPI driver are in the log. `SHELL_CMDS="acpiview -l"` types commands at the Shell prompt over `-serial pipe:` (the ACPI tables as the firmware lists them). It is not part of `run-all.sh` (which stays at 15 checks). Details and limits: `edk2-apple/WatariM1Pkg/README.md`.
+
 ## M1-4: EDK2 at EL1 on top of Watari EL2 (QEMU TCG `-smp 4 -m 2G`, verified by `run-m1-4.sh`)
 `./run-m1-4.sh` builds the chain image (`make chain` -> `build-chain/wel2.bin`: `-DWEL2_CHAIN`, no EL1 test payload, `HCR_EL2.TSC=1`) and boots it together with `ArmVirtQemuKernel` (`tools/build-edk2-kernel.sh`, run once; output `$WATARI_DATA/build-kernel/QEMU_EFI-kernel.fd`):
 
