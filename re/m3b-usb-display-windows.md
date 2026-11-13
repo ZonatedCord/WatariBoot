@@ -118,7 +118,7 @@ My recommendation: **C, USB2-only first**, with the layer giving EDK2 a short li
 |---|---|---|---|
 | Stage-2 Device mapping of `0x382280000..+0x7fff` (2 granules of 16 KB; `DWC3_XHCI_REGS_END` = 0x7fff) | Windows xHCI | tiny | Leaving the third and fourth granules (0x8000-0xffff) unmapped keeps the DWC3 global registers (PRTCAPDIR at 0xc110), the device registers (0xc700) and the Apple vendor block (0xcd00) out of the guest's reach. The devirq table lists the window with the ADT length 0xcd00, which would round up to four granules and include them [verified: arithmetic on the DT sizes and core.h; that Windows needs nothing beyond 0x7fff is a hypothesis] |
 | AIC 777 -> vSPI 809, level | Windows xHCI | already designed and in the static table | none [verified: devirq DESIGN-STATUS.md:41, test_pirq_aic] |
-| Both DART streams of the used controller to bypass | DMA | a few register writes | Layer **or** EDK2; the DART IRQ stays denied |
+| Make sure both DART streams of the used controller are in bypass (m1n1 leaves the stream it used in bypass, the other is untouched [hypothesis]; check the lock bit first) | DMA | a few register writes at most | Layer **or** EDK2; the DART IRQ stays denied |
 | ATC PHY, pipehandler, usb2phy, I2C0 windows, if option C | bring-up | stage-2 list entries | scope extension; per-window ADR |
 | Nothing for PMGR | | | domains already on; never exposed |
 
