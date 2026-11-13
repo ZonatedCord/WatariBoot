@@ -68,10 +68,16 @@ struct wel2_fb_plan g_fb_plan;
 uint64_t g_fake_fb_lo;                /* 0 = no fake panel */
 bool g_fb_fake;
 
+/* QEMU without wel2.split: the end of the one guest RAM span (the bench's fake panel at the top of the RAM is not guest RAM). */
+uint64_t guest_ram_span_end(void)
+{
+    return g_fake_fb_lo ? g_fake_fb_lo : g_ram_end;
+}
+
 bool guest_ram_contains(uint64_t pa)
 {
     if (!g_plat->m1_memory && !g_nguest_ram)     /* QEMU: one span, unless wel2.split cut it into g_guest_ram[] */
-        return pa >= g_ram_base && pa < g_ram_end;
+        return pa >= g_ram_base && pa < guest_ram_span_end();
     for (unsigned i = 0; i < g_nguest_ram; i++)
         if (pa >= g_guest_ram[i].base && pa - g_guest_ram[i].base < g_guest_ram[i].size)
             return true;

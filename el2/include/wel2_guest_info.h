@@ -14,8 +14,8 @@
 
 #define WEL2_GINFO_F_POWEROFF   (1u << 0)           /* end with SYSTEM_OFF instead of SYSTEM_RESET */
 #define WEL2_GINFO_F_NO_PTIMER  (1u << 1)           /* the physical timer PPI 30 is not exposed: G8 is skipped */
-#define WEL2_GINFO_F_FB         (1u << 3)           /* v2: fb_* describe a framebuffer the guest owns (wel2.fb=band|guest): check G12 */
 #define WEL2_GINFO_F_PAUTH      (1u << 2)          /* the layer set HCR_EL2.API/APK: PAuth keys and PACIA/AUTIA do not trap */
+#define WEL2_GINFO_F_FB         (1u << 3)           /* v2: fb_* describe a framebuffer the guest owns (wel2.fb=band|guest): check G12 */
 
 struct wel2_guest_info {
     uint64_t magic;                                 /* WEL2_GINFO_MAGIC */

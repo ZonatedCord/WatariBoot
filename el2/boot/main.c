@@ -177,7 +177,7 @@ static bool hvc_range_ok(void *ctx, uint64_t pa, uint64_t len)
     if (g_plat->m1_memory || g_nguest_ram) {
         if (!wel2_ranges_cover(g_guest_ram, g_nguest_ram, pa, len))
             return false;
-    } else if (pa < g_ram_base || len > g_ram_end - pa || pa >= g_ram_end) {
+    } else if (pa < g_ram_base || pa >= guest_ram_span_end() || len > guest_ram_span_end() - pa) {
         return false;
     }
     uint64_t last = pa + len - 1;
@@ -971,6 +971,9 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
         fb_handover();
         enter_el1(entry, 0, SPSR_EL1H_MASKED, g_hcr, info);
     }
+    /* The plain EDK2 chain has no hand-over point (no info block, no built FDT): stage 2 was already built for wel2.fb. */
+    if (g_fb_plan.mode != WEL2_FBM_LAYER)
+        fatal_msg("wel2.fb=band|guest needs wel2.abi=fdt wel2.gfdt=build or the test guest (wel2.guest), not the plain EDK2 chain");
     uint32_t magic = *(volatile uint32_t *)(EDK2_ENTRY + 0x38);
     if (magic != 0x644d5241) {               /* "ARM\x64" */
         put_kv("Watari EL2: no arm64 Image header at EDK2 entry ", EDK2_ENTRY);
@@ -1208,6 +1211,9 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
      * routed to EL2, as designed). E2H as stage1.c left it on this core (1 on the M1; the guest then runs
      * with TGE=0 at EL1, its exceptions and the HVC/SMC/IRQ paths are the same); VM=1 since M1-1 (stage-2
      * with the GIC windows unmapped). M1-4 chain build: TSC=1 (EL1 SMC trapped). */
+    /* E9: wel2_s2_map_fb uses stage-2 MemAttr 0b0101 (Normal NC), which is the encoding only while HCR_EL2.FWB (bit 46) is 0:
+     * with FWB = 1 the field means something else. g_hcr never sets it; the assert keeps it so. */
+    _Static_assert(!((HCR_RW | HCR_IMO | HCR_FMO | HCR_AMO | HCR_VM | HCR_E2H) & (1ULL << 46)), "HCR_EL2.FWB must stay 0 (stage-2 MemAttr encoding)");
     g_hcr = HCR_RW | HCR_IMO | HCR_FMO | HCR_AMO | HCR_VM | (g_e2h ? HCR_E2H : 0);
 #ifdef WEL2_CHAIN
     g_hcr |= HCR_TSC;
