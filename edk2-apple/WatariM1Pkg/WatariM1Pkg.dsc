@@ -16,7 +16,9 @@
 #                                    it the console is the hypercall of Watari EL2 (E8).
 #    -D WATARI_M1_ACPIGEN_MODEL=m    acpigen model of the ACPI tables: j293 (default) or qemu-virt.
 #    -D WATARI_M1_ACPIVIEW=TRUE      add the Shell's acpiview command (bench).
-#    -D WATARI_M1_SHELL_BOOT=TRUE    boot the UEFI Shell by default (bench).
+#    -D WATARI_M1_SHELL_BOOT=TRUE    boot the UEFI Shell by default (bench). Without it the boot
+#                                    manager starts the built-in self-test when nothing is bootable.
+#    -D WATARI_FB_REPORT_BGR8=TRUE   report the 10-bit panel as 8-bit BGR (untruthful, E11/DESIGN 8.5).
 #
 #  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -37,6 +39,7 @@
   DEFINE WATARI_M1_ACPIGEN_MODEL = j293
   DEFINE WATARI_M1_ACPIVIEW      = FALSE
   DEFINE WATARI_M1_SHELL_BOOT    = FALSE
+  DEFINE WATARI_FB_REPORT_BGR8   = FALSE
 
   # Shell: useful for the bench and for the RAM-disk step; the build script reports it.
   DEFINE BUILD_SHELL             = TRUE
@@ -144,7 +147,7 @@
   CapsuleLib|MdeModulePkg/Library/DxeCapsuleLibNull/DxeCapsuleLibNull.inf
   CustomizedDisplayLib|MdeModulePkg/Library/CustomizedDisplayLib/CustomizedDisplayLib.inf
   TpmMeasurementLib|MdeModulePkg/Library/TpmMeasurementLibNull/TpmMeasurementLibNull.inf
-  PlatformBootManagerLib|ArmPkg/Library/PlatformBootManagerLib/PlatformBootManagerLib.inf
+  PlatformBootManagerLib|WatariM1Pkg/Library/WatariM1BootManagerLib/WatariM1BootManagerLib.inf
 
   # The platform libraries of this package (E1/E2).
   ArmVirtMemInfoLib|WatariM1Pkg/Library/WatariM1MemInfoLib/WatariM1MemInfoLib.inf
@@ -376,6 +379,14 @@
 !endif
 
   gEfiMdeModulePkgTokenSpaceGuid.PcdResetOnMemoryTypeInformationChange|FALSE
+
+  # E11: report the 10-bit panel as 8-bit BGR (build define WATARI_FB_REPORT_BGR8, default FALSE).
+  gWatariM1TokenSpaceGuid.PcdWatariFbReportBgr8|$(WATARI_FB_REPORT_BGR8)
+
+  # E12: SMBIOS 3.0, entry point 3.0 only (as ArmVirtQemu).
+  gEfiMdeModulePkgTokenSpaceGuid.PcdSmbiosVersion|0x0300
+  gEfiMdeModulePkgTokenSpaceGuid.PcdSmbiosDocRev|0x0
+  gEfiMdeModulePkgTokenSpaceGuid.PcdSmbiosEntryPointProvideMethod|0x2
   gEfiMdeModulePkgTokenSpaceGuid.PcdBootManagerMenuFile|{ 0x21, 0xaa, 0x2c, 0x46, 0x14, 0x76, 0x03, 0x45, 0x83, 0x6e, 0x8a, 0xb6, 0xf4, 0x66, 0x23, 0x31 }
 
   # The maximum physical I/O addressability of the processor, set with BuildCpuHob().
@@ -406,7 +417,8 @@
   gArmTokenSpaceGuid.PcdFvBaseAddress|0x0
 
 [PcdsDynamicDefault.common]
-  gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut|3
+  # E12: never wait for a key (DESIGN 10.3).
+  gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut|0
 
   gArmTokenSpaceGuid.PcdArmArchTimerSecIntrNum|0x0
   gArmTokenSpaceGuid.PcdArmArchTimerIntrNum|0x0
@@ -538,3 +550,12 @@
       GCC:*_*_*_CC_FLAGS = -DWATARI_M1_MODEL_QEMU_VIRT=1
 !endif
   }
+
+  #
+  # Framebuffer (E11) and the first-boot self-test (E12). The self-test application is in the FV
+  # and started by WatariM1BootManagerLib; SMBIOS has fixed strings and no serial number.
+  #
+  WatariM1Pkg/Drivers/WatariSimpleFbDxe/WatariSimpleFbDxe.inf
+  WatariM1Pkg/Application/WatariM1SelfTest/WatariM1SelfTest.inf
+  MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
+  WatariM1Pkg/Drivers/WatariM1SmbiosDxe/WatariM1SmbiosDxe.inf

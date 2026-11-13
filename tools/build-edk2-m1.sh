@@ -3,13 +3,15 @@
 # Build of edk2-apple/WatariM1Pkg/WatariM1Pkg.dsc: the EDK2 firmware for the Apple M1 (j293) at EL1
 # on top of Watari EL2 (docs/design/watari-edk2-m1/, PLAN E1-E4).
 #
-# Usage: tools/build-edk2-m1.sh [--bench] [--model <acpigen model>] [DEBUG|RELEASE]
+# Usage: tools/build-edk2-m1.sh [--bench] [--bgr8] [--model <acpigen model>] [DEBUG|RELEASE]
 #   (default)  production configuration: no UART of any kind, ACPI tables of acpigen model j293.
 #              Output: $WATARI_DATA/build-m1/WATARI_M1_EFI.fd
 #   --bench    QEMU bench configuration (-D WATARI_M1_BENCH_PL011=TRUE): serial and debug through
 #              the PL011 of QEMU's device tree, ACPI tables of model qemu-virt (GIC at QEMU's
 #              addresses), the Shell with acpiview, boots the Shell by default.
 #              Output: $WATARI_DATA/build-m1/WATARI_M1_EFI-bench.fd  (separate WORKSPACE)
+#   --bgr8     -D WATARI_FB_REPORT_BGR8=TRUE (E11): the 10-bit panel is reported as 8-bit BGR GOP (untruthful,
+#              DESIGN 8.5 stage 2). Output name gets "-bgr8", separate WORKSPACE.
 #   --model m  override the acpigen model.
 #
 # Nothing is downloaded or installed. The EDK2 tree is the one on the data disk (WATARI_EDK2); the
@@ -29,14 +31,16 @@ REPO="$(cd "$HERE/.." && pwd)"
 source "$HERE/env.sh"
 
 BENCH=0
+BGR8=0
 MODEL=""
 TARGET="DEBUG"
 while [ $# -gt 0 ]; do
     case "$1" in
         --bench) BENCH=1 ;;
+        --bgr8) BGR8=1 ;;
         --model) MODEL="$2"; shift ;;
         DEBUG|RELEASE|NOOPT) TARGET="$1" ;;
-        *) echo "usage: $0 [--bench] [--model <name>] [DEBUG|RELEASE]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--bench] [--bgr8] [--model <name>] [DEBUG|RELEASE]" >&2; exit 2 ;;
     esac
     shift
 done
@@ -45,6 +49,7 @@ if [ "$BENCH" = 1 ]; then
 else
     SUFFIX=""; MODEL="${MODEL:-j293}"
 fi
+[ "$BGR8" = 1 ] && SUFFIX="${SUFFIX}-bgr8"
 case "$MODEL" in j293|qemu-virt) ;; *) echo "ERROR: --model must be j293 or qemu-virt (got '$MODEL')" >&2; exit 2 ;; esac
 mkdir -p "$WATARI_LOGS"
 
@@ -89,6 +94,8 @@ DEFS=(-D WATARI_M1_ACPIGEN_MODEL="$MODEL")
 if [ "$BENCH" = 1 ]; then
     DEFS+=(-D WATARI_M1_BENCH_PL011=TRUE -D WATARI_M1_ACPIVIEW=TRUE -D WATARI_M1_SHELL_BOOT=TRUE)
 fi
+
+[ "$BGR8" = 1 ] && DEFS+=(-D WATARI_FB_REPORT_BGR8=TRUE)
 
 # F-12: EDK2 does not notice changes to the acpigen headers (a path outside PACKAGES_PATH), so the
 # platform's modules are rebuilt every time.

@@ -1,0 +1,51 @@
+## @file
+#  Watari Boot (E11): Graphics Output Protocol on the "simple-framebuffer" node of the guest device
+#  tree (/chosen/framebuffer@...), which Watari EL2 writes for the guest's part of the panel.
+#  Design: docs/design/watari-edk2-m1/DESIGN.md section 8.4.
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = WatariSimpleFbDxe
+  FILE_GUID                      = 5a0e83c4-2f17-4b6d-9c71-d84e3b20a6f9
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariSimpleFbEntry
+
+[Sources]
+  WatariSimpleFbDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  DevicePathLib
+  DxeServicesTableLib
+  FrameBufferBltLib
+  MemoryAllocationLib
+  PcdLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid                ## PRODUCES
+  gEfiDevicePathProtocolGuid                    ## PRODUCES
+  gFdtClientProtocolGuid                        ## CONSUMES
+
+[Guids]
+  gWatariSimpleFbDevicePathGuid
+
+[FixedPcd]
+  gWatariM1TokenSpaceGuid.PcdWatariFbReportBgr8
+
+[Depex]
+  gFdtClientProtocolGuid

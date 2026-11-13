@@ -133,6 +133,14 @@ READ_LOCK_STATUS   = TRUE
   INF RuleOverride = WATARIDSDT WatariM1Pkg/AcpiTables/Dsdt.inf
   INF WatariM1Pkg/Drivers/WatariM1AcpiDxe/WatariM1AcpiDxe.inf
 
+  #
+  # Framebuffer GOP (E11), SMBIOS and the built-in self-test (E12)
+  #
+  INF WatariM1Pkg/Drivers/WatariSimpleFbDxe/WatariSimpleFbDxe.inf
+  INF MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
+  INF WatariM1Pkg/Drivers/WatariM1SmbiosDxe/WatariM1SmbiosDxe.inf
+  INF WatariM1Pkg/Application/WatariM1SelfTest/WatariM1SelfTest.inf
+
 [FV.FVMAIN_COMPACT]
 FvAlignment        = 16
 ERASE_POLARITY     = 1

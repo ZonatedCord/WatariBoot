@@ -1,0 +1,61 @@
+## @file
+#  Watari Boot (E12): PlatformBootManagerLib of the M1 platform. Connects the consoles (the
+#  serial console of the hypercall UART and every GOP), never waits for a key, boot timeout 0,
+#  and starts the built-in self-test when nothing else is bootable. Structure follows
+#  ArmPkg/Library/PlatformBootManagerLib (no PCI, no USB, no capsules, no boot logo).
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = WatariM1BootManagerLib
+  FILE_GUID                      = e8a52d61-93b4-4f0c-b7d5-2a1c6e90f348
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = PlatformBootManagerLib|DXE_DRIVER
+
+[Sources]
+  WatariM1BootManagerLib.c
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  ShellPkg/ShellPkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  DevicePathLib
+  MemoryAllocationLib
+  PcdLib
+  UefiBootManagerLib
+  UefiBootServicesTableLib
+  UefiLib
+  UefiRuntimeServicesTableLib
+
+[FixedPcd]
+  gArmTokenSpaceGuid.PcdUefiShellDefaultBootEnable
+  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultBaudRate
+  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultDataBits
+  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultParity
+  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultStopBits
+  gEfiMdePkgTokenSpaceGuid.PcdDefaultTerminalType
+
+[Pcd]
+  gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut
+
+[Guids]
+  gEfiEndOfDxeEventGroupGuid
+  gEfiTtyTermGuid
+  gUefiShellFileGuid
+  gWatariM1SelfTestFileGuid
+
+[Protocols]
+  gEfiDevicePathProtocolGuid
+  gEfiGraphicsOutputProtocolGuid
+  gEfiLoadedImageProtocolGuid

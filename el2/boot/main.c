@@ -829,6 +829,7 @@ static void __attribute__((noreturn)) m1_enter_guest(void)
  * region (wel2_gfdt_place, host-tested). Entry state as everywhere: EL1h, MMU and caches off, DAIF masked, x0 = FDT. */
 static bool g_abi_fdt;          /* wel2.abi=fdt */
 static bool g_gfdt_build;       /* wel2.gfdt=build */
+static bool g_test_badfbfmt;    /* wel2.test=badfbfmt (E11 bench): the guest FDT's framebuffer node gets a format nobody knows */
 
 static void __attribute__((noreturn)) chain_fdt(void)
 {
@@ -888,6 +889,8 @@ static void __attribute__((noreturn)) chain_fdt(void)
         gfb.height = g_fb_plan.guest_rows;
         gfb.stride = g_fb.stride;
         gfb.format = g_fb.fmt == WEL2_FB_X2R10G10B10 ? "x2r10g10b10" : "x8r8g8b8";
+        if (g_test_badfbfmt)                                 /* bench negative test (E11): a format the firmware does not know */
+            gfb.format = "r5g6b5";
         gi.fb = &gfb;
         gi.fb_mode = g_fb_plan.mode == WEL2_FBM_BAND ? "band" : "guest";
     }
@@ -1060,6 +1063,8 @@ static void parse_bootargs(uint64_t fdt)
         } else if (arg_is(p, "wel2.test=noeoi")) {
             g_cpuif_noeoi = true;
 #ifdef WEL2_CHAIN
+        } else if (arg_is(p, "wel2.test=badfbfmt")) {
+            g_test_badfbfmt = true;
         } else if (arg_is(p, "wel2.abi=fdt")) {
             g_abi_fdt = true;
         } else if (arg_is(p, "wel2.abi=info")) {
