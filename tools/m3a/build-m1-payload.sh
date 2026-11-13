@@ -13,8 +13,13 @@
 #   j293-minimal.dtb/.dts minimal device tree for m1n1's kboot_prepare_dt
 #   watari-load.py       host loader (needs the m1n1 proxyclient of the host, never m1n1.setup)
 #   ehw2.py              optional read-only inherited-state inventory (docs/procedures/m3a-ehw2-rung.md)
+#   WATARI_M1_EFI.fd     EDK2 for the M1 (tools/build-edk2-m1.sh), copied from $WATARI_DATA/build-m1 (day 3: rungs D0, D2)
 #   fdt_m1_dump          prebuilt arm64 host tool (no cc needed on the host)
-#   fdt-dump-src/        its source + build.sh (used only if the host has the Command Line Tools)
+#   gfdt_dump            prebuilt arm64 host tool: the guest FDT the layer would build from m1n1's prepared FDT (rung D0)
+#   fdt-dump-src/        the sources of both + build.sh (used only if the host has the Command Line Tools)
+# Not in the bundle yet: a WATARI_FB_REPORT_BGR8 EDK2 variant. The package has no such define (grep of edk2-apple and
+# tools finds it only in the design documents), so it is E11 work; this script does not invent it.
+# Environment: WATARI_M1_EFI=<file> picks another EDK2 image; WATARI_NO_EDK2=1 builds a day-2 bundle without one.
 #   README-m1-payload.md the rung guide
 #   SHA256SUMS           the loader refuses to run if these do not match
 set -euo pipefail
@@ -67,6 +72,14 @@ cp "$WORK/m1/wel2.bin" "$OUT/wel2-m1.bin"
 cp "$WORK/chain/wel2.bin" "$OUT/wel2-chain.bin"
 cp "$WORK/guest/m1guest.bin" "$OUT/m1guest.bin"
 
+EFI_NAME="WATARI_M1_EFI.fd"
+if [ "${WATARI_NO_EDK2:-0}" != 1 ]; then
+    EFI_SRC="${WATARI_M1_EFI:-${WATARI_DATA:-}/build-m1/$EFI_NAME}"
+    [ -f "$EFI_SRC" ] || die "no EDK2 image at $EFI_SRC: run tools/build-edk2-m1.sh first, or set WATARI_M1_EFI=<file>, or WATARI_NO_EDK2=1 for a bundle without it"
+    echo "== EDK2 image: $EFI_SRC =="
+    cp "$EFI_SRC" "$OUT/$EFI_NAME"
+fi
+
 echo "== device tree =="
 dtc -q -I dts -O dtb -o "$OUT/j293-minimal.dtb" "$HERE/j293-minimal.dts"
 cp "$HERE/j293-minimal.dts" "$OUT/"
@@ -94,6 +107,7 @@ PYEOF
 check_image "$OUT/wel2-m1.bin"
 check_image "$OUT/wel2-chain.bin"
 check_image "$OUT/m1guest.bin"
+[ -f "$OUT/$EFI_NAME" ] && check_image "$OUT/$EFI_NAME"
 
 echo "== fdt_m1_dump: parse the DTB with the layer's own parser =="
 SRC="$OUT/fdt-dump-src"
@@ -101,24 +115,34 @@ mkdir -p "$SRC"
 cp "$REPO/tools/m3a/fdt_m1_dump.c" "$REPO/el2/boot/fdt.c" "$REPO/el2/boot/fdt.h" "$REPO/el2/boot/fdt_m1.c" \
    "$REPO/el2/boot/fdt_m1.h" "$REPO/el2/boot/boot.h" "$REPO/el2/vgic/fb.c" "$REPO/el2/vgic/font5x7.h" \
    "$REPO/el2/vgic/ram_map.c" "$SRC/"
+# gfdt_dump (E14): the guest-FDT builder (E5) and the range arithmetic of the layer, compiled for the host
+cp "$REPO/tools/m3a/gfdt_dump.c" "$REPO/el2/vgic/fdt_build.c" "$REPO/el2/vgic/maps.c" "$REPO/el2/vgic/pt.c" "$SRC/"
 # every layer header (boot.h pulls several in; the list changes with the layer)
 cp "$REPO"/el2/include/*.h "$SRC/"
 
 cat > "$SRC/build.sh" <<'EOF'
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Builds fdt_m1_dump with the host's own cc (Command Line Tools are enough). Output: ./fdt_m1_dump
+# Builds fdt_m1_dump and gfdt_dump with the host's own cc (Command Line Tools are enough). Output: ./fdt_m1_dump ./gfdt_dump
 set -e
 cd "$(dirname "$0")"
 cc -std=c11 -O1 -I. fdt_m1_dump.c fdt_m1.c fdt.c fb.c ram_map.c -o fdt_m1_dump
-echo "built $(pwd)/fdt_m1_dump"
+cc -std=c11 -O1 -I. gfdt_dump.c fdt_m1.c fdt.c fb.c ram_map.c fdt_build.c maps.c pt.c -o gfdt_dump
+echo "built $(pwd)/fdt_m1_dump and $(pwd)/gfdt_dump"
 EOF
 chmod +x "$SRC/build.sh"
-(cd "$SRC" && cc -std=c11 -Wall -Wextra -O1 -I. fdt_m1_dump.c fdt_m1.c fdt.c fb.c ram_map.c -o "$WORK/fdt_m1_dump") \
+DUMP_SRCS="fdt_m1_dump.c fdt_m1.c fdt.c fb.c ram_map.c"
+GFDT_SRCS="gfdt_dump.c fdt_m1.c fdt.c fb.c ram_map.c fdt_build.c maps.c pt.c"
+(cd "$SRC" && cc -std=c11 -Wall -Wextra -O1 -I. $DUMP_SRCS -o "$WORK/fdt_m1_dump") \
     || die "fdt_m1_dump does not build from the bundle sources"
+(cd "$SRC" && cc -std=c11 -Wall -Wextra -O1 -I. $GFDT_SRCS -o "$WORK/gfdt_dump") \
+    || die "gfdt_dump does not build from the bundle sources"
+(cd "$SRC" && cc -arch arm64 -std=c11 -O1 -I. $GFDT_SRCS -o "$OUT/gfdt_dump") \
+    || die "prebuilt gfdt_dump (arm64) does not build"
+chmod 755 "$OUT/gfdt_dump"
 "$WORK/fdt_m1_dump" "$OUT/j293-minimal.dtb" > "$WORK/dtb-dump.txt"
 # prebuilt for the host (arm64 macOS): the host never has to run cc (the cc shim can open the CLT installer)
-(cd "$SRC" && cc -arch arm64 -std=c11 -O1 -I. fdt_m1_dump.c fdt_m1.c fdt.c fb.c ram_map.c -o "$OUT/fdt_m1_dump") \
+(cd "$SRC" && cc -arch arm64 -std=c11 -O1 -I. $DUMP_SRCS -o "$OUT/fdt_m1_dump") \
     || die "prebuilt fdt_m1_dump (arm64) does not build"
 chmod 755 "$OUT/fdt_m1_dump"
 grep -q '^platform m1' "$WORK/dtb-dump.txt" || die "the DTB is not recognised as an M1 tree"
@@ -127,6 +151,13 @@ grep -q '^aic 0 base=0x23b100000' "$WORK/dtb-dump.txt" || die "AIC missing"
 grep -q '^uart s5l base=0x235200000' "$WORK/dtb-dump.txt" || die "UART missing"
 grep -q '^wdt base=0x23d2b0000' "$WORK/dtb-dump.txt" || die "WDT missing"
 sed 's/^/  /' "$WORK/dtb-dump.txt"
+
+echo "== gfdt_dump: the guest FDT of the minimal DTB, with the layer's placement rule =="
+"$WORK/gfdt_dump" "$OUT/j293-minimal.dtb" --layer 0x800000000 --entry 0x840000000 --image-size 0x300000 > "$WORK/gfdt-dump.txt" \
+    || die "gfdt_dump refuses the minimal DTB"
+grep -q '^  intc@f00000000:' "$WORK/gfdt-dump.txt" || die "gfdt_dump: the GIC node is missing"
+if grep -qi 'apple\|serial-number\|mac-address\|seed' "$WORK/gfdt-dump.txt"; then die "gfdt_dump output carries an Apple or identifying string"; fi
+sed -n '1,3p' "$WORK/gfdt-dump.txt" | sed 's/^/  /'
 
 cp "$HERE/watari-load.py" "$OUT/"
 cp "$HERE/ehw2.py" "$OUT/"
@@ -144,5 +175,7 @@ Manual steps for the hardware day (docs/procedures/m3a-day2-hardware.md, README-
   2. The m1n1 checkout of day 1 must be there; point the loader at it: --m1n1 <m1n1>/proxyclient or env M1N1_DIR.
   3. fdt_m1_dump is prebuilt (arm64) in the bundle; never run cc on the host without the Command Line Tools.
   4. python3 watari-load.py --rung L0 --dry-run first; then L1 ... L5, one rung at a time.
+     Day 3 (EDK2): --rung D0 --edk2 WATARI_M1_EFI.fd (prepares, previews the guest FDT with gfdt_dump, no jump), then
+     --rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go (docs/design/watari-edk2-m1/PLAN.md T13 H2-H8).
   5. Afterwards remove the bundle folder.
 EOF

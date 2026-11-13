@@ -29,7 +29,7 @@ Inputs: `re/m3a-ehw0-measurements.md` (day-1 hardware facts), `docs/design/watar
 - [x] **T8. Day-2 hardware procedure.** `docs/procedures/m3a-day2-hardware.md` in the style of day 1 (instructions for Claude on Ciani's Mac at the top; zero-footprint rule on Ciani's Mac; Marco's backup before anything): boot to m1n1 proxy, chainload the layer + test payload, expected UART output line by line, abort criteria, what to record in `re/`. Mark every unverified step [check]. Criterion: reviewed by an independent agent against the T4 design and T5-T7 code.
 
 ## Part 3: if time remains
-- [ ] **T9. #42 unblock (optional).** Get QEMU's `configure` past the Python venv step **without downloading** (e.g. a Python already on the Mac that ships setuptools, `--python=`); if impossible without a download, mark `[!]` with the exact package list for Marco. Do not download.
+- [x] **T9. #42 unblock (optional).** DONE: configure passes offline, see `re/qemu-configure-offline.md`. Get QEMU's `configure` past the Python venv step **without downloading** (e.g. a Python already on the Mac that ships setuptools, `--python=`); if impossible without a download, mark `[!]` with the exact package list for Marco. Do not download.
 
 ## Part 4: keep going (Marco: "do as much as possible, we don't know when we can test on hardware again")
 Same rules. Design tasks first get a design document (`morasca-agent` or `model: "fable"`), then code in small verified steps; split a task into a/b/c in this file before starting if it is too large for one iteration.
