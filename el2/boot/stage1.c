@@ -60,10 +60,24 @@ struct m1_platform g_m1;
 struct wel2_range g_guest_ram[WEL2_MAX_GUEST_RANGES];
 unsigned g_nguest_ram;
 
+/* E9: the framebuffer hand-over. g_fb_plan = what the guest gets (wel2.fb=layer|band|guest; layer = nothing). The bench has
+ * no panel: wel2.fakefb=<W>x<H> (x2r10g10b10) or wel2.fakefb8=<W>x<H> (x8r8g8b8) makes a block at the top of the RAM
+ * [g_fake_fb_lo, g_ram_end) the panel; it is removed from the guest's RAM ranges (the /memory node) and drawn by the layer
+ * through its normal RAM map. Written once by the boot core with the MMU off, read by everyone after. */
+struct wel2_fb_plan g_fb_plan;
+uint64_t g_fake_fb_lo;                /* 0 = no fake panel */
+bool g_fb_fake;
+
+/* QEMU without wel2.split: the end of the one guest RAM span (the bench's fake panel at the top of the RAM is not guest RAM). */
+uint64_t guest_ram_span_end(void)
+{
+    return g_fake_fb_lo ? g_fake_fb_lo : g_ram_end;
+}
+
 bool guest_ram_contains(uint64_t pa)
 {
     if (!g_plat->m1_memory && !g_nguest_ram)     /* QEMU: one span, unless wel2.split cut it into g_guest_ram[] */
-        return pa >= g_ram_base && pa < g_ram_end;
+        return pa >= g_ram_base && pa < guest_ram_span_end();
     for (unsigned i = 0; i < g_nguest_ram; i++)
         if (pa >= g_guest_ram[i].base && pa - g_guest_ram[i].base < g_guest_ram[i].size)
             return true;
@@ -79,8 +93,10 @@ unsigned guest_ranges(struct wel2_range *out)
             out[i] = g_guest_ram[i];
         return g_nguest_ram;
     }
+    uint64_t top = g_fake_fb_lo ? g_fake_fb_lo : g_ram_end;     /* the fake panel is not guest RAM (E9) */
+
     out[0].base = g_carve_base + g_carve_size;
-    out[0].size = g_ram_end > out[0].base ? g_ram_end - out[0].base : 0;
+    out[0].size = top > out[0].base ? top - out[0].base : 0;
     return out[0].size ? 1 : 0;
 }
 
@@ -149,6 +165,37 @@ static bool has_arg(const char *args, const char *key)
     return false;
 }
 
+/* <key><W>x<H> as a whole word (key = "wel2.fakefb="): true and the two numbers (each 1..99999), else false. */
+static bool parse_wxh(const char *args, const char *key, uint32_t *w, uint32_t *h)
+{
+    for (const char *p = args; *p; p++) {
+        unsigned k = 0;
+        uint32_t a = 0, b = 0;
+
+        if (p != args && p[-1] != ' ')
+            continue;
+        while (key[k] && p[k] == key[k])
+            k++;
+        if (key[k])
+            continue;
+        const char *q = p + k, *n = q;
+
+        for (; *q >= '0' && *q <= '9' && a < 100000; q++)
+            a = a * 10 + (unsigned)(*q - '0');
+        if (q == n || *q != 'x')
+            continue;
+        n = ++q;
+        for (; *q >= '0' && *q <= '9' && b < 100000; q++)
+            b = b * 10 + (unsigned)(*q - '0');
+        if (q != n && (*q == 0 || *q == ' ') && a && b && a < 100000 && b < 100000) {
+            *w = a;
+            *h = b;
+            return true;
+        }
+    }
+    return false;
+}
+
 /* <key><decimal> as a whole word (key = "wel2.step="): its value, 0 when absent or not a number. */
 static unsigned parse_uarg(const char *args, const char *key)
 {
@@ -193,7 +240,7 @@ void stage1_build(uint64_t fdt)
 {
     uint64_t hcr, mmfr0;
     struct wel2_ram ram;
-    char args[160];
+    char args[256];
     unsigned want_gran = WEL2_DEF_GRAN;
     bool want_e2h = WEL2_DEF_E2H;
 
@@ -369,6 +416,37 @@ void stage1_build(uint64_t fdt)
         }
     }
 
+    /* E9 bench: wel2.fakefb=<W>x<H> / wel2.fakefb8=<W>x<H>. The panel is the top of the RAM (16 KB aligned, so that the
+     * band/guest split is page aligned for both granules); wel2.fb band/guest then needs a size that is a whole number
+     * of pages (wel2_fb_plan says so). QEMU only. */
+    uint32_t fw = 0, fh = 0;
+    bool fake8 = false, want_fake = have_args && (parse_wxh(args, "wel2.fakefb=", &fw, &fh) ||
+                                                  (fake8 = parse_wxh(args, "wel2.fakefb8=", &fw, &fh)));
+
+    if (want_fake && m1) {
+        s1_msg("Watari EL2: WARNING: wel2.fakefb is for the QEMU bench only, ignored on the M1\n");
+    } else if (want_fake && g_fb.fmt) {
+        s1_msg("Watari EL2: WARNING: wel2.fakefb ignored, the loader's FDT has a framebuffer\n");
+    } else if (want_fake) {
+        uint64_t stride = 4ULL * fw, bytes = stride * fh, lo = (g_ram_end - bytes) & ~0x3fffULL;
+        uint64_t first = g_carve_base + g_carve_size;
+        /* guest RAM above the last piece's base must stay at least 128 MB: PrePi needs it (DESIGN 3.3) */
+        uint64_t keep = g_nguest_ram ? g_guest_ram[g_nguest_ram - 1].base : first;
+
+        if (bytes >= g_ram_end - first || lo <= keep + 0x8000000ULL ||
+            wel2_fb_setup(&g_fb, lo, fw, fh, (uint32_t)stride, fake8 ? "x8r8g8b8" : "x2r10g10b10", fake8 ? 9 : 12)) {
+            s1_msg("Watari EL2: WARNING: wel2.fakefb does not fit (RAM, or an unusable size), ignored\n");
+        } else {
+            g_fake_fb_lo = lo;
+            g_fb_fake = true;
+            if (g_nguest_ram)
+                g_guest_ram[g_nguest_ram - 1].size = lo - g_guest_ram[g_nguest_ram - 1].base;
+            if (g_step)
+                wel2_fb_set_rung(&g_fb, g_step > 5 ? 5 : g_step, g_step);
+            checkpoint(WEL2_LCHK_RELOCATED);          /* what the real panel got at the top of this function */
+        }
+    }
+
     struct wel2_s1_layout layout = {
         (uint64_t)(uintptr_t)__image_start, (uint64_t)(uintptr_t)__text_end, (uint64_t)(uintptr_t)__rodata_end,
     };
@@ -437,11 +515,32 @@ void stage1_build(uint64_t fdt)
     /* The framebuffer: above the RAM on the M1 (0x9e2570000 vs the RAM top 0x9df610000), mapped Normal non-cacheable
      * (MAIR Attr2). A framebuffer the map cannot take (inside the RAM, beyond the input range, pool full) is
      * switched off: drawing into unmapped or cacheable memory would fault or never reach the panel. */
-    if (g_fb.fmt && (m1 ? wel2_s1_map_fb_free(&s1_pt, g_fb.base, wel2_fb_bytes(&g_fb), g_e2h)
+    if (g_fb.fmt && !g_fb_fake && (m1 ? wel2_s1_map_fb_free(&s1_pt, g_fb.base, wel2_fb_bytes(&g_fb), g_e2h)
                         : wel2_s1_map_fb(&s1_pt, &ram, g_fb.base, wel2_fb_bytes(&g_fb), g_e2h))) {
         g_fb = (struct wel2_fb){ 0 };
         g_fb.cp = -1;
         s1_msg("Watari EL2: WARNING: the framebuffer does not fit the stage-1 map, no framebuffer output\n");
+    }
+
+    /* E9: wel2.fb=layer|band|guest. Without a usable framebuffer, or with a size the stage-2 pages cannot split, the layer keeps
+     * the panel (a message says why); nothing changes when the argument is absent. */
+    unsigned fbmode = WEL2_FBM_LAYER;
+
+    if (have_args) {
+        if (has_arg(args, "wel2.fb=band"))
+            fbmode = WEL2_FBM_BAND;
+        else if (has_arg(args, "wel2.fb=guest"))
+            fbmode = WEL2_FBM_GUEST;
+        else if (!has_arg(args, "wel2.fb=layer")) {
+            for (const char *p = args; *p; p++)
+                if ((p == args || p[-1] == ' ') && p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' &&
+                    p[4] == '.' && p[5] == 'f' && p[6] == 'b' && p[7] == '=')
+                    s1_msg("Watari EL2: WARNING: unknown wel2.fb value (layer, band or guest), the layer keeps the panel\n");
+        }
+    }
+    if (wel2_fb_plan(&g_fb, fbmode, g_gran, &g_fb_plan)) {
+        s1_msg("Watari EL2: WARNING: wel2.fb=band|guest needs a framebuffer whose base and size are whole stage-2 pages and room for the band: the layer keeps the panel\n");
+        wel2_fb_plan(&g_fb, WEL2_FBM_LAYER, g_gran, &g_fb_plan);
     }
 
     /* TCR_EL2 physical size = min(PARange, 40 bit). */
@@ -457,6 +556,9 @@ void stage1_build(uint64_t fdt)
     clean_inval(&g_s1, sizeof(g_s1));
     clean_inval(&g_con, sizeof(g_con));
     clean_inval(&g_fb, sizeof(g_fb));
+    clean_inval(&g_fb_plan, sizeof(g_fb_plan));
+    clean_inval(&g_fake_fb_lo, sizeof(g_fake_fb_lo));
+    clean_inval(&g_fb_fake, sizeof(g_fb_fake));
     clean_inval(&g_con_s5l_base, sizeof(g_con_s5l_base));
     clean_inval(&g_con_s5l_size, sizeof(g_con_s5l_size));
     clean_inval(&g_m1, sizeof(g_m1));
@@ -476,4 +578,11 @@ void stage1_build(uint64_t fdt)
     clean_inval(&g_step, sizeof(g_step));
     clean_inval(&s1_pt, sizeof(s1_pt));
     __asm__ volatile("dsb sy" ::: "memory");
+}
+
+/* E9: the switch at the eret (called by main.c right before enter_el1 of the first guest). Layer mode: nothing. */
+void fb_handover(void)
+{
+    if (g_fb_plan.mode != WEL2_FBM_LAYER)
+        wel2_fb_handover(&g_fb, g_fb_plan.mode, g_fb_plan.band_rows);
 }

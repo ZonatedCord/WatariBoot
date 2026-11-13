@@ -76,9 +76,53 @@ struct wel2_fb {
 	uint32_t rung1, step1;    /* rung / step + 1, 0 = not set */
 	uint32_t pass_m, fail_m, skip_m;   /* guest checks (square - 16) by outcome */
 	uint32_t err_kind;        /* 0 none, 1 automatic text (may be replaced by the next automatic one), 2 explicit */
+	/* E9 hand-over (wel2.fb=band|guest): 0 = the layer owns the whole panel (today's behaviour), see wel2_fb_handover */
+	uint32_t hand;            /* enum wel2_fb_hand */
+	uint32_t band_rows;       /* band hand-over: rows [0, band_rows) stay the layer's; every store is clipped to them */
+	uint32_t tcol, tfresh;    /* band hand-over: ticker column, and "the next character starts a new line" */
 	char label[WEL2_FB_LABEL_MAX];
 	char err[WEL2_FB_ERR_MAX];
 };
+
+/* ---- E9: framebuffer hand-over (DESIGN watari-edk2-m1 8.2, 8.3; ADR draft-edk2-m1-platform decision 6) ------------------
+ * wel2.fb=layer (default): the layer draws everything, the guest gets no panel pixel (nothing below changes).
+ * wel2.fb=band : at the eret the layer keeps rows [0, B) (checkpoints, status band, last-error area, a rule and ONE ticker
+ *                line with the latest console text) and the guest gets rows [B, height) as a framebuffer of height - B rows.
+ *                B is at least the height of that status area (text_y + one text line: about 360 rows on the j293, scale 6,
+ *                not the 48 of DESIGN 8.1, which predates the T6h layout) and is rounded UP so that B x stride is a whole
+ *                number of stage-2 pages (4 KB and 16 KB alike): the guest part then starts on a page boundary, which is what
+ *                lets stage 2 hold the band unmapped and the guest part mapped.
+ * wel2.fb=guest: at the eret the guest gets the whole panel; the layer draws nothing more (state is still kept).
+ * fatal() takes the panel back (wel2_fb_take_back, called by wel2_fb_checkpoint_fail): the layer's EL2 view was never
+ * unmapped, so it can always print its dump over whatever is there. */
+enum wel2_fb_mode { WEL2_FBM_LAYER = 0, WEL2_FBM_BAND, WEL2_FBM_GUEST };
+enum wel2_fb_hand { WEL2_FBH_NONE = 0, WEL2_FBH_BAND, WEL2_FBH_GUEST };
+
+struct wel2_fb_plan {
+	uint32_t mode;            /* enum wel2_fb_mode */
+	uint32_t band_rows;       /* rows the layer keeps (0 for layer and guest) */
+	uint32_t guest_rows;      /* rows of the guest's framebuffer (0 for layer) */
+	uint64_t band_bytes;      /* band_rows * stride, a multiple of the stage-2 page */
+	uint64_t guest_base;      /* guest physical address of its first pixel: fb base + band_bytes */
+	uint64_t guest_bytes;     /* guest_rows * stride */
+};
+
+/* Rows of the layer's status area plus one ticker line: the smallest band the layout can use. 0 when the layout does not
+ * fit the screen (no text columns, or fewer rows than the status area). */
+uint32_t wel2_fb_band_min_rows(const struct wel2_fb *fb);
+/* Pure arithmetic. Works out what the guest gets for `mode` with the stage-2 granule 1 << gshift:
+ *  layer: out = { mode } and 0;
+ *  guest: the whole buffer; the base and the size (height x stride) must be multiples of the page, else -1;
+ *  band : the smallest B >= wel2_fb_band_min_rows with B x stride a multiple of the page and B < height (so that at least
+ *         one row is left for the guest), else -1; the base must be page aligned.
+ * -1 also for a buffer that is absent (fmt NONE) in band/guest mode. *out is zeroed first. */
+int wel2_fb_plan(const struct wel2_fb *fb, unsigned mode, unsigned gshift, struct wel2_fb_plan *out);
+/* The switch at the eret. band: wipes the ticker line and the rest of the band to the status colour, then every store is
+ * clipped to rows [0, band_rows) and the text goes to the one-line ticker; guest: nothing is drawn any more (the state
+ * of checkpoints, counters and error text is still tracked). layer / no framebuffer: no-op. */
+void wel2_fb_handover(struct wel2_fb *fb, unsigned mode, uint32_t band_rows);
+/* Back to the layer owning the whole panel and repaint of the band and the error area (fatal()). No-op without hand-over. */
+void wel2_fb_take_back(struct wel2_fb *fb);
 
 enum wel2_fb_cpstate { WEL2_CPS_NONE = 0, WEL2_CPS_RUNNING, WEL2_CPS_OK, WEL2_CPS_FAIL, WEL2_CPS_SKIP };
 
@@ -104,7 +148,7 @@ uint32_t wel2_fb_pixel(const struct wel2_fb *fb, uint32_t rgb);
 void wel2_fb_checkpoint(struct wel2_fb *fb, unsigned index, uint32_t rgb);
 /* Repaint the current checkpoint red (square 0 when none was painted yet) and show "FATAL AT CHECKPOINT <n>" in the
  * error area unless an explicit text was set with wel2_fb_set_error. */
-void wel2_fb_checkpoint_fail(struct wel2_fb *fb);
+void wel2_fb_checkpoint_fail(struct wel2_fb *fb);   /* also takes the panel back after a hand-over (E9) */
 
 /* Status band (T6h). `rung` is the hardware ladder rung 0..5 (L0..L5), `step` the wel2.step value / boot step;
  * shown as "RUNG L<rung> STEP <step>". Boot code should call it once the values are known. */
@@ -123,7 +167,7 @@ unsigned wel2_fb_guest_skip(const struct wel2_fb *fb);
 /* Text: '\n' starts a new line, '\r' is ignored, a line wraps at the right edge, and when the last line is full
  * the scrolling text area is cleared and output restarts at its top. Lower case is drawn as upper case; a character the
  * font does not have is drawn as a blank cell. */
-void wel2_fb_putc(struct wel2_fb *fb, char c);
+void wel2_fb_putc(struct wel2_fb *fb, char c);     /* after a band hand-over: the ticker (the latest line, cut at the width) */
 /* T17: make sure `lines` text rows are free below the cursor: when fewer are left (and the area can hold them at all,
  * lines + 2 legend rows <= rows), the scrolling area is cleared and the legend reprinted first, so the next `lines`
  * lines are never cut by a scroll. Call it at the start of a line (cx == 0). */
