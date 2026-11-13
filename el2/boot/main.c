@@ -889,13 +889,36 @@ static void __attribute__((noreturn)) chain_fdt(void)
         gfb.height = g_fb_plan.guest_rows;
         gfb.stride = g_fb.stride;
         gfb.format = g_fb.fmt == WEL2_FB_X2R10G10B10 ? "x2r10g10b10" : "x8r8g8b8";
-        if (g_test_badfbfmt)                                 /* bench negative test (E11): a format the firmware does not know */
-            gfb.format = "r5g6b5";
         gi.fb = &gfb;
         gi.fb_mode = g_fb_plan.mode == WEL2_FBM_BAND ? "band" : "guest";
     }
     if (guest_fdt_build((void *)(uintptr_t)gp.fdt, WEL2_GFDT_MAX, &gi, &size))
         fatal_msg("guest FDT: the builder refused the input or the result does not fit 32 KB");
+    if (g_test_badfbfmt && gi.fb) {
+        /* wel2.test=badfbfmt (E11 bench, negative test): the builder only accepts the two real formats, so the string of the
+         * built node is overwritten in place with one the firmware does not know ("r5g6b5", zero padded: the property keeps
+         * its length and stays NUL terminated). */
+        uint8_t *f = (uint8_t *)(uintptr_t)gp.fdt;
+        static const char f8[] = "x8r8g8b8", f10[] = "x2r10g10b10", bad[] = "r5g6b5";
+
+        for (uint32_t i = 0; i + sizeof(f8) <= size; i++) {
+            unsigned n = 0;
+
+            if (f[i] != 'x')
+                continue;
+            for (unsigned k = 0; k < sizeof(f8) && f[i + k] == (uint8_t)f8[k]; k++)
+                if (k == sizeof(f8) - 1)
+                    n = sizeof(f8);
+            for (unsigned k = 0; !n && i + k < size && k < sizeof(f10) && f[i + k] == (uint8_t)f10[k]; k++)
+                if (k == sizeof(f10) - 1)
+                    n = sizeof(f10);
+            if (n) {
+                memset(f + i, 0, n);
+                memcpy(f + i, bad, sizeof(bad) - 1);
+                break;
+            }
+        }
+    }
     dcache_clean_range((const void *)(uintptr_t)gp.fdt, size);   /* EL2 wrote through its cacheable map; the guest reads with caches off */
     for (unsigned i = 0; i < gp.n; i++) {
         put_kv("Watari EL2: guest FDT /memory base = ", gp.ordered[i].base);

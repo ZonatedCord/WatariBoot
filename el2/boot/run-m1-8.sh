@@ -9,7 +9,8 @@
 #   QEMU -kernel build-chain/wel2.bin        : the layer (arm64 Image, x0 = QEMU's FDT)
 #   QEMU -device loader,...,addr=<entry>     : the production firmware, entered by the layer at EL1 with x0 = the guest FDT
 # Prerequisite: the data disk and tools/build-edk2-m1.sh (production build, once).
-# Success = the firmware reaches BDS (its end state in the production build is the Boot Manager Menu: nothing to boot, no key) with
+# Success = the firmware reaches BDS (since E12 its end state in the production build is the built-in self-test, started by WatariM1BootManagerLib because nothing is
+#   bootable; before E12 it was the Boot Manager Menu. The self-test itself is checked by run-m1-9.sh; this run only sees it start) with
 #   - every /memory range of the layer's FDT accounted for: the first (the one holding the image) is PrePi's system memory
 #     (ArmVirtGetMemoryMap line), every other one is added by HighMemDxe;
 #   - the layer having handled the vGIC traps and injected timer interrupts; no ASSERT, no exception.
@@ -58,7 +59,7 @@ trap 'kill "$QPID" 2>/dev/null' EXIT INT TERM
 DONE=0
 for _ in $(seq 1 900); do
     kill -0 "$QPID" 2>/dev/null || { DONE=1; break; }
-    if grep -aqE "\[Bds\] Booting Boot Manager Menu|Shell> |Watari EL2: halted" "$LOG"; then sleep 3; DONE=2; break; fi
+    if grep -aqE "\[Bds\] ?Booting (Boot Manager Menu|Watari M1 self-test)|Shell> |Watari EL2: halted" "$LOG"; then sleep 3; DONE=2; break; fi
     sleep 0.1
 done
 kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
@@ -67,7 +68,7 @@ tr -d '\r' < "$LOG" > "$TXT"
 echo "[layer] boot arguments: $ARGS   (QEMU -m $MEM, cpuif $CPUIF)"
 grep -a "^Watari EL2" "$TXT" | grep -aE "guest FDT|guest image|image end|eret to the guest|WARNING|FATAL|halted|cpuif mode" | head -24
 echo "... [firmware log through the hypercall] ..."
-grep -aE "ArmVirtGetMemoryMap|InitializeHighMemDxe|UEFI firmware|\[Bds\]|Found GIC|ASSERT [/A-Za-z(]" "$TXT" | head -40
+grep -aE "ArmVirtGetMemoryMap|InitializeHighMemDxe|UEFI firmware|\[Bds\]|Found GIC|SELFTEST start|ASSERT [/A-Za-z(]" "$TXT" | head -40
 
 rc=0
 expect() { grep -aqF -- "$1" "$TXT" || { echo "MISSING: $1"; rc=1; }; }
@@ -75,7 +76,7 @@ expect "Watari EL2: eret to the guest at EL1, entry = "
 expect "UEFI firmware (version "
 expect "Found GIC v3 Distributor @ 0x8000000"
 expect "[Bds]Exit the waiting!"
-expect "[Bds] Booting Boot Manager Menu."
+expect "[Bds]Booting Watari M1 self-test"
 expect "Watari EL2: vGIC GICD traps handled = "
 expect "Watari EL2: vGIC GICR traps handled = "
 expect "Watari EL2: cpu 0 virtual timer PPI 27 taken, injecting into the guest"

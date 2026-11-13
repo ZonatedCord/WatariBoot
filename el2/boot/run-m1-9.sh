@@ -16,7 +16,7 @@
 #     monitor (pmemsave) and checked from outside, pixel by pixel, in Python: every pixel of the bar rows (the GOP's rows without
 #     the bottom 64-row status strip) is the bar colour of its quarter of the width, in the panel's format; in band mode no pixel
 #     of the band rows has a bar value (white is not tested for x8r8g8b8: it is the layer's own text colour) and the ticker line
-#     shows text; with no GOP the guest part of the panel is still all zero.
+#     shows text; with no GOP no pixel of the guest part has a bar value.
 #   B (no hold, -no-reboot): the run ends by itself: QEMU exits after the layer's PSCI SYSTEM_RESET line. (EXITCHK=0 skips B.)
 # 10-bit bar values: FrameBufferBltLib shifts the WHOLE 32-bit pixel (B | G<<8 | R<<16) once per channel and then masks, so an 8-bit
 # value lands in the TOP of its 10-bit field (0xFF -> 0x3FC) and the two low bits of a field are the top two bits of the channel
@@ -222,16 +222,20 @@ EOF
             echo "FAIL: no dump of the fake panel (monitor pmemsave)"; rc=1
         fi
     elif [ -s "$DUMP" ] && [ "$mode" = band ]; then
-        # no GOP: nobody wrote the guest part
-        python3 -I - "$DUMP" "$STRIDE" "${BAND:-0}" "$H" <<'EOF' || rc=1
-import sys
-dump, stride, band, H = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+        # no GOP: the firmware wrote nothing into the guest part. It is not all zero (the layer drew its log text there before the
+        # hand-over), so what is checked is that no pixel has a bar value of either format.
+        python3 -I - "$DUMP" "$STRIDE" "${BAND:-0}" "$H" "$W" <<'EOF' || rc=1
+import struct, sys
+dump, stride, band, H, W = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
 d = open(dump, "rb").read()
-g = d[band * stride:H * stride]
-nz = sum(1 for b in g if b)
-if nz:
-    print("FAIL: no GOP, but %d non-zero bytes in the guest part of the panel" % nz); sys.exit(1)
-print("ok: no GOP: the guest part of the panel (rows %d..%d) is still all zero" % (band, H - 1))
+bars = {0x3fc00000, 0x003ff000, 0x00000ffc, 0x00ff0000, 0x0000ff00, 0x000000ff}
+n = 0
+for y in range(band, H):
+    for v in struct.unpack_from("<%dI" % W, d, y * stride):
+        if v in bars: n += 1
+if n:
+    print("FAIL: no GOP, but %d guest-part pixels have a self-test bar value" % n); sys.exit(1)
+print("ok: no GOP: no pixel of the guest part (rows %d..%d) has a bar value" % (band, H - 1))
 EOF
     fi
 

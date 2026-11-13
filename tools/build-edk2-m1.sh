@@ -59,7 +59,9 @@ if git -C "$WATARI_EDK2" apply --check "$HERE/edk2-hvf-gicv3.patch" 2>/dev/null;
 fi
 
 # EDK2 does not accept spaces in PACKAGES_PATH: link the repository from a path without spaces.
-LINK="/tmp/watari-repo"
+# One link per checkout (a hash of its path): the other build scripts share /tmp/watari-repo, and two worktrees building at
+# the same time re-pointed it under each other's feet (a build failed with "No rule to make target" on its own source).
+LINK="/tmp/watari-repo-$(printf '%s' "$REPO" | shasum | cut -c1-8)"
 if [ "$(readlink "$LINK" 2>/dev/null)" != "$REPO" ]; then rm -f "$LINK"; ln -s "$REPO" "$LINK"; fi
 
 # --- check 1a: the ASL against the acpigen model (before spending minutes in the build) -----------
