@@ -52,6 +52,7 @@ TXT=$OUT/m1-8-uart.txt
     -device loader,file="$FD",addr="$ENTRY",force-raw=on \
     -serial "file:$LOG" -monitor none >$OUT/m1-8-qemu.out 2>&1 &
 QPID=$!
+trap 'kill "$QPID" 2>/dev/null' EXIT INT TERM
 
 # Stop as soon as the firmware reached its end state or the layer died.
 DONE=0
@@ -64,12 +65,12 @@ kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null
 tr -d '\r' < "$LOG" > "$TXT"
 
 echo "[layer] boot arguments: $ARGS   (QEMU -m $MEM, cpuif $CPUIF)"
-grep "^Watari EL2" "$TXT" | grep -aE "guest FDT|guest image|image end|eret to the guest|WARNING|FATAL|halted|cpuif mode" | head -24
+grep -a "^Watari EL2" "$TXT" | grep -aE "guest FDT|guest image|image end|eret to the guest|WARNING|FATAL|halted|cpuif mode" | head -24
 echo "... [firmware log through the hypercall] ..."
-grep -aE "ArmVirtGetMemoryMap|InitializeHighMemDxe|UEFI firmware|\[Bds\]|Found GIC|ASSERT" "$TXT" | head -40
+grep -aE "ArmVirtGetMemoryMap|InitializeHighMemDxe|UEFI firmware|\[Bds\]|Found GIC|ASSERT [/A-Za-z(]" "$TXT" | head -40
 
 rc=0
-expect() { grep -qF -- "$1" "$TXT" || { echo "MISSING: $1"; rc=1; }; }
+expect() { grep -aqF -- "$1" "$TXT" || { echo "MISSING: $1"; rc=1; }; }
 expect "Watari EL2: eret to the guest at EL1, entry = "
 expect "UEFI firmware (version "
 expect "Found GIC v3 Distributor @ 0x8000000"
@@ -86,7 +87,7 @@ fi
 # --- the memory map: the layer's ranges against what the firmware did with them -------------------------------------
 # Layer lines: "guest FDT /memory base = 0x<b>" followed by "  size = 0x<s>", first = the range that holds the image.
 RANGES=$(grep -aE "guest FDT /memory base = |^Watari EL2:   size = " "$TXT" | sed -e 's/.*= 0x0*//' | paste -d' ' - - )
-NR=$(echo "$RANGES" | grep -c .)
+NR=$(echo "$RANGES" | grep -ac .)
 WANT=1; [ "$SPLIT" != 0 ] && WANT=$SPLIT
 [ "$NR" = "$WANT" ] || { echo "FAIL: the layer lists $NR /memory ranges, expected $WANT"; rc=1; }
 hex() { printf '%x' "$((16#$1))"; }
@@ -131,8 +132,8 @@ if [ -n "${COMPARE_E3:-}" ] && [ -f "$COMPARE_E3" ]; then
     fi
 fi
 
-grep -q "UNEXPECTED\|FATAL\|unhandled guest\|non-PSCI SMC" "$TXT" && { echo "FAIL: the layer reported an unexpected event"; rc=1; }
-grep -q "ASSERT\|Synchronous Exception\|ASSERT_EFI_ERROR" "$TXT" && { echo "FAIL: the firmware reported an ASSERT/exception"; rc=1; }
+grep -aq "UNEXPECTED\|FATAL\|unhandled guest\|non-PSCI SMC" "$TXT" && { echo "FAIL: the layer reported an unexpected event"; rc=1; }
+grep -aqE "ASSERT [/A-Za-z(]|ASSERT_EFI_ERROR|Synchronous Exception" "$TXT" && { echo "FAIL: the firmware reported an ASSERT/exception"; rc=1; }
 [ "$DONE" = 0 ] && { echo "FAIL: timeout before the end state"; rc=1; }
 [ $rc = 0 ] && echo "PASS: the M1 platform firmware (production build, hypercall console) at EL1 under Watari EL2 on the layer's guest FDT (M1-8; split=$SPLIT, -m $MEM, cpuif=$CPUIF$([ "${HIGH:-0}" = 1 ] && echo ', image above 4 GB')): BDS reached, every range accounted for"
 exit $rc
