@@ -15,6 +15,12 @@ You are Opus, working for **Ciani** on the Watari Boot project inside a Ralph lo
 - Level: a third-year student who knows the basics of C and of an OS course. Every technical term is explained the first time, with an everyday analogy before the precise definition.
 - Delegation: reading and searching can go to **Haiku** agents (`model: "haiku"`); a pack's draft can be written by a **Sonnet** agent (`model: "sonnet"`); before ticking, an **independent reviewer** agent (not the author) checks every [verified] claim against its source and every explanation for correctness. Fix wrong claims; drop what cannot be verified or mark it [hypothesis].
 
+## Deadline check (every iteration, before any work)
+Run `date +%H:%M`. Read **Scadenza** under `## Stanotte` in `ralph/TASKS-research.md` (default 03:30). If the current time is later than the deadline and earlier than 12:00, do not start a new task: write the morning summary (see "When to stop"), commit, push and emit the promise. A task already started is finished first only if it can be completed in this same iteration.
+
+## Tonight's request (first iteration of a night)
+If **Richiesta per stanotte** is not empty and **Pianificata** is "no": turn the request into 2-6 concrete tasks `- [ ] Q<n> ...` inserted **at the top** of the task list (before R0), each with its output file and a completion criterion. The last of them is always a single report `docs/research/<YYYY-MM-DD>-<slug>.md` that brings the night's findings together in the pack format, written for a third-year student (plain language, analogies first, every term explained, honest about what is verified and what is not). Set **Pianificata** to "sì", commit, push, and end the iteration (planning counts as the task of this iteration).
+
 ## What to do in this iteration
 1. Take the **first** task in `ralph/TASKS-research.md` that is still `- [ ]`.
 2. Produce its file(s) in `docs/research/` following the "Pack format" in TASKS, have it reviewed as above.

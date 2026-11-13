@@ -2,6 +2,11 @@
 
 Branch `ralph/ciani-research`. Output in `docs/research/`, in Italian. One task per iteration. Edit this list freely before each night: add a task at the bottom, or reset a `[x]` to `[ ]` to redo it.
 
+## Stanotte
+- **Scadenza:** 03:30  (Ralph stops at the first iteration that starts after this time, so the usage window is free again in the morning)
+- **Richiesta per stanotte:** (write here in your own words what you want to understand, e.g. "le origini del progetto e come l'AI l'ha impostato all'inizio"; leave empty to just continue the list below)
+- **Pianificata:** no  (Ralph sets this to "sì" after turning the request into tasks)
+
 ## Pack format (every "decision pack")
 File `docs/research/NN-<slug>.md`, about 2-4 pages:
 1. **In una frase** - the decision, in plain words.
