@@ -89,3 +89,9 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Review (Sonnet): OK with corrections, all applied (guarded probe for the console HVC, EDK2 cites re-checked at edk2-stable202608 incl. the GICv5 branch, MS debug-interface and RNG requirements as risks, scope extensions of the minimal layer listed as needing Marco's yes).
 - Riskiest open question: Windows and a 30-bit x2r10g10b10 GOP framebuffer (MS requires 8-bit BGR).
 - Decisions for Marco (ADR): WEL2_CONSOLE_WRITE hypercall, framebuffer hand-over, guest FDT builder, shadow framebuffer: they extend the minimal-layer scope.
+
+### 2026-11-13 01:15 - T6d, T6e, T6f done (wiring into plat_m1) + T7 vendor-HVC wiring
+- Commits: f8b9b23 (M1 IRQ path: `pirq_aic_drain`, AIC per-core init/WHOAMI; FIQ path with `apple_fiq_handle`, timer resync, maintenance backstop on IRQ and FIQ tails; PSCI on the M1 via `cpu_start.c`, park outside the lock, `secondary_rewake`), 948859d (vendor HVCs before PSCI, guest info block, `wel2.guest=`), 1024042 (review fixes: trap cpuif mode forced on the M1 and `wel2.cpuif=hw` refused there — DESIGN 5.4, SEIS = 1; info block must lie in guest RAM on the M1; check-nosmc robustness; reset halt releases the lock; E2H check).
+- Review (Sonnet): no blocking defect in the diff; the hw-default-on-M1 hang risk (outside the diff) fixed in 1024042.
+- Opus verified: `make -C el2 test` ALL PASSED (check-pie, check-apple-enc on the linked image, check-nosmc); `run-all.sh` 17/17 both configs; run-moved PASS; run-m1guest G1-G11 PASS through WEL2_LOG in hw and trap (G5a/G5b judged on counters); Windows boot on the merged branch (TAG=t6def-merged) reached the desktop.
+- Open: none of the M1-only branches can run on QEMU (they run first on the M1, rungs L1-L3).
