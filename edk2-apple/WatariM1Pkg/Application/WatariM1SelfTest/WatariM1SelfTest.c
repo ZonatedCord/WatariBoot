@@ -13,8 +13,8 @@
 
   Text printed after the bars would be drawn over them by the graphics console, so the progress
   and the verdict go to the debug log (the hypercall console of the production build, the PL011
-  of the bench build) and, as pixels, to the status strip through PrintXY. A RELEASE build has no
-  debug log: its verdict is only on the panel.
+  of the bench build) and, as ten boxes that turn white one by one, to the status strip. A
+  RELEASE build has no debug log: its verdict is only the ten white boxes.
   Without a GOP (unknown framebuffer format) the test still runs: no bars, same ticks, same reset.
 
   Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
@@ -36,6 +36,9 @@
 #define TICKS_WANTED  10
 #define STRIP_ROWS    64          // bottom rows kept for status text (no bars there)
 #define TICK_100NS    10000000ULL // one second
+#define BOX_X0        16          // status strip: ten boxes, box i at x = BOX_X0 + i * BOX_PITCH,
+#define BOX_PITCH     56          // y = H - STRIP_ROWS + 12, BOX_SIZE square
+#define BOX_SIZE      40
 
 STATIC
 VOID
@@ -129,34 +132,36 @@ DrawBars (
   }
 }
 
+/**
+  One of ten boxes in the status strip: dark grey = tick not yet seen, white = tick seen. Boxes
+  rather than text: PrintXY returned 0 and drew nothing on this platform (cause not
+  investigated), and ten filling boxes are easier to read on a photograph anyway.
+**/
 STATIC
 VOID
-StripText (
+StripBox (
   IN EFI_GRAPHICS_OUTPUT_PROTOCOL  *Gop,
-  IN CONST CHAR16                  *Text,
-  IN UINTN                         Number
+  IN UINTN                         Index,
+  IN BOOLEAN                       Lit
   )
 {
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  White;
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Black;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Color;
+  UINTN                          W;
   UINTN                          H;
-  UINTN                          Count;
 
   if (Gop == NULL) {
     return;
   }
 
+  W = Gop->Mode->Info->HorizontalResolution;
   H = Gop->Mode->Info->VerticalResolution;
-  if (H <= 2 * STRIP_ROWS) {
+  if ((H <= 2 * STRIP_ROWS) || (W < BOX_X0 + TICKS_WANTED * BOX_PITCH)) {
     return;
   }
 
-  SetMem (&White, sizeof (White), 0xFF);
-  ZeroMem (&Black, sizeof (Black));
-  Count = PrintXY (16, H - 40, &White, &Black, L"%-40s %u/%u", Text, Number, TICKS_WANTED);
-  if (Count == 0) {
-    DEBUG ((DEBUG_WARN, "SELFTEST: PrintXY drew nothing\n"));
-  }
+  SetMem (&Color, sizeof (Color), Lit ? 0xFF : 0x40);
+  Color.Reserved = 0;
+  Gop->Blt (Gop, &Color, EfiBltVideoFill, 0, 0, BOX_X0 + Index * BOX_PITCH, H - STRIP_ROWS + 12, BOX_SIZE, BOX_SIZE, 0);
 }
 
 EFI_STATUS
@@ -204,7 +209,9 @@ WatariM1SelfTestMain (
       ));
     DrawBars (Gop);
     DEBUG ((DEBUG_INFO, "SELFTEST bars drawn\n"));
-    StripText (Gop, L"SELFTEST running, timer ticks", 0);
+    for (Ticks = 0; Ticks < TICKS_WANTED; Ticks++) {
+      StripBox (Gop, Ticks, FALSE);
+    }
   }
 
   Status = gBS->CreateEvent (EVT_TIMER, TPL_CALLBACK, NULL, NULL, &Timer);
@@ -214,7 +221,6 @@ WatariM1SelfTestMain (
 
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "SELFTEST FAIL: timer event: %r\n", Status));
-    StripText (Gop, L"SELFTEST FAIL: no timer event", 0);
     return Status;
   }
 
@@ -222,19 +228,17 @@ WatariM1SelfTestMain (
     Status = gBS->WaitForEvent (1, &Timer, &Index);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "SELFTEST FAIL: WaitForEvent: %r\n", Status));
-      StripText (Gop, L"SELFTEST FAIL: WaitForEvent", Ticks);
       return Status;
     }
 
     DEBUG ((DEBUG_INFO, "SELFTEST tick %u/%u\n", Ticks, TICKS_WANTED));
-    StripText (Gop, L"SELFTEST running, timer ticks", Ticks);
+    StripBox (Gop, Ticks - 1, TRUE);
   }
 
   gBS->SetTimer (Timer, TimerCancel, 0);
   gBS->CloseEvent (Timer);
 
   DEBUG ((DEBUG_INFO, "SELFTEST PASS\n"));
-  StripText (Gop, L"SELFTEST PASS, timer ticks", TICKS_WANTED);
   if (Gop == NULL) {
     Print (L"SELFTEST PASS\n");
   }

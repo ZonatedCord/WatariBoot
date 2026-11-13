@@ -194,11 +194,16 @@ if bad:
     print("FAIL: %d of %d bar-row pixels are not the bar colour (%s)" % (bad, total, label)); sys.exit(1)
 print("ok: all %d pixels of rows %d..%d are the four bars, %s: %s" % (total, first, first + bar_rows - 1, label,
       " ".join("%s=0x%08x" % (n, v) for n, v in zip(names, bars))))
-# the status strip below the bars: drawn by PrintXY, so some pixels are lit
-strip = sum(1 for y in range(first + bar_rows, H) for v in struct.unpack_from("<%dI" % W, d, y * stride) if v)
-if gop_rows > 128 and not strip:
-    print("FAIL: the status strip (rows %d..%d) is empty" % (first + bar_rows, H - 1)); sys.exit(1)
-print("ok: status strip rows %d..%d: %d lit pixels" % (first + bar_rows, H - 1, strip))
+# the status strip below the bars: ten boxes of 40 x 40 at x = 16 + 56 i, y = gop_rows - 64 + 12, white once the tick was seen
+lit = 0
+for i in range(10):
+    y = first + gop_rows - 64 + 12 + 20
+    x = 16 + 56 * i + 20
+    v = struct.unpack_from("<I", d, y * stride + 4 * x)[0]
+    if v == bars[3]: lit += 1
+if gop_rows > 128 and lit != 10:
+    print("FAIL: %d of the 10 status boxes are white (every tick must have lit its box)" % lit); sys.exit(1)
+print("ok: status strip: %d of 10 boxes lit (ten timer ticks seen by the firmware)" % lit)
 if mode == "band":
     test = [b for n, b in zip(names, bars) if not (n == "white" and fmt == "8")]
     inband = 0; nonblack = 0
