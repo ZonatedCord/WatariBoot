@@ -189,8 +189,9 @@ static bool hvc_range_ok(void *ctx, uint64_t pa, uint64_t len)
     return true;
 }
 
-/* The guest runs with MMU and caches off (its stores are in memory, EL2's cacheable map may hold stale lines) and reads
- * the same way: clean+invalidate around every access [hypothesis: needed on the M1, harmless on QEMU TCG]. */
+/* The guest may run with the MMU and caches off (early PrePi) or on (EDK2's identity map): its stores may sit in its caches
+ * or in memory, and EL2's cacheable map may hold stale lines. DC CIVAC by PA cleans and invalidates through the point of
+ * coherency whichever way the guest mapped the page; that the attributes match well enough on the M1 is [hypothesis]. */
 static void hvc_clean_inv(uint64_t pa, uint64_t len)
 {
     uint64_t ctr;

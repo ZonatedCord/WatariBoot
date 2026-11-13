@@ -12,7 +12,8 @@
 #
 #  Build options, all with tools/build-edk2-m1.sh:
 #    -D WATARI_M1_BENCH_PL011=TRUE   QEMU bench: serial and debug through the PL011 that QEMU's
-#                                    device tree describes (never in a production build).
+#                                    device tree describes (never in a production build). Without
+#                                    it the console is the hypercall of Watari EL2 (E8).
 #    -D WATARI_M1_ACPIGEN_MODEL=m    acpigen model of the ACPI tables: j293 (default) or qemu-virt.
 #    -D WATARI_M1_ACPIVIEW=TRUE      add the Shell's acpiview command (bench).
 #    -D WATARI_M1_SHELL_BOOT=TRUE    boot the UEFI Shell by default (bench).
@@ -196,10 +197,11 @@
 !endif
 !else
   #
-  # Production: no UART of any kind. The serial port is a null instance until the hypercall
-  # console (E8) replaces it; debug output goes through SerialPortLib.
+  # Production: no UART of any kind. The console is the Watari EL2 hypercall WEL2_CONSOLE_WRITE
+  # (E8): SerialPortLib for every boot-time phase (PrePi/SEC included: the library needs no
+  # memory service), DebugLib on top of it; runtime drivers get BaseDebugLibNull below.
   #
-  SerialPortLib|MdePkg/Library/BaseSerialPortLibNull/BaseSerialPortLibNull.inf
+  SerialPortLib|WatariM1Pkg/Library/WatariHvcSerialPortLib/WatariHvcSerialPortLib.inf
   PlatformPeiLib|WatariM1Pkg/Library/WatariM1PlatformPeiLib/WatariM1PlatformPeiLib.inf
 !if $(TARGET) == RELEASE
   DebugLib|MdePkg/Library/BaseDebugLibNull/BaseDebugLibNull.inf
@@ -297,7 +299,9 @@
 !if $(WATARI_M1_BENCH_PL011) == TRUE
   DebugLib|ArmVirtPkg/Library/DebugLibFdtPL011Uart/DxeRuntimeDebugLibFdtPL011Uart.inf
 !else
-  DebugLib|MdePkg/Library/DxeRuntimeDebugLibSerialPort/DxeRuntimeDebugLibSerialPort.inf
+  # After SetVirtualAddressMap a buffer address is no longer a guest physical address, so a
+  # runtime driver cannot use the hypercall console: no debug output from runtime drivers.
+  DebugLib|MdePkg/Library/BaseDebugLibNull/BaseDebugLibNull.inf
 !endif
 !endif
   VariablePolicyLib|MdeModulePkg/Library/VariablePolicyLib/VariablePolicyLibRuntimeDxe.inf
