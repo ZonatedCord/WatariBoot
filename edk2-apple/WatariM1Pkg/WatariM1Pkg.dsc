@@ -366,6 +366,11 @@
   ## Default Terminal Type: 0-PCANSI, 1-VT100, 2-VT100+, 3-UTF8, 4-TTYTERM
   gEfiMdePkgTokenSpaceGuid.PcdDefaultTerminalType|4
 
+!if $(WATARI_M1_BENCH_PL011) == TRUE
+  # QEMU virt: PL011 at 0x09000000 (the only peripheral the PEI MMU map gets; the GIC is mapped on demand).
+  gWatariM1TokenSpaceGuid.PcdWatariM1BenchUartBase|0x09000000
+!endif
+
   gEfiMdeModulePkgTokenSpaceGuid.PcdResetOnMemoryTypeInformationChange|FALSE
   gEfiMdeModulePkgTokenSpaceGuid.PcdBootManagerMenuFile|{ 0x21, 0xaa, 0x2c, 0x46, 0x14, 0x76, 0x03, 0x45, 0x83, 0x6e, 0x8a, 0xb6, 0xf4, 0x66, 0x23, 0x31 }
 

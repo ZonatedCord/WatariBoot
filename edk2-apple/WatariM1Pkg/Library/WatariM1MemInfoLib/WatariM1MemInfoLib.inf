@@ -25,6 +25,7 @@
   EmbeddedPkg/EmbeddedPkg.dec
   MdeModulePkg/MdeModulePkg.dec
   MdePkg/MdePkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
 
 [LibraryClasses]
   ArmLib
@@ -43,3 +44,4 @@
 
 [FixedPcd]
   gArmTokenSpaceGuid.PcdFvSize
+  gWatariM1TokenSpaceGuid.PcdWatariM1BenchUartBase

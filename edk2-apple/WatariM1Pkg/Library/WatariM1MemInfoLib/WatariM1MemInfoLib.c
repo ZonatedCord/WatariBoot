@@ -1,5 +1,6 @@
 /** @file
-  ArmVirtMemInfoLib for the Apple M1 platform (RAM + firmware volume, no peripheral window).
+  ArmVirtMemInfoLib for the Apple M1 platform (RAM + firmware volume, no peripheral window;
+  a bench build adds the one page of its console UART).
 
   Written from the ArmVirtMemInfoLib interface (ArmVirtPkg/Include/Library/ArmVirtMemInfoLib.h) and
   the way MemoryInitPeiLib consumes it. Nothing of QemuVirtMemInfoLib's mach-virt window is kept.
@@ -16,8 +17,8 @@
 #include <Library/HobLib.h>
 #include <Library/MemoryAllocationLib.h>
 
-// RAM, FV, terminator.
-#define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS  3
+// RAM, FV, (bench UART), terminator.
+#define MAX_VIRTUAL_MEMORY_MAP_DESCRIPTORS  4
 
 /**
   Library constructor: publishes the size of the first RAM range (found by PrePi in the FDT) as
@@ -54,6 +55,7 @@ ArmVirtGetMemoryMap (
 {
   ARM_MEMORY_REGION_DESCRIPTOR  *VirtualMemoryTable;
   VOID                          *MemorySizeHob;
+  UINTN                         Index;
 
   ASSERT (VirtualMemoryMap != NULL);
 
@@ -92,8 +94,20 @@ ArmVirtGetMemoryMap (
   VirtualMemoryTable[1].Length       = FixedPcdGet32 (PcdFvSize);
   VirtualMemoryTable[1].Attributes   = ARM_MEMORY_REGION_ATTRIBUTE_WRITE_BACK_RO;
 
+  Index = 2;
+
+  // Bench only: the PL011 of the QEMU machine, one page. PcdWatariM1BenchUartBase is 0 in a
+  // production build, so the map then holds RAM and the FV and nothing else.
+  if (FixedPcdGet64 (PcdWatariM1BenchUartBase) != 0) {
+    VirtualMemoryTable[Index].PhysicalBase = FixedPcdGet64 (PcdWatariM1BenchUartBase);
+    VirtualMemoryTable[Index].VirtualBase  = VirtualMemoryTable[Index].PhysicalBase;
+    VirtualMemoryTable[Index].Length       = SIZE_4KB;
+    VirtualMemoryTable[Index].Attributes   = ARM_MEMORY_REGION_ATTRIBUTE_DEVICE;
+    Index++;
+  }
+
   // End of table.
-  ZeroMem (&VirtualMemoryTable[2], sizeof (ARM_MEMORY_REGION_DESCRIPTOR));
+  ZeroMem (&VirtualMemoryTable[Index], sizeof (ARM_MEMORY_REGION_DESCRIPTOR));
 
   *VirtualMemoryMap = VirtualMemoryTable;
 }
