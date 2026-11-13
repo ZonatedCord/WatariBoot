@@ -2,9 +2,10 @@
   ArmVirtMemInfoLib for the Apple M1 platform (RAM + firmware volume, no peripheral window;
   a bench build adds the one page of its console UART).
 
-  Written from the ArmVirtMemInfoLib interface (ArmVirtPkg/Include/Library/ArmVirtMemInfoLib.h) and
-  the way MemoryInitPeiLib consumes it. Nothing of QemuVirtMemInfoLib's mach-virt window is kept.
+  Derived from ArmVirtPkg/Library/QemuVirtMemInfoLib (same licence): the constructor and the
+  table layout are kept, the mach-virt peripheral window is removed.
 
+  Copyright (c) 2014-2017, Linaro Limited. All rights reserved.
   Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/

@@ -215,7 +215,7 @@ Changing the panel's scan-out format itself would mean driving Apple's display c
 | CSRT | none | only "if non-standard CSRs are used" [verified: MS-ACPI, "Core System Resources Table"]; under the layer there are none |
 | MCFG, IORT | none at first | no PCIe; added with the PCIe step of M3b |
 
-Driver: `WatariM1AcpiDxe`, a simplified sibling of `WatariQemuPkg/WatariAcpiOverride`: there are no QEMU tables to replace, so it only calls `InstallAcpiTable` for each blob and installs `gEdkiiPlatformHasAcpiGuid` (the role `EmbeddedPkg/Library/PlatformHasAcpiLib` plays [verified: E:EmbeddedPkg/Library/PlatformHasAcpiLib/PlatformHasAcpiLib.inf:34]). No device tree is exposed to the OS.
+Driver: `WatariM1AcpiDxe`, a simplified sibling of `WatariQemuPkg/WatariAcpiOverride`: there are no QEMU tables to replace, so it only calls `InstallAcpiTable` for each blob. It does not install `gEdkiiPlatformHasAcpiGuid`: `AcpiTableDxe` is built without `PlatformHasAcpiLib` (that library would make it wait for a protocol that only a driver depending on `AcpiTableDxe` could install), and the only other consumer in the tree, `DtPlatformDxe`, is not built [verified: R:edk2-apple/WatariM1Pkg/README.md, grep]. No device tree is exposed to the OS.
 
 ### 9.2 The minimal DSDT
 

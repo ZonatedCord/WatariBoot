@@ -45,6 +45,7 @@ if [ "$BENCH" = 1 ]; then
 else
     SUFFIX=""; MODEL="${MODEL:-j293}"
 fi
+case "$MODEL" in j293|qemu-virt) ;; *) echo "ERROR: --model must be j293 or qemu-virt (got '$MODEL')" >&2; exit 2 ;; esac
 mkdir -p "$WATARI_LOGS"
 
 # HVF/GICv3 patch, idempotent (as build-edk2-watari.sh).

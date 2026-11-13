@@ -1,12 +1,12 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BSD-2-Clause-Patent
 /*
- * Shim di <string.h> usato SOLO dentro la build EDK2 di WatariAcpiOverride (la cartella del
- * modulo e' nel percorso degli include solo per questo modulo). Permette di compilare senza
- * modifiche i sorgenti di tools/acpigen, che usano memcpy/memset/strcmp, appoggiandosi a
- * BaseMemoryLib/BaseLib. Non va incluso da nient'altro.
+ * Shim of <string.h> used ONLY inside the EDK2 build of WatariM1AcpiDxe (this directory is on the
+ * include path of that module alone). It lets the sources of tools/acpigen, which use memcpy,
+ * memset and strcmp, compile unchanged on top of BaseMemoryLib/BaseLib. Do not include it from
+ * anything else.
  */
-#ifndef WATARI_SHIM_STRING_H
-#define WATARI_SHIM_STRING_H
+#ifndef WATARI_M1_SHIM_STRING_H
+#define WATARI_M1_SHIM_STRING_H
 
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>

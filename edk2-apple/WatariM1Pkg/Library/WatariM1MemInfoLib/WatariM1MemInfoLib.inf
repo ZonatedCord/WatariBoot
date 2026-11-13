@@ -3,6 +3,7 @@
 #  firmware volume only. No peripheral window: the guest sees no devices of its own, and the
 #  few MMIO ranges DXE needs (the GIC) are mapped on demand with MapMmioLib.
 #
+#  Copyright (c) 2014-2017, Linaro Limited. All rights reserved.
 #  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
 #  SPDX-License-Identifier: BSD-2-Clause-Patent
 ##
