@@ -1,0 +1,20 @@
+## @file
+#  The DSDT of the Apple M1 platform. Compiled with iasl by the EDK2 build; the firmware volume
+#  stores it as a raw section named gWatariM1DsdtFileGuid, which WatariM1AcpiDxe installs.
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WatariM1Dsdt
+  FILE_GUID                      = 4b1a6d2e-93c7-4f08-8e15-d62a7c39b054
+  MODULE_TYPE                    = USER_DEFINED
+  VERSION_STRING                 = 1.0
+
+[Sources]
+  Dsdt.asl
+
+[Packages]
+  MdePkg/MdePkg.dec

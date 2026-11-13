@@ -1,0 +1,47 @@
+## @file
+#  PlatformPeiLib of the production M1 firmware: FDT HOB + FV HOB only (no PL011, no fw_cfg, no TPM).
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WatariM1PlatformPeiLib
+  FILE_GUID                      = 8c3d1e47-26b9-4a50-93f1-6e0b7d2a85c4
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = PlatformPeiLib
+
+[Sources]
+  WatariM1PlatformPeiLib.c
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  ArmVirtPkg/ArmVirtPkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  MdePkg/MdePkg.dec
+  OvmfPkg/OvmfPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  HobLib
+  FdtLib
+  MemoryAllocationLib
+  PcdLib
+
+[FixedPcd]
+  gArmTokenSpaceGuid.PcdFvSize
+  gUefiOvmfPkgTokenSpaceGuid.PcdDeviceTreeAllocationPadding
+
+[Pcd]
+  gArmTokenSpaceGuid.PcdFvBaseAddress
+  gUefiOvmfPkgTokenSpaceGuid.PcdDeviceTreeInitialBaseAddress
+
+[Guids]
+  gFdtHobGuid
+
+[Depex]
+  gEfiPeiMemoryDiscoveredPpiGuid

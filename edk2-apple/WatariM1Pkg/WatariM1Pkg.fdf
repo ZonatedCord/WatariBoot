@@ -1,0 +1,171 @@
+## @file
+#  Flash description of the Apple M1 platform: a single image entered like a Linux arm64 Image
+#  (header + FVMAIN_COMPACT holding the relocatable PrePi and the compressed FvMain), so that Watari
+#  EL2 (or QEMU's -device loader on the bench) can start it at EL1 with x0 = device tree.
+#  Structure of ArmVirtQemuKernel.fdf; the FvMain lists only what WatariM1Pkg.dsc builds.
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  DEFINE FVMAIN_COMPACT_SIZE  = 0x2f8000
+
+[FD.WATARI_M1_EFI]
+BaseAddress   = 0x00000000|gArmTokenSpaceGuid.PcdFdBaseAddress
+Size          = $(FD_SIZE)|gArmTokenSpaceGuid.PcdFdSize
+ErasePolarity = 1
+
+# BlockSize * NumBlocks = Size
+BlockSize     = 0x00001000
+NumBlocks     = $(FD_NUM_BLOCKS)
+
+#
+# The Linux arm64 Image header [verified: E:ArmVirtPkg/ArmVirtQemuKernel.fdf]: code0 records the
+# load address in x1, code1 branches to 0x8000 (the PrePi entry), text_offset 512 KB, image_size
+# = the whole FD (3 MB), magic "ARM\x64" at +0x38. The area is rounded up to 32 KB because PrePi
+# reuses it to hold a copy of the device tree.
+#
+0x00000000|0x00008000
+DATA = {
+  0x01, 0x00, 0x00, 0x10,                         # code0: adr x1, .
+  0xff, 0x1f, 0x00, 0x14,                         # code1: b 0x8000
+  0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, # text_offset: 512 KB
+  0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, # image_size: 3 MB
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # flags
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res2
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res3
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # res4
+  0x41, 0x52, 0x4d, 0x64,                         # magic: "ARM\x64"
+  0x00, 0x00, 0x00, 0x00                          # res5
+}
+
+0x00008000|$(FVMAIN_COMPACT_SIZE)
+gArmTokenSpaceGuid.PcdFvBaseAddress|gArmTokenSpaceGuid.PcdFvSize
+FV = FVMAIN_COMPACT
+
+################################################################################
+#
+# FV Section
+#
+################################################################################
+
+[FV.FvMain]
+FvNameGuid         = 3f8b5e12-70a4-4c69-9d0e-b21c47f6a853
+BlockSize          = 0x40
+NumBlocks          = 0         # This FV gets compressed so make it just big enough
+FvAlignment        = 16        # FV alignment and FV attributes setting.
+ERASE_POLARITY     = 1
+MEMORY_MAPPED      = TRUE
+STICKY_WRITE       = TRUE
+LOCK_CAP           = TRUE
+LOCK_STATUS        = TRUE
+WRITE_DISABLED_CAP = TRUE
+WRITE_ENABLED_CAP  = TRUE
+WRITE_STATUS       = TRUE
+WRITE_LOCK_CAP     = TRUE
+WRITE_LOCK_STATUS  = TRUE
+READ_DISABLED_CAP  = TRUE
+READ_ENABLED_CAP   = TRUE
+READ_STATUS        = TRUE
+READ_LOCK_CAP      = TRUE
+READ_LOCK_STATUS   = TRUE
+
+  INF MdeModulePkg/Core/Dxe/DxeMain.inf
+  INF MdeModulePkg/Universal/PCD/Dxe/Pcd.inf
+  INF EmbeddedPkg/Drivers/FdtClientDxe/FdtClientDxe.inf
+  INF OvmfPkg/Fdt/HighMemDxe/HighMemDxe.inf
+
+  #
+  # PI DXE drivers producing architectural protocols (EFI services)
+  #
+  INF ArmPkg/Drivers/CpuDxe/CpuDxe.inf
+  INF MdeModulePkg/Core/RuntimeDxe/RuntimeDxe.inf
+  INF MdeModulePkg/Universal/SecurityStubDxe/SecurityStubDxe.inf
+  INF MdeModulePkg/Universal/CapsuleRuntimeDxe/CapsuleRuntimeDxe.inf
+  INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
+  INF MdeModulePkg/Universal/MonotonicCounterRuntimeDxe/MonotonicCounterRuntimeDxe.inf
+  INF MdeModulePkg/Universal/ResetSystemRuntimeDxe/ResetSystemRuntimeDxe.inf
+  INF EmbeddedPkg/RealTimeClockRuntimeDxe/RealTimeClockRuntimeDxe.inf
+  INF MdeModulePkg/Universal/Metronome/Metronome.inf
+  INF MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
+
+  #
+  # Console
+  #
+  INF MdeModulePkg/Universal/Console/ConPlatformDxe/ConPlatformDxe.inf
+  INF MdeModulePkg/Universal/Console/ConSplitterDxe/ConSplitterDxe.inf
+  INF MdeModulePkg/Universal/Console/GraphicsConsoleDxe/GraphicsConsoleDxe.inf
+  INF MdeModulePkg/Universal/Console/TerminalDxe/TerminalDxe.inf
+  INF MdeModulePkg/Universal/SerialDxe/SerialDxe.inf
+
+  INF ArmPkg/Drivers/ArmGicDxe/ArmGicDxe.inf
+  INF ArmPkg/Drivers/TimerDxe/TimerDxe.inf
+  INF MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
+  INF SecurityPkg/RandomNumberGenerator/RngDxe/RngDxe.inf
+
+  #
+  # FAT file system + GPT/MBR partitioning + UDF + RAM disk
+  #
+  INF MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
+  INF MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
+  INF FatPkg/EnhancedFatDxe/Fat.inf
+  INF MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
+  INF MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf
+  INF MdeModulePkg/Universal/Disk/RamDiskDxe/RamDiskDxe.inf
+
+!include OvmfPkg/Include/Fdf/ShellDxe.fdf.inc
+
+  #
+  # Bds
+  #
+  INF MdeModulePkg/Universal/DevicePathDxe/DevicePathDxe.inf
+  INF MdeModulePkg/Universal/DisplayEngineDxe/DisplayEngineDxe.inf
+  INF MdeModulePkg/Universal/SetupBrowserDxe/SetupBrowserDxe.inf
+  INF MdeModulePkg/Universal/DriverHealthManagerDxe/DriverHealthManagerDxe.inf
+  INF MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
+  INF MdeModulePkg/Application/UiApp/UiApp.inf
+
+  #
+  # ACPI (E4): the table protocol, the DSDT (a raw section named gWatariM1DsdtFileGuid) and the driver
+  #
+  INF MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
+  INF RuleOverride = WATARIDSDT WatariM1Pkg/AcpiTables/Dsdt.inf
+  INF WatariM1Pkg/Drivers/WatariM1AcpiDxe/WatariM1AcpiDxe.inf
+
+[FV.FVMAIN_COMPACT]
+FvAlignment        = 16
+ERASE_POLARITY     = 1
+MEMORY_MAPPED      = TRUE
+STICKY_WRITE       = TRUE
+LOCK_CAP           = TRUE
+LOCK_STATUS        = TRUE
+WRITE_DISABLED_CAP = TRUE
+WRITE_ENABLED_CAP  = TRUE
+WRITE_STATUS       = TRUE
+WRITE_LOCK_CAP     = TRUE
+WRITE_LOCK_STATUS  = TRUE
+READ_DISABLED_CAP  = TRUE
+READ_ENABLED_CAP   = TRUE
+READ_STATUS        = TRUE
+READ_LOCK_CAP      = TRUE
+READ_LOCK_STATUS   = TRUE
+
+  INF RuleOverride = SELF_RELOC ArmVirtPkg/PrePi/ArmVirtPrePiUniCoreRelocatable.inf
+
+  FILE FV_IMAGE = 9E21FD93-9C72-4c15-8C4B-E77F1DB2D792 {
+    SECTION GUIDED EE4E5898-3914-4259-9D6E-DC7BD79403CF PROCESSING_REQUIRED = TRUE {
+      SECTION FV_IMAGE = FVMAIN
+    }
+  }
+
+!include ArmVirtPkg/ArmVirtRules.fdf.inc
+
+#
+# The DSDT module has one output, the AML; ArmVirtRules.fdf.inc's ACPITABLE rule also requires a
+# .acpi file (from .aslc sources), which this module does not have.
+#
+[Rule.Common.USER_DEFINED.WATARIDSDT]
+  FILE FREEFORM = $(NAMED_GUID) {
+    RAW ASL                |.aml
+  }

@@ -1,0 +1,54 @@
+## @file
+#  QEMU-bench variant of WatariM1PlatformPeiLib (-D WATARI_M1_BENCH_PL011=TRUE): the same code
+#  plus the HOB that points ArmVirtPkg's PL011 serial/debug libraries at QEMU's UART. Never part of
+#  a production build (tools/build-edk2-m1.sh refuses a PL011 module in a non-bench build).
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WatariM1PlatformPeiLibBench
+  FILE_GUID                      = a5e60b92-71d4-4c38-8f0a-3d94c2b17e68
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = PlatformPeiLib
+
+[Sources]
+  WatariM1PlatformPeiLib.c
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  ArmVirtPkg/ArmVirtPkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  MdePkg/MdePkg.dec
+  OvmfPkg/OvmfPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  HobLib
+  FdtLib
+  FdtSerialPortAddressLib
+  MemoryAllocationLib
+  PcdLib
+
+[FixedPcd]
+  gArmTokenSpaceGuid.PcdFvSize
+  gUefiOvmfPkgTokenSpaceGuid.PcdDeviceTreeAllocationPadding
+
+[Pcd]
+  gArmTokenSpaceGuid.PcdFvBaseAddress
+  gUefiOvmfPkgTokenSpaceGuid.PcdDeviceTreeInitialBaseAddress
+
+[Guids]
+  gFdtHobGuid
+  gEarlyPL011BaseAddressGuid
+
+[BuildOptions]
+  GCC:*_*_*_CC_FLAGS = -DWATARI_M1_BENCH_PL011=1
+
+[Depex]
+  gEfiPeiMemoryDiscoveredPpiGuid
