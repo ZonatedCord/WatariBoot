@@ -1,6 +1,6 @@
 # M3a day 2: first boot of the Watari EL2 layer and the EL1 test guest (G1-G11) on the real M1, read from photos of the screen
 
-Status: procedure, never run yet. Written 2026-11-13. Repository text is English; Claude talks to the people in Italian.
+Status: Run on 2026-11-13: all PASS (`re/m3a-day2-results.md`; surprises in F-32). Written 2026-11-13; the expected lines below were corrected from the real run. Repository text is English; Claude talks to the people in Italian.
 
 **People.** Marco owns the target: 13" MacBook Pro M1 (j293 / t8103). Ciani owns the host Mac (the "host Mac"): debug host for the m1n1 proxyclient, safety Mac for DFU revive. Claude Code runs on Ciani's Mac.
 
@@ -130,7 +130,7 @@ shasum -a 256 -c SHA256SUMS            # every line must say OK, same as on Marc
 shasum -a 256 wel2-m1.bin wel2-chain.bin m1guest.bin    # compare with the values Marco noted
 echo "- ~/WatariBoot-host/work/m3a-payload (bundle, day 2). Remove: rm -rf" >> "$HOSTDIR/INSTALLED-host.md"
 ```
-Expected files: `wel2-m1.bin wel2-chain.bin m1guest.bin j293-minimal.dtb j293-minimal.dts watari-load.py fdt_m1_dump fdt-dump-src/ README-m1-payload.md SHA256SUMS` **[verified: tools/m3a/README-m1-payload.md]**. `fdt_m1_dump` is a prebuilt arm64 binary covered by `SHA256SUMS`; it may be quarantined by Gatekeeper if it came by AirDrop/browser: if the loader reports it cannot run it, ask Ciani before `xattr -d com.apple.quarantine <file>` (a metadata change on a file inside `$HOSTDIR`, acceptable) **[check]**. Do not build it: never run `cc` unless `xcode-select -p` succeeds (day-1 item 2.2).
+Expected files: `wel2-m1.bin wel2-chain.bin m1guest.bin j293-minimal.dtb j293-minimal.dts watari-load.py fdt_m1_dump fdt-dump-src/ README-m1-payload.md SHA256SUMS` **[verified: tools/m3a/README-m1-payload.md]**. `fdt_m1_dump` is a prebuilt arm64 binary covered by `SHA256SUMS`; it may be quarantined by Gatekeeper if it came by AirDrop/browser: it is killed on first run (exit -9, `spctl` rejected, seen on 2026-11-13) if it came by AirDrop/browser. Do this step explicitly, **with Ciani's OK, on that one file only**: `xattr -d com.apple.quarantine "$HOSTDIR/work/m3a-payload/fdt_m1_dump"` (a metadata change on a file inside `$HOSTDIR`; check afterwards that `shasum -c SHA256SUMS` still passes) **[verified: day 2]**. Do not build it: never run `cc` unless `xcode-select -p` succeeds (day-1 item 2.2).
 
 ### 2.3 Dry runs (no device)
 ```sh
@@ -193,7 +193,7 @@ Each layer checkpoint also prints a log line `Watari EL2: checkpoint <n> <NAME>`
 | 22 | G5b `ICC_PMR_EL1`/`ICC_CTLR_EL1` write+readback, `ICC_RPR_EL1` read; counters "trapped" under `trap`, "not trapped" under `trap-notc` | the `TC` traps, separately from `TALL1` (R-1b) | L3 |
 | 23 | G6 SGI to self via `ICC_SGI1R_EL1`: IRQ taken, `ICC_IAR1_EL1` = the SGI, `ICC_EOIR1_EL1` | list-register delivery, ack, EOI on hardware | L3 |
 | 24 | G7 virtual timer, 5 ticks of INTID 27 | FIQ to gate to vPPI | L4 |
-| 25 | G8 EL1 physical timer, 5 ticks of INTID 30 (SKIP while the P gate is not implemented: square grey) | the P gate | L4 |
+| 25 | G8 EL1 physical timer, 5 ticks of INTID 30 (passes on the M1, day 2) | the P gate | L4 |
 | 26 | G9 `CPU_ON` for each other core; each reports MPIDR and sends an SGI to core 0 | spin-table release, per-core init, fast-IPI kick | L5 |
 | 27 | G10 `CPU_OFF` on one core, `AFFINITY_INFO`, `CPU_ON` again | the park loop | L5 |
 | 28 | G11 `SYSTEM_RESET` | the watchdog reset (no return expected) | L3+ (last) |
@@ -243,11 +243,15 @@ wl() {
   local name=$1; shift
   source ~/WatariBoot-host/env.sh && cd "$HOSTDIR/work/m3a-payload" || return 1
   [ -e "$M1N1DEVICE" ] || { echo "M1N1DEVICE missing: redo section 4 step 4"; return 1; }
-  python3 watari-load.py "$@" --m1n1 "$HOSTDIR/work/m1n1-main" 2>&1 | tee "$HOSTDIR/work/photos/$name-loader.txt"
+  PATH="$HOSTDIR/venv/bin:/usr/bin:/bin:/usr/sbin:/sbin" python3 watari-load.py "$@" --m1n1 "$HOSTDIR/work/m1n1-main" 2>&1 | tee "$HOSTDIR/work/photos/$name-loader.txt"
   echo "exit=${pipestatus[1]}"      # zsh; in bash: set -o pipefail and echo $?
 }
 ```
+**Why the reduced `PATH` (F-32).** The current m1n1 proxyclient (`m1n1/toolchain.py`) runs `brew --prefix llvm` at import when `brew` is on `PATH`; on the host this timed out (2 s) and aborted the loader before any proxy call, and it also executes Homebrew on Ciani's Mac. With `PATH` limited to the venv and the system directories the resolver is skipped. **Alternative:** pin the proxyclient to a known archive and check its sha256 before use (day 1's archive `5492617...`; the 2026-11-13 archive that worked is `24cb82107417b4dee4b5f5699ff830284143b6d2763e46aa93f137db0e266e8c`); the reduced `PATH` is still harmless on top of the pin.
+
 Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0 prepared but the FDT cannot be read back, **4 L0 BLOCK CHECK failed (do not run L3-L5)**.
+
+**Note on what the held screen shows.** The log area fills and restarts before the hold, so the per-check lines, timer tick counts and MPIDRs are **not** on the final photo (only the band, squares and `LAST ERROR` are). Record a video from before the command and transcribe those values from it; (future layer change) keep a per-check summary visible in the band or stop the log before the summary.
 
 **After "handed over" the loader waits up to 40 s** (`--boot-timeout`) for a reply that may never come. Once the Mac has restarted or the screen is frozen/held, press **Ctrl-C** in that terminal (the target is gone anyway); do not wait out the 40 s, and do not close the terminal before the log file is saved.
 
@@ -378,13 +382,13 @@ wl L3-notc --rung L3 --go --cpuif trap-notc --args wel2.hold=1
 
 **Expected screen at the end.**
 - Band line 1: `WATARI EL2  RUNG L3 STEP 3`.
-- Band line 2: `CHECKPOINT 28 RUNNING (GUEST CHECK 11)` at the end (G11 is judged before the reset and never reports PASS; with `wel2.hold=1` this is the held screen, label `HOLD: TAKE PHOTO`).
-- Band line 3: `GUEST PASS 7 FAIL 0 SKIP 0` (G1-G6 including G5a and G5b = 7 checks; G11 still running). **Reference:** the same line from the QEMU run `run-m1guest.sh` at the bundle's commit; write that value into the results file before the day.
-- Squares: 0-8 green; 17-23 green (G1-G6); 28 amber (running) at the end; no red.
+- Band line 2 (with `wel2.hold=1`): `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`, green. The final check (G11) is counted when the hold is on **[verified: day 2, 2026-11-13]**.
+- Band line 3: `GUEST PASS 8 FAIL 0 SKIP 0` (G1-G6 including G5a and G5b = 7 checks, plus the final check 12 = 8) **[verified: day 2]**.
+- Squares: 0-8 green; 17-23 green (G1-G6); 28 green; no red.
 - Log: lines `Watari EL1: ...` for each check; the ICC register trap counters for G5a/G5b under the config used; `guest checkpoint N running|PASS|FAIL`; at the end `PSCI SYSTEM_RESET`.
 - `LAST ERROR: NONE`.
 
-**PASS (per configuration).** `FAIL 0`, `PASS 7`, the G1-G6 squares green, square 28 amber and `LAST ERROR: NONE` on the held final screen (without hold: on the last photo before the restart). **Go/no-go**: at least **one** of the two configurations passes G1-G6 and reaches G11 = **the layer approach works on the M1**.
+**PASS (per configuration).** `FAIL 0`, `PASS 8`, layer squares 0-8 and the G1-G6 squares green, square 28 green (`CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`) and `LAST ERROR: NONE` on the held final screen (without hold: on the last photo before the restart). **Go/no-go**: at least **one** of the two configurations passes G1-G6 and reaches G11 = **the layer approach works on the M1**.
 
 **FAIL meanings (each failing check maps to a cause).**
 
@@ -413,7 +417,7 @@ wl L3-notc --rung L3 --go --cpuif trap-notc --args wel2.hold=1
 
 ### L4: L3 plus timers G7-G8
 
-**Purpose.** FIQ-to-gate-to-virtual-PPI path for the EL1 virtual timer (G7, INTID 27) and the EL1 physical timer (G8, INTID 30, **SKIP while the P gate is not implemented**).
+**Purpose.** FIQ-to-gate-to-virtual-PPI path for the EL1 virtual timer (G7, INTID 27) and the EL1 physical timer (G8, INTID 30; it PASSES on the M1, day 2).
 
 **Command.** Use the configuration that passed in L3 (`trap` if both passed):
 ```sh
@@ -422,9 +426,9 @@ wl L4 --rung L4 --go [--cpuif trap-notc] --args wel2.hold=1
 
 **PHOTOS.** As L3 (end-of-run full screen, close-up on failure). Add a photo during the run if a timer check seems to take long: **each timer check waits for 5 ticks**, so a stuck square stays amber for the bounded wait.
 
-**Expected.** Band 1 `RUNG L4 STEP 4`; squares 24 (G7) green and 25 (G8) green or **grey (SKIP, expected today)**; `GUEST PASS ... FAIL 0 SKIP 0|1`; log lines with the tick counts.
+**Expected.** Band 1 `RUNG L4 STEP 4`; band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; band 3 `GUEST PASS 10 FAIL 0 SKIP 0`; layer squares 0-8 green, squares 24 (G7) and 25 (G8) green (G8 is **not** a SKIP any more), 28 green; the tick counts are in the video, not on the held screen.
 
-**PASS.** G7 PASS (5 ticks), G8 PASS or SKIP, `FAIL 0`.
+**PASS.** `PASS 10 FAIL 0 SKIP 0`, G7 PASS (5 ticks), G8 PASS (5 ticks), `LAST ERROR: NONE`.
 
 **FAIL meanings.**
 
@@ -433,7 +437,7 @@ wl L4 --rung L4 --go [--cpuif trap-notc] --args wel2.hold=1
 | G7 FAIL / amber for the bounded wait, 0 ticks | FIQ not delivered or not gated to vPPI 27 (R-4, FIQ routing on the M1, gate bits); timer frequency (CNTFRQ 24 MHz **[verified: ehw0]**) |
 | `IRQ STORM` in the log (guest) | D1 guard fired: spurious/unknown interrupts at EL1 |
 | EL2 FIQ spurious-budget FATAL with a dump | unknown FIQ source (R-4) |
-| G8 FAIL (not SKIP) | the P gate wrong; if SKIP is expected but FAIL shown, note it |
+| G8 FAIL or SKIP (it passed on day 2) | the P gate wrong or not wired in the bundle; note it |
 | Maintenance interrupt lines repeating | R-5 |
 
 **Abort.** As L3.
@@ -454,9 +458,9 @@ L5 starts the secondaries from the host (`smp_start_secondaries`; volatile, rese
 
 **PHOTOS.** As L4, one extra photo after G9 starts (squares 9 and 10 show a core accepted/arrived), and the end screen.
 
-**Expected.** Squares 9 and 10 green (CPU_ON accepted, core arrived) for each core that starts, 26 (G9) and 27 (G10) green; `FAIL 0`; the log lists the MPIDR reported by each core (`0x80000000`..`0x80000003`, `0x80010100`..`0x80010103` **[verified: ehw0]**).
+**Expected.** Band 3 `GUEST PASS 12 FAIL 0 SKIP 0`, band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; layer squares 0-10 green (9 and 10: CPU_ON accepted, core arrived), 26 (G9) and 27 (G10) green; the MPIDR each core reports (`0x80000000`..`0x80000003`, `0x80010100`..`0x80010103` **[verified: ehw0]**) is in the video only.
 
-**PASS.** G9 and G10 green, all 7 secondaries reported, `FAIL 0`.
+**PASS.** `PASS 12 FAIL 0 SKIP 0`, G9 and G10 green, all 7 secondaries reported (from the video), `LAST ERROR: NONE`.
 
 **FAIL meanings.**
 
@@ -511,9 +515,9 @@ L5 starts the secondaries from the host (`smp_start_secondaries`; volatile, rese
 | L0 | `--rung L0` | no | none | `kboot_prepare_dt OK`, FDT as listed | proxy alive | any error |
 | L1 | `--rung L1 --go` | yes | none (only if it fails) | the Mac restarts within ~1 s | restart | no restart in 5 s |
 | L2 | `--rung L2 --go --args wel2.hold=1` | yes | video + final photo | squares 0-5 green, band `RUNG L2 STEP 2`, error NONE, HOLD label | held screen (restart without hold) | 60 s without progress, red square |
-| L3 | `--rung L3 --go --args wel2.hold=1` then `--cpuif trap-notc` | yes | video + final photo per run | `PASS 7 FAIL 0`, G1-G6 green, square 28 amber | held screen (restart without hold) | as L2 |
-| L4 | `--rung L4 --go --args wel2.hold=1` | yes | video + final photo | + G7 green, G8 green or grey | held screen | as L2 |
-| L5 | `--rung L5 --go --args wel2.hold=1` | yes | video + final photo | + squares 9/10, G9, G10 green | held screen | as L2 |
+| L3 | `--rung L3 --go --args wel2.hold=1` then `--cpuif trap-notc` | yes | video + final photo per run | `PASS 8 FAIL 0`, squares 0-8 and G1-G6 green, square 28 green | held screen (restart without hold) | as L2 |
+| L4 | `--rung L4 --go --args wel2.hold=1` | yes | video + final photo | `PASS 10 FAIL 0`, G7 and G8 green | held screen | as L2 |
+| L5 | `--rung L5 --go --args wel2.hold=1` | yes | video + final photo | `PASS 12 FAIL 0`, squares 0-10, G9, G10 green | held screen | as L2 |
 
 ---
 
@@ -563,7 +567,7 @@ Claude fills this during the day. Never include serial numbers, MAC addresses, t
 | R-12 watchdog reset | ok / not |
 | R-13 panic counter / forced power-offs | none / happened |
 | Q-1, Q-2 (day-2 hang with an armed LR), Q-13, Q-14 | ... |
-| G3 PAuth / TID3, G8 skipped | ... |
+| G3 PAuth / TID3, G8 (passes on day 2) | ... |
 
 ## New failures (F-NN) and decisions
 - <what, evidence, proposed fix> ; ADR candidates (default `wel2.cpuif`, next step T11).
