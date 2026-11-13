@@ -13,6 +13,10 @@
 static uint8_t g_ram[RAM_SIZE];
 static char g_lines[8][WEL2_LOG_MAX + 1];
 static unsigned g_nlines, g_ncp, g_cp_n, g_cp_state, g_stats_calls, g_reads, g_writes;
+static uint8_t g_con[1024];
+static unsigned g_ncon, g_con_calls;
+static struct wel2_hvc_counters g_cnt;
+static bool g_have_con = true;
 static bool g_have_stats = true;
 
 static bool f_range_ok(void *c, uint64_t pa, uint64_t len)
@@ -41,6 +45,14 @@ static void f_log(void *c, const char *l, unsigned n)
     }
     g_nlines++;
 }
+static void f_con(void *c, const uint8_t *b, unsigned n)
+{
+    (void)c;
+    g_con_calls++;
+    if (g_ncon + n <= sizeof(g_con))
+        memcpy(g_con + g_ncon, b, n);
+    g_ncon += n;
+}
 static void f_cp(void *c, unsigned n, unsigned st) { (void)c; g_ncp++; g_cp_n = n; g_cp_state = st; }
 static void f_stats(void *c, struct wel2_stats *o)
 {
@@ -56,6 +68,8 @@ static struct wel2_hvc_ops ops(void)
     o.range_ok = f_range_ok; o.read_guest = f_read; o.write_guest = f_write;
     o.log_line = f_log; o.checkpoint = f_cp;
     o.stats_fill = g_have_stats ? f_stats : NULL;
+    o.console_write = g_have_con ? f_con : NULL;
+    o.counters = &g_cnt;
     return o;
 }
 
@@ -64,6 +78,10 @@ static void reset(void)
     memset(g_ram, 0, sizeof(g_ram));
     g_nlines = g_ncp = g_stats_calls = g_reads = g_writes = 0;
     g_have_stats = true;
+    g_have_con = true;
+    g_ncon = g_con_calls = 0;
+    memset(&g_cnt, 0, sizeof(g_cnt));
+    memset(g_con, 0, sizeof(g_con));
 }
 
 static int64_t call(uint64_t fid, uint64_t a1, uint64_t a2, uint64_t a3, bool *handled)
@@ -104,7 +122,7 @@ static void t_range_of_ids(void)
     CHECK_EQ(x[0], 0xC4000003u); CHECK_EQ(x[1], 1); CHECK_EQ(x[3], 3);
     /* in the range, not implemented */
     reset();
-    CHECK_EQ(call(0xC6000004u, 0, 0, 0, &h), WEL2_HVC_NOT_SUPPORTED); CHECK(h);
+    CHECK_EQ(call(0xC6000005u, 0, 0, 0, &h), WEL2_HVC_NOT_SUPPORTED); CHECK(h);
     CHECK_EQ(call(0xC600FEFFu, 0, 0, 0, &h), WEL2_HVC_NOT_SUPPORTED); CHECK(h);
     CHECK_EQ(g_nlines, 0);
 }
@@ -200,14 +218,136 @@ static void t_stats(void)
     CHECK_EQ(st.count[WEL2_STAT_ICC_SRE], 7);
     CHECK_EQ(st.count[WEL2_STAT_ICC_DIR], 0);
     CHECK_EQ(g_stats_calls, 1);
-    CHECK_EQ(callf(WEL2_STATS, RAM_BASE + 0x400, sizeof(st) - 8), WEL2_HVC_INVALID_PARAMETERS);   /* buffer too small */
+    CHECK_EQ(callf(WEL2_STATS, RAM_BASE + 0x400, WEL2_STATS_V1_SIZE - 8), WEL2_HVC_INVALID_PARAMETERS);   /* buffer too small */
     CHECK_EQ(callf(WEL2_STATS, RAM_BASE + 0x404, sizeof(st)), WEL2_HVC_INVALID_PARAMETERS);       /* misaligned */
     CHECK_EQ(callf(WEL2_STATS, RAM_BASE + RAM_SIZE - 16, sizeof(st)), WEL2_HVC_INVALID_PARAMETERS); /* end of RAM */
     CHECK_EQ(callf(WEL2_STATS, HOLE_LO, sizeof(st)), WEL2_HVC_INVALID_PARAMETERS);
     CHECK_EQ(g_stats_calls, 1);
     CHECK_EQ(g_writes, 1);
+    /* an older guest's buffer (the v1 size) gets the part it knows and nothing beyond it */
+    memset(&g_ram[0x500], 0xA5, 0x100);
+    CHECK_EQ(callf(WEL2_STATS, RAM_BASE + 0x500, WEL2_STATS_V1_SIZE), 0);
+    CHECK_EQ(g_ram[0x500 + WEL2_STATS_V1_SIZE], 0xA5);
+    memcpy(&st, &g_ram[0x500], WEL2_STATS_V1_SIZE);
+    CHECK_EQ(st.count[WEL2_STAT_ICC_PMR], 42);
     g_have_stats = false;
     CHECK_EQ(callf(WEL2_STATS, RAM_BASE + 0x400, sizeof(st)), WEL2_HVC_NOT_SUPPORTED);   /* no counters wired */
+}
+
+static void put_bytes(uint64_t off, unsigned n)      /* n bytes, the value of byte i is the pattern (i + off) */
+{
+    for (unsigned i = 0; i < n; i++)
+        g_ram[off + i] = (uint8_t)(i + off);
+}
+
+static void t_console_ok(void)
+{
+    struct wel2_stats st;
+
+    reset();
+    memcpy(&g_ram[0x100], "Hello\r\n", 7);
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x100, 7), 0);
+    CHECK_EQ(g_con_calls, 1);
+    CHECK_EQ(g_ncon, 7);
+    CHECK(!memcmp(g_con, "Hello\r\n", 7));               /* CR and LF pass through, no line framing, no prefix */
+    CHECK_EQ(g_nlines, 0);                               /* not the sanitised line sink */
+    /* a NUL inside the data is data, not a terminator */
+    g_ram[0x180] = 'a'; g_ram[0x181] = 0; g_ram[0x182] = 'b';
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x180, 3), 0);
+    CHECK_EQ(g_ncon, 10);
+    CHECK(g_con[7] == 'a' && g_con[8] == 0 && g_con[9] == 'b');
+    /* counted */
+    CHECK_EQ(g_cnt.console_calls, 2);
+    CHECK_EQ(g_cnt.console_bytes, 10);
+    CHECK_EQ(callf(WEL2_STATS, RAM_BASE + 0x400, sizeof(st)), 0);
+    memcpy(&st, &g_ram[0x400], sizeof(st));
+    CHECK_EQ(st.console_calls, 2);
+    CHECK_EQ(st.console_bytes, 10);
+}
+
+static void t_console_lengths(void)
+{
+    reset();
+    /* length 0: a no-op success, nothing read, nothing written, not counted, even for an address that is not RAM */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x100, 0), 0);
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, 0x1000, 0), 0);
+    CHECK_EQ(g_con_calls, 0);
+    CHECK_EQ(g_reads, 0);
+    CHECK_EQ(g_cnt.console_calls, 0);
+    /* 160 bytes: the maximum, whole */
+    put_bytes(0x200, WEL2_CONSOLE_MAX);
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x200, WEL2_CONSOLE_MAX), 0);
+    CHECK_EQ(g_ncon, WEL2_CONSOLE_MAX);
+    CHECK(!memcmp(g_con, &g_ram[0x200], WEL2_CONSOLE_MAX));
+    CHECK_EQ(g_cnt.console_bytes, WEL2_CONSOLE_MAX);
+    /* 161: refused whole, nothing written (the caller splits) */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x200, WEL2_CONSOLE_MAX + 1), WEL2_HVC_INVALID_PARAMETERS);
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x200, ~0ull), WEL2_HVC_INVALID_PARAMETERS);
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x200, 1ull << 32 | 1), WEL2_HVC_INVALID_PARAMETERS);
+    CHECK_EQ(g_ncon, WEL2_CONSOLE_MAX);
+    CHECK_EQ(g_con_calls, 1);
+    CHECK_EQ(g_cnt.console_calls, 1);
+    /* a single byte */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x200, 1), 0);
+    CHECK_EQ(g_ncon, WEL2_CONSOLE_MAX + 1);
+}
+
+static void t_console_rejects(void)
+{
+    reset();
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, 0x1000, 16), WEL2_HVC_INVALID_PARAMETERS);                        /* below RAM */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + RAM_SIZE, 16), WEL2_HVC_INVALID_PARAMETERS);           /* above RAM */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + RAM_SIZE - 8, 16), WEL2_HVC_INVALID_PARAMETERS);       /* straddles the end */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE - 8, 16), WEL2_HVC_INVALID_PARAMETERS);                  /* straddles the start */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, HOLE_LO + 4, 16), WEL2_HVC_INVALID_PARAMETERS);                   /* inside the carve-out */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, HOLE_LO - 8, 16), WEL2_HVC_INVALID_PARAMETERS);                   /* straddles a hole */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, ~0ull - 4, 16), WEL2_HVC_INVALID_PARAMETERS);                     /* address wraps */
+    CHECK_EQ(g_con_calls, 0);
+    CHECK_EQ(g_reads, 0);                                 /* nothing was read from rejected addresses */
+    CHECK_EQ(g_cnt.console_calls, 0);
+    CHECK_EQ(g_cnt.console_bytes, 0);
+    /* the last 160 bytes of RAM below the hole are fine, one more byte is not */
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, HOLE_LO - WEL2_CONSOLE_MAX, WEL2_CONSOLE_MAX), 0);
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, HOLE_LO - WEL2_CONSOLE_MAX + 1, WEL2_CONSOLE_MAX), WEL2_HVC_INVALID_PARAMETERS);
+    /* no sink wired: NOT_SUPPORTED, also for length 0 */
+    g_have_con = false;
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x100, 4), WEL2_HVC_NOT_SUPPORTED);
+    CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x100, 0), WEL2_HVC_NOT_SUPPORTED);
+}
+
+static void t_console_all_bytes(void)
+{
+    /* every byte value 0x00-0xFF reaches the sink unchanged, in order, 160 at a time */
+    unsigned total = 0;
+
+    reset();
+    for (unsigned i = 0; i < 256; i++)
+        g_ram[0x300 + i] = (uint8_t)i;
+    for (unsigned off = 0; off < 256; off += WEL2_CONSOLE_MAX) {
+        unsigned n = 256 - off < WEL2_CONSOLE_MAX ? 256 - off : WEL2_CONSOLE_MAX;
+
+        CHECK_EQ(callf(WEL2_CONSOLE_WRITE, RAM_BASE + 0x300 + off, n), 0);
+        total += n;
+    }
+    CHECK_EQ(total, 256);
+    CHECK_EQ(g_ncon, 256);
+    for (unsigned i = 0; i < 256; i++)
+        CHECK_EQ(g_con[i], i);
+    CHECK_EQ(g_cnt.console_calls, 2);
+    CHECK_EQ(g_cnt.console_bytes, 256);
+    /* no counters wired: still works, WEL2_STATS reports 0 */
+    struct wel2_hvc_ops o = ops();
+    struct wel2_stats st;
+    uint64_t x[4] = { WEL2_CONSOLE_WRITE, RAM_BASE + 0x300, 4, 0 };
+
+    o.counters = NULL;
+    CHECK(wel2_hvc_vendor(&o, x));
+    CHECK_EQ(x[0], 0);
+    uint64_t y[4] = { WEL2_STATS, RAM_BASE + 0x400, sizeof(st), 0 };
+    CHECK(wel2_hvc_vendor(&o, y));
+    CHECK_EQ(y[0], 0);
+    memcpy(&st, &g_ram[0x400], sizeof(st));
+    CHECK_EQ(st.console_calls, 0);
 }
 
 static void t_missing_sinks(void)
@@ -237,6 +377,10 @@ int main(void)
     RUN(t_log_rejects);
     RUN(t_checkpoint);
     RUN(t_stats);
+    RUN(t_console_ok);
+    RUN(t_console_lengths);
+    RUN(t_console_rejects);
+    RUN(t_console_all_bytes);
     RUN(t_missing_sinks);
     TESTS_DONE();
 }

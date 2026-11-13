@@ -32,6 +32,7 @@ done
 run "run-step (wel2.step=1, 2, 3)" ./run-step.sh
 run "run-hold (wel2.hold=1 keeps the final state, no reset)" ./run-hold.sh
 run "run-tid3 (ID registers with and without TID3)" ./run-tid3.sh
+run "run-gfdt (guest FDT hand-off, wel2.abi=fdt, wel2.split=3)" SPLIT=3 ./run-gfdt.sh
 run "run-g5b-negative (TC bit disagrees with the mode)" ./run-g5b-negative.sh
 rm -f /tmp/wel2-run-all.$$
 exit $fail

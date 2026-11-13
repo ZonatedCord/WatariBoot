@@ -9,6 +9,11 @@
 #include <stdint.h>
 #include "wel2_hvc.h"
 
+/* Counters the dispatcher keeps itself (WEL2_STATS reports them). The layer owns the storage; the big lock serialises. */
+struct wel2_hvc_counters {
+    uint64_t console_calls, console_bytes;
+};
+
 struct wel2_hvc_ops {
     void *ctx;
     /* [pa, pa + len) lies entirely in guest RAM (the Normal stage-2 blocks, not the layer's carve-out, no MMIO hole).
@@ -25,6 +30,12 @@ struct wel2_hvc_ops {
     /* A check changed state (n = WEL2_CHK_*, state = WEL2_CHKSTATE_*): paint square WEL2_CHK_SQUARE_BASE + n. The
      * hvc_vendor code has already called log_line() with a summary line. May be NULL. */
     void (*checkpoint)(void *ctx, unsigned n, unsigned state);
+    /* WEL2_CONSOLE_WRITE: the raw bytes, 1..WEL2_CONSOLE_MAX of them, to every console sink: the UART gets all of them
+     * unchanged, the framebuffer text only the printable ones (sinks decide). Required by CONSOLE_WRITE (else
+     * NOT_SUPPORTED); read_guest and range_ok too. */
+    void (*console_write)(void *ctx, const uint8_t *bytes, unsigned len);
+    /* The dispatcher's own counters (console_calls / console_bytes); may be NULL (then WEL2_STATS reports 0 for them). */
+    struct wel2_hvc_counters *counters;
     /* Fill the layer's counters. May be NULL: WEL2_STATS then answers NOT_SUPPORTED. */
     void (*stats_fill)(void *ctx, struct wel2_stats *out);
 };

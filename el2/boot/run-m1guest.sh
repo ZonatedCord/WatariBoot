@@ -55,6 +55,10 @@ for g in G1 G2 G3 G4 G5a G5b G6 G7 G8 G9 G10 G11; do
 done
 # T7 wiring: the output arrives through WEL2_LOG (the layer's "Watari EL1:" prefix, no PL011 fallback), and in a trap
 # mode G5a/G5b are judged on the layer's counters (not "counters n/a").
+# E7: the guest's WEL2_CONSOLE_WRITE call: its raw bytes (with CR LF) reach the UART, once, unprefixed; counted in WEL2_STATS.
+grep -a "WEL2_CONSOLE_WRITE" $OUT/guest-uart.txt | head -2
+[ "$(grep -ac '^\[WEL2_CONSOLE_WRITE\] raw bytes from the EL1 test guest' $OUT/guest-uart.txt)" = 1 ] || { echo "MISSING: the guest's WEL2_CONSOLE_WRITE bytes on the UART"; rc=1; }
+grep -aq "console write: unexpected result" $OUT/guest-uart.txt && { echo "FAILED: WEL2_CONSOLE_WRITE answered an error"; rc=1; }
 grep -aq "guest info block at" $OUT/guest-uart.txt || { echo "MISSING: the layer did not pass the guest info block"; rc=1; }
 if [ "${CPUIF:-hw}" != hw ]; then
     for g in G5a G5b; do

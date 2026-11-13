@@ -31,3 +31,13 @@ int wel2_guest_place(const struct wel2_range *ranges, unsigned n, uint64_t entry
 	}
 	return WEL2_GP_NOT_IN_RAM;
 }
+
+bool wel2_ranges_cover(const struct wel2_range *ranges, unsigned n, uint64_t pa, uint64_t len)
+{
+	if (!len || pa + len < pa)
+		return false;
+	for (unsigned i = 0; i < n; i++)
+		if (pa >= ranges[i].base && pa - ranges[i].base < ranges[i].size && len <= ranges[i].size - (pa - ranges[i].base))
+			return true;
+	return false;
+}
