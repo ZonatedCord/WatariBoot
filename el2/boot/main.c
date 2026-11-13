@@ -229,6 +229,14 @@ static void hvc_checkpoint(void *ctx, unsigned n, unsigned state)
     checkpoint_state(WEL2_CHK_SQUARE_BASE + n, state);
 }
 
+static void hvc_console_write(void *ctx, const uint8_t *bytes, unsigned len)
+{
+    (void)ctx;
+    console_bytes(bytes, len);
+}
+
+static struct wel2_hvc_counters g_hvc_cnt;      /* WEL2_CONSOLE_WRITE counts (handle_hvc holds the big lock) */
+
 static void hvc_stats_fill(void *ctx, struct wel2_stats *out)
 {
     (void)ctx;
@@ -242,6 +250,8 @@ static const struct wel2_hvc_ops g_hvc_ops = {
     .write_guest = hvc_write_guest,
     .log_line = hvc_log_line,
     .checkpoint = hvc_checkpoint,
+    .console_write = hvc_console_write,
+    .counters = &g_hvc_cnt,
     .stats_fill = hvc_stats_fill,
 };
 

@@ -1002,6 +1002,16 @@ static bool info_ptr_plausible(const struct wel2_guest_info *info)
     return p + sizeof(*info) > p && p + sizeof(*info) <= base + win && p + win >= base;
 }
 
+/* T12b/E7: one WEL2_CONSOLE_WRITE call, raw bytes with CR LF, to show the layer's byte stream sink (run-m1guest.sh looks for it). */
+static void console_probe(void)
+{
+    static const char msg[] = "[WEL2_CONSOLE_WRITE] raw bytes from the EL1 test guest\r\n";
+    int64_t r = (int64_t)hvc4(WEL2_CONSOLE_WRITE, (u64)(uintptr_t)msg, sizeof(msg) - 1, 0);
+
+    if (r != 0 && r != WEL2_HVC_NOT_SUPPORTED)           /* NOT_SUPPORTED = an older layer: nothing to show */
+        say("console write: unexpected result");
+}
+
 void guest_main(const struct wel2_guest_info *info)
 {
     g_frq = SYSREG_RD(cntfrq_el0);
@@ -1022,6 +1032,7 @@ void guest_main(const struct wel2_guest_info *info)
     g_uart_fallback_ok = !g_have_info && !g_is_apple;
 
     say("Watari EL1 test guest: G1-G11");
+    console_probe();
     if (!g_have_info && g_is_apple) {
         g1();                                            /* FAILs: no info block */
         g11();

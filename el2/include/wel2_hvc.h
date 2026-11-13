@@ -8,6 +8,7 @@
 #ifndef WEL2_HVC_H
 #define WEL2_HVC_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define WEL2_HVC_VENDOR_FIRST 0xC6000000u
@@ -17,6 +18,7 @@
 #define WEL2_STATS            0xC6000001u   /* x1 = guest PA of a buffer, x2 = its size in bytes */
 #define WEL2_LOG              0xC6000002u   /* x1 = guest PA of text, x2 = length (<= WEL2_LOG_MAX) */
 #define WEL2_CHECKPOINT       0xC6000003u   /* x1 = check number (WEL2_CHK_*), x2 = WEL2_CHKSTATE_* */
+#define WEL2_CONSOLE_WRITE    0xC6000004u   /* x1 = guest PA of raw bytes, x2 = length (<= WEL2_CONSOLE_MAX) */
 
 #define WEL2_HVC_ABI_VERSION  1u
 #define WEL2_VERSION_TAG      0x57454C32ull /* 'WEL2' */
@@ -29,6 +31,13 @@
 /* WEL2_LOG: one line, at most WEL2_LOG_MAX bytes, taken up to the first NUL (so x2 is an upper bound). x2 above the
  * limit, a zero x2, or a range outside guest RAM is INVALID_PARAMETERS and nothing is logged. */
 #define WEL2_LOG_MAX          160u
+
+/* WEL2_CONSOLE_WRITE (T12b/E7, DESIGN watari-edk2-m1 7): a raw byte stream, the console of a firmware without a UART. The bytes
+ * go to the UART unchanged (CR, LF, escape sequences, 0x00-0xFF alike); the framebuffer text shows the printable ones
+ * (0x20-0x7e) and LF only. At most WEL2_CONSOLE_MAX bytes per call: a longer x2 is INVALID_PARAMETERS and nothing is
+ * written (the caller splits; no partial write). x2 = 0 is a no-op SUCCESS (the range is not looked at). A range
+ * outside guest RAM is INVALID_PARAMETERS. SUCCESS returns x0 = 0. NOT_SUPPORTED = no such call in this layer: be quiet. */
+#define WEL2_CONSOLE_MAX      160u
 
 /* WEL2_CHECKPOINT numbers: the layer paints square WEL2_CHK_SQUARE_BASE + n and logs one line. */
 #define WEL2_CHK_SQUARE_BASE  16u
@@ -56,10 +65,17 @@ enum wel2_stat_reg {
 #define WEL2_CPUIF_HW         0u            /* struct wel2_stats.cpuif_mode */
 #define WEL2_CPUIF_TRAP       1u            /* TALL0 | TALL1 | TC | TDIR */
 #define WEL2_CPUIF_TRAP_NOTC  2u            /* TALL0 | TALL1 | TDIR, no TC */
+/* The buffer must hold at least WEL2_STATS_V1_SIZE bytes (the counters above); the layer fills as many bytes of
+ * struct wel2_stats as the buffer holds, so a guest built against the older, shorter layout keeps working. */
 struct wel2_stats {
     uint32_t version;                       /* WEL2_HVC_ABI_VERSION */
     uint32_t cpuif_mode;                    /* WEL2_CPUIF_* the layer runs with */
     uint64_t count[WEL2_STAT_COUNT];
+    uint64_t console_calls;                 /* T12b: WEL2_CONSOLE_WRITE calls that wrote bytes (length > 0) */
+    uint64_t console_bytes;                 /* ... and the bytes they wrote */
 };
+#define WEL2_STATS_V1_SIZE    (8u + 8u * WEL2_STAT_COUNT)
+
+_Static_assert(offsetof(struct wel2_stats, console_calls) == WEL2_STATS_V1_SIZE, "the v1 stats layout must not move");
 
 #endif
