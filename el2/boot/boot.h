@@ -87,6 +87,8 @@ extern struct wel2_fb g_fb;
 void checkpoint(unsigned n);
 void checkpoint_state(unsigned n, unsigned state);
 void checkpoint_fail(void);
+extern bool g_hold;                           /* main.c: wel2.hold=1, stop on the screen instead of resetting */
+void layer_reset(bool locked) __attribute__((noreturn));   /* main.c: the guest's / the ladder's reset, or the hold with wel2.hold=1 */
 void layer_checkpoint(unsigned n, const char *name);   /* main.c: paint square n and log one line (MMU on) */
 #if !__STDC_HOSTED__                          /* util.c provides these for the layer; the host tests have libc */
 void *memcpy(void *d, const void *s, unsigned long n);

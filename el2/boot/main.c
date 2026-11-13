@@ -66,6 +66,36 @@ void layer_checkpoint(unsigned n, const char *name)
     puts_("\n");
 }
 
+/* wel2.hold=1 (T6g PART 3): the hardware procedure reads results from photos, and a reset takes the screen away within
+ * seconds. Where the layer would reset at the end of a step (wel2.step=2, the guest's final SYSTEM_RESET) it instead keeps
+ * the final state on the panel, says so in the log and in the checkpoint line of the band, and parks this core with the lock
+ * released (other cores can still trap and print). wel2.step=1 is not affected: it resets in stage1.c. The fatal paths halt
+ * anyway; with the argument they print the same hold message. */
+bool g_hold;
+#define HOLD_MSG "Watari EL2: HOLD: take the photo, then hold the power button\n"
+
+static void hold_notice(void)
+{
+    puts_(HOLD_MSG);
+    wel2_fb_checkpoint_text(&g_fb, "HOLD: TAKE PHOTO");
+}
+
+void __attribute__((noreturn)) layer_reset(bool locked)
+{
+    if (g_hold) {
+        __asm__ volatile("msr daifset, #0xf" ::: "memory");
+        hold_notice();
+        if (locked)
+            big_unlock();
+        if (g_plat->park)
+            g_plat->park();
+        for (;;)
+            __asm__ volatile("wfe");
+    }
+    g_plat->system_reset();
+    fatal_msg("system reset returned");
+}
+
 /* ---- Exception handling -------------------------------------------------- */
 static const char *const vec_names[16] = {
     "cur_el_sp0 sync", "cur_el_sp0 irq", "cur_el_sp0 fiq", "cur_el_sp0 serror",
@@ -81,6 +111,8 @@ void __attribute__((noreturn)) fatal_msg(const char *why)
     puts_("Watari EL2: FATAL: ");
     puts_(why);
     puts_("\nWatari EL2: halted\n");
+    if (g_hold)
+        hold_notice();
     for (;;)
         __asm__ volatile("wfe");
 }
@@ -111,6 +143,8 @@ static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
         put_kv(nm, f->x[i]);
     }
     puts_("Watari EL2: halted\n");
+    if (g_hold)
+        hold_notice();
     for (;;)
         __asm__ volatile("wfe");
 }
@@ -800,6 +834,8 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
 /* Boot arguments (/chosen/bootargs, QEMU -append), space separated:
  *   wel2.cpuif=hw|trap|trap-notc   mode of the virtual CPU interface (build default WEL2_CPUIF_TRAP_DEFAULT);
  *                        trap-notc = trap without ICH_HCR_EL2.TC (T6g). The M1 accepts trap and trap-notc only.
+ *   wel2.hold=1          do not reset at the end of a step or of the guest (wel2.step=2, the guest's SYSTEM_RESET): paint the final
+ *                        state, print the HOLD message and park, so the screen can be photographed (not wel2.step=1)
  *   wel2.tid3=1|0        HCR_EL2.TID3: emulate the ID register group, GIC forced to 1 (default: on on the M1, off on QEMU)
  *   wel2.step=N          hardware ladder rung (DESIGN 9), read by stage1.c; 1 resets after the relocation, 2 after checkpoint 5 (CPU_INIT),
  *                        3..5 select the guest's checks
@@ -830,6 +866,8 @@ static void parse_bootargs(uint64_t fdt)
         } else if (arg_is(p, "wel2.cpuif=trap-notc")) {
             g_cpuif_trap = true;
             g_cpuif_notc = true;
+        } else if (arg_is(p, "wel2.hold=1")) {
+            g_hold = true;
         } else if (arg_is(p, "wel2.tid3=1")) {
             g_tid3 = true;
         } else if (arg_is(p, "wel2.tid3=0")) {
@@ -1027,8 +1065,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     layer_checkpoint(WEL2_LCHK_CPU_INIT, "CPU_INIT");
     if (g_step == 2) {                          /* rung L2 (DESIGN 9): the layer alone, then the watchdog */
         puts_("Watari EL2: wel2.step=2: platform and interrupt controller are up, resetting the machine\n");
-        g_plat->system_reset();
-        fatal_msg("wel2.step=2: the platform reset returned");
+        layer_reset(false);                     /* wel2.hold=1: stay on the screen instead */
     }
     stage2_init();
     stage2_enable();

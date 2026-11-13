@@ -320,6 +320,12 @@ static void m1_system_reset(void)
     wel2_cs_wait_forever(&g_cs_ops, 0);
 }
 
+/* wel2.hold=1 (main.c layer_hold): the timers are reset first so a pending guest timer cannot turn the wfe into a spin. */
+static void m1_park(void)
+{
+    wel2_cs_wait_forever(&g_cs_ops, 0);
+}
+
 const struct wel2_platform plat_m1 = {
     .name = "m1",
     .m1_memory = true,
@@ -348,6 +354,7 @@ const struct wel2_platform plat_m1 = {
     .cpu_off = m1_cpu_off,
     .system_off = m1_system_off,
     .system_reset = m1_system_reset,
+    .park = m1_park,
     .native_psci = true,
     .cpu_off_begin = m1_cpu_off_begin,
     .cpu_arrive = m1_cpu_arrive,

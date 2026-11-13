@@ -30,6 +30,7 @@ for mode in hw trap trap-notc; do
 done
 # T6g: the ladder, the ID registers with and without TID3, and the negative control of G5b (one run each, not per mode)
 run "run-step (wel2.step=1, 2, 3)" ./run-step.sh
+run "run-hold (wel2.hold=1 keeps the final state, no reset)" ./run-hold.sh
 run "run-tid3 (ID registers with and without TID3)" ./run-tid3.sh
 run "run-g5b-negative (TC bit disagrees with the mode)" ./run-g5b-negative.sh
 rm -f /tmp/wel2-run-all.$$

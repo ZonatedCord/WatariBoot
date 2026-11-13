@@ -247,8 +247,7 @@ bool psci_handle(struct frame *f, uint32_t fid)
         cpuif_stats();
         puts_(g_plat->native_psci ? "Watari EL2: PSCI SYSTEM_RESET -> watchdog (no firmware)\n"
                                   : "Watari EL2: PSCI SYSTEM_RESET -> forwarding to QEMU firmware (SMC)\n");
-        g_plat->system_reset();
-        fatal_msg("SYSTEM_RESET returned");
+        layer_reset(true);                 /* big lock held; wel2.hold=1 holds on the screen instead */
     case PSCI_CPU_SUSPEND_32:
     case PSCI_CPU_SUSPEND_64:
     default:
