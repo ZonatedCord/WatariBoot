@@ -33,3 +33,9 @@ Prompt `ralph/PROMPT-m3a.md`, tasks `ralph/TASKS-m3a.md` (T1-T16: fixes from the
 /ralph-loop "Run the instructions in ralph/PROMPT-m3a.md" --completion-promise "RALPH STOP" --max-iterations 40
 ```
 If a usage limit stops the loop, start the same command again in the same session on the same branch: Ralph resumes from `TASKS-m3a.md`/`PROGRESS-m3a.md`.
+
+## Ciani's research loop (2026-11-13)
+Writes study notes in Italian (no code) into `docs/research/` on its own branch `ralph/ciani-research`, from Ciani's Mac. Prompt `ralph/PROMPT-research.md`, tasks `ralph/TASKS-research.md`, log `ralph/PROGRESS-research.md`. Never at the same time as another Ralph instance: agree the night with Marco.
+```
+/ralph-loop "Run the instructions in ralph/PROMPT-research.md" --completion-promise "RALPH STOP" --max-iterations 10
+```
