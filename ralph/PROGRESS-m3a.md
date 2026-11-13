@@ -118,3 +118,9 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Day 2 on the real M1 (Ciani + Marco, PR #83): ladder L0-L5 all PASS, L3 in trap and trap-notc (TC works), timers, all 8 cores. Follow-ups in PR #84 (bundle build with spaces, procedure expected lines, F-32 clean PATH).
 - Marco approved the ADR scope extensions (console hypercall, framebuffer hand-over, guest FDT builder; not the shadow framebuffer).
 - Night 4 plan (branch ralph/m3a-night2): T17, T12a, T12b, T12c, T12d, T13; then T15, T9, T16. Sonnet authors and reviewers; Fable only in extremis. Three full usage windows (Marco does not need the morning).
+
+### 2026-11-13 19:40 - T17 guest per-check summary on the held screen: done
+- Commits: fae64bc, 9e27b07, da36231. The guest prints a 15-line SUMMARY block last (G1..G11 PASS/FAIL/SKIP/NOT RUN + key number: MPIDR, INTID/TICKS, UP/SGI2; MPIDR list); the layer reserves 18 panel rows on the `SUMMARY` line (`wel2_fb_reserve`) and, once a summary is on the panel, the final PSCI stats go to the UART only (`final_stats`, `g_fb_mute`), so the block, the reset line and HOLD stay on the photo. Mute cleared on every fatal/hold path. Day-2 procedure expected lines updated (ticks and MPIDRs now on the photo, video optional).
+- Review (Sonnet): first pass NOT OK (the ~25 stats lines on SYSTEM_RESET scrolled the block away, test and run-m1guest could not see it); fixed in 9e27b07 (+ test of the real tail, run-m1guest checks all UART lines after the block); re-review OK, optional unmute-on-fatal applied in da36231.
+- Opus verified on the merged branch: `make -C el2 test` ALL PASSED; `run-all.sh` 29/29 default and 29/29 with `wel2.e2h=0 wel2.gran=4k`; `run-m1guest.sh` PASS in trap. No Windows boot: the change is inert unless a guest prints a SUMMARY line (Windows does not); the next boot-path task (T12b) carries a Windows boot.
+- Open: panel behaviour only modelled on the host (no framebuffer in QEMU).
