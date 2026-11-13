@@ -40,8 +40,18 @@ command -v ld.lld >/dev/null 2>&1 || export PATH="$LLVM:$PATH"
 command -v ld.lld >/dev/null 2>&1 || die "ld.lld not found"
 if command -v sha256sum >/dev/null 2>&1; then SHA() { sha256sum "$@"; }; else SHA() { shasum -a 256 "$@"; }; fi
 
-WORK="$DIR/work"
 OUT="$DIR/bundle"
+# make cannot handle spaces in paths (the data disk is "Arthur Fonzarelli"): when DIR has one, the work tree goes
+# to a space-free temp dir (removed on exit); only the finished bundle is written under DIR (the shell quotes it).
+case "$DIR" in
+    *[[:space:]]*)
+        WORK="$(mktemp -d /tmp/watari-m3a-work.XXXXXX)"
+        trap 'rm -rf "$WORK"' EXIT
+        ;;
+    *)
+        WORK="$DIR/work"
+        ;;
+esac
 rm -rf "$OUT"
 mkdir -p "$WORK" "$OUT"
 
