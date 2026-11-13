@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 CC      = clang
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -Iinclude -Isrc -O1
-LIBSRC  := src/common.c src/madt.c src/gtdt.c src/pptt.c src/csrt.c src/fadt.c src/dbg2.c src/t8103_model.c src/qemu_virt_model.c
-TESTS   := madt gtdt pptt csrt fadt dbg2 models gsiv
+LIBSRC  := src/common.c src/madt.c src/gtdt.c src/pptt.c src/csrt.c src/fadt.c src/dbg2.c src/t8103_model.c src/j293_model.c src/qemu_virt_model.c
+TESTS   := madt gtdt pptt csrt fadt dbg2 models gsiv j293
 BUILD   := build
 
 all: $(BUILD)/acpigen
@@ -19,6 +19,11 @@ $(BUILD)/test_gsiv: tests/test_gsiv.c $(LIBSRC) tests/test.h include/acpigen.h s
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(INTR_INC) $(LIBSRC) $(INTR_SRC) $< -o $@
 
+# j293 test cross-checks the layer's constants (core index, timer PPIs, platform windows, interrupt map).
+$(BUILD)/test_j293: tests/test_j293.c $(LIBSRC) tests/test.h include/acpigen.h src/internal.h $(INTR_SRC) ../../el2/include/wel2_intr_map.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $(INTR_INC) $(LIBSRC) $(INTR_SRC) $< -o $@
+
 $(BUILD)/test_%: tests/test_%.c $(LIBSRC) tests/test.h include/acpigen.h src/internal.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(LIBSRC) $< -o $@
@@ -27,9 +32,15 @@ test: $(addprefix $(BUILD)/test_,$(TESTS)) $(BUILD)/acpigen
 	@set -e; for t in $(TESTS); do ./$(BUILD)/test_$$t; done
 	@for t in madt gtdt pptt csrt fadt; do ./$(BUILD)/acpigen $$t -o $(BUILD)/$$t.bin; done
 	@for t in madt gtdt pptt fadt dbg2; do ./$(BUILD)/acpigen $$t -m qemu-virt -o $(BUILD)/qemu-virt-$$t.bin; done
+	@for t in madt gtdt pptt fadt; do ./$(BUILD)/acpigen $$t -m j293 -o $(BUILD)/j293-$$t.bin; done
+	@if ./$(BUILD)/acpigen dbg2 -m j293 -o $(BUILD)/x.bin 2>/dev/null; then echo "dbg2 j293 doveva fallire"; exit 1; fi
 	./$(BUILD)/acpigen madt -m qemu-virt-nogicd -o $(BUILD)/qemu-virt-nogicd-madt.bin
 	@test $$(wc -c < $(BUILD)/qemu-virt-nogicd-madt.bin) -eq $$(( $$(wc -c < $(BUILD)/qemu-virt-madt.bin) - 24 ))
 	@if ./$(BUILD)/acpigen dbg2 -o $(BUILD)/x.bin 2>/dev/null; then echo "dbg2 t8103 doveva fallire"; exit 1; fi
+	@# the j293 test copies the layer's GIC window literals: fail if the layer changes them
+	@grep -q "PLAT_M1_GICD_BASE    0xF00000000ULL" ../../el2/boot/plat.h
+	@grep -q "PLAT_M1_GICR_BASE    0xF10000000ULL" ../../el2/boot/plat.h
+	@grep -q "VGIC_GICR_FRAME_SIZE  0x20000u" ../../el2/include/wel2_vgic.h
 	@echo "TUTTI I TEST OK"
 
 clean:

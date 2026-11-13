@@ -218,3 +218,12 @@ Context: `docs/procedures/m3a-day1-hardware.md`, first run (Marco's j293 + Ciani
 - **Installer refused to resize** ("No partitions have enough free space"): v0.9.2 needs 38 GB + 10 GB free in the macOS container; 15 local Time Machine snapshots held ~50 GB. Fixed with `sudo tmutil deletelocalsnapshots /` after confirming a backup of the same day.
 - **Resize failed on pre-existing APFS corruption** (`fsck_apfs`: doc-id tree records missing/duplicated on the Data volume, error -69716). Disk Utility First Aid reported success but did not fix it; `fsck_apfs -y /dev/disk0s2` from the 1TR Terminal, with the Data volume unlocked `-nomount` and `disk3` unmounted, did. Nothing had been resized before the failure (the check runs first).
 - **`m1n1.setup` is not read-only:** importing it (and so `shell.py`) runs `PMU(u).reset_panic_counter()`, an SPMI/I2C write. Caught by reading the code before running it; the measurement scripts (`tools/m3a/`) skip it.
+
+## F-30
+Context: Ralph M3a night, verification of T2 (`run-m2.sh`, TAG=t2, 2026-11-10 ~23:00).
+- **Windows QEMU run killed by SIGTERM after ~8 min** (`qemu.out`: "terminating on signal 15 from pid ... (<unknown process>)"); no layer error in `serial.log`. At the same time Opus was running `el2/boot/run-all.sh` (several short QEMU runs) and a subagent was running its own `run-all.sh` in another worktree. Exact sender not identified [hypothesis: one of the concurrent QEMU test scripts' cleanup].
+- **Rule from now on:** while `run-m2.sh` runs, no other QEMU job on the machine. Re-run alone (TAG=t2t3) reached the desktop.
+
+## F-31
+Context: Ralph M3a night 2 (2026-11-12), agents waiting for the Windows QEMU run before their own QEMU tests.
+- **Self-matching wait loop:** `while pgrep -f "qemu-system.*win11.qcow2"; do sleep 30; done` also matches the shell running the loop (and other agents' loops), so it never exits; one agent lost ~25 min. Use `pgrep -x qemu-system-aarch64`. `run-m2.sh`'s own guard uses the same `pgrep -f` pattern [hypothesis: it can refuse to start while such a loop runs]; fix it with a non-self-matching pattern.

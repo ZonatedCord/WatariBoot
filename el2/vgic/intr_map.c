@@ -23,6 +23,38 @@ static const struct intr_entry t8103_allow[] = {
 	{ 701, INTR_TRIG_LEVEL, "pcie-port2" },
 };
 
+/* Sources measured on the real j293 and kept DENIED by default. Every number is
+ * [verified: re/m3a-ehw0-measurements.md, ADT read on 2026-11-10, m1n1 v1.6.1]. The trigger type
+ * of none of them was measured (the ADT interrupt cells give numbers only), so each is
+ * INTR_TRIG_UNKNOWN; that is also why they are not allow-listed: exposing needs the trigger. */
+/* Names are neutral labels (owner node + number), not measured roles: the ADT gives the numbers in a
+ * fixed order and which line does what inside a node was NOT measured [hypothesis]. */
+static const struct intr_entry t8103_denied[] = {
+	/* ANS mailbox lines (row 10; the NVMe line 590 is allowed above) */
+	{ 583, INTR_TRIG_UNKNOWN, "ans-irq583" },
+	{ 584, INTR_TRIG_UNKNOWN, "ans-irq584" },
+	{ 585, INTR_TRIG_UNKNOWN, "ans-irq585" },
+	{ 586, INTR_TRIG_UNKNOWN, "ans-irq586" },
+	/* usb-drd0: 777 (allowed above), then the four extra lines (row 11) */
+	{ 778, INTR_TRIG_UNKNOWN, "usb-drd0-irq778" },
+	{ 779, INTR_TRIG_UNKNOWN, "usb-drd0-irq779" },
+	{ 780, INTR_TRIG_UNKNOWN, "usb-drd0-irq780" },
+	{ 736, INTR_TRIG_UNKNOWN, "usb-drd0-irq736" },     /* first wired hwirq after the MSI pool: vINTID 768 */
+	/* usb-drd1: 857 (allowed above) */
+	{ 858, INTR_TRIG_UNKNOWN, "usb-drd1-irq858" },
+	{ 859, INTR_TRIG_UNKNOWN, "usb-drd1-irq859" },
+	{ 860, INTR_TRIG_UNKNOWN, "usb-drd1-irq860" },
+	{ 816, INTR_TRIG_UNKNOWN, "usb-drd1-irq816" },
+	/* Thunderbolt PCIe controllers apciec0 / apciec1 (row 12) and their pio-DMA lines */
+	{ 770, INTR_TRIG_UNKNOWN, "apciec0-irq770" },
+	{ 772, INTR_TRIG_UNKNOWN, "apciec0-irq772" },
+	{ 850, INTR_TRIG_UNKNOWN, "apciec1-irq850" },
+	{ 852, INTR_TRIG_UNKNOWN, "apciec1-irq852" },
+	/* UARTs (row 13; uart0 is the Linux t8103 console UART) */
+	{ 605, INTR_TRIG_UNKNOWN, "uart0-irq605" },
+	{ 607, INTR_TRIG_UNKNOWN, "uart2-irq607" },
+};
+
 const struct intr_map INTR_MAP_T8103 = {
 	.wired_max = 896,
 	.msi_hwirq_base = 704,         /* msi-ranges = <&aic AIC_IRQ 704 EDGE_RISING 32> */
@@ -31,6 +63,8 @@ const struct intr_map INTR_MAP_T8103 = {
 	.msi_exposed = false,          /* level 1: the pool stays masked until msi-apple-pcie (M4) */
 	.allow = t8103_allow,
 	.n_allow = sizeof t8103_allow / sizeof t8103_allow[0],
+	.denied = t8103_denied,
+	.n_denied = sizeof t8103_denied / sizeof t8103_denied[0],
 };
 
 static bool in_pool(const struct intr_map *m, uint32_t hwirq)
@@ -85,6 +119,14 @@ const struct intr_entry *intr_find(const struct intr_map *m, uint32_t hwirq)
 	return 0;
 }
 
+const struct intr_entry *intr_find_denied(const struct intr_map *m, uint32_t hwirq)
+{
+	for (uint32_t i = 0; m->denied && i < m->n_denied; i++)
+		if (m->denied[i].hwirq == hwirq)
+			return &m->denied[i];
+	return 0;
+}
+
 uint32_t intr_exposed_vintid(const struct intr_map *m, uint32_t hwirq)
 {
 	if (in_pool(m, hwirq))
@@ -132,8 +174,23 @@ int intr_map_validate(const struct intr_map *m)
 			return INTR_E_RANGE;
 		if (in_pool(m, h))
 			return INTR_E_POOL;
+		if (m->allow[i].edge != INTR_TRIG_LEVEL && m->allow[i].edge != INTR_TRIG_EDGE)
+			return INTR_E_TRIG;              /* an exposed source needs a known trigger */
 		for (uint32_t j = 0; j < i; j++)
 			if (m->allow[j].hwirq == h)
+				return INTR_E_DUP;
+	}
+	for (uint32_t i = 0; m->denied && i < m->n_denied; i++) {
+		uint32_t h = m->denied[i].hwirq;
+
+		if (h >= m->wired_max)
+			return INTR_E_RANGE;
+		if (in_pool(m, h))
+			return INTR_E_POOL;
+		if (intr_find(m, h))
+			return INTR_E_DUP;
+		for (uint32_t j = 0; j < i; j++)
+			if (m->denied[j].hwirq == h)
 				return INTR_E_DUP;
 	}
 	return INTR_OK;

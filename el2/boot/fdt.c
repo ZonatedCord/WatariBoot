@@ -365,3 +365,265 @@ int fdt_find_aic(void *fdt, struct fdt_aic_info *info)
     info->found = c.compat && info->has_reg && info->nr_irq != 0;
     return 0;
 }
+
+/* ---- First node compatible with a given string, and its "reg" -------------------------------------------------
+ * Own structure walk, so that the cells of every parent are known when a node OPENS, whether or not the node (or its
+ * ancestors) carries any property of its own (T5 review note: the former callback-based version only reset its
+ * per-depth state when a property was seen). Per depth: the cells the node declares for its children (defaults 2 and
+ * 1, Devicetree Specification 2.3.5) and the cells its own reg is decoded with (the parent's, final at the opening
+ * because properties precede sub-nodes, 2.2.1). A node with a status other than okay/ok is skipped. A node is
+ * evaluated when its first child opens or when it ends. Ranges/address translation is not applied: the nodes asked
+ * for (/soc children of the Apple SoC, "ranges;" identity) need none
+ * [verified: t8103 /soc has ranges and #address-cells = 2, DESIGN section 4.2; hypothesis for other SoCs]. */
+struct compat_node {
+    bool match, has_reg, disabled;
+    uint64_t base, size;
+};
+
+static bool stringlist_has(const uint8_t *val, uint32_t len, const char *s)
+{
+    uint32_t i = 0;
+
+    while (i < len) {
+        uint32_t j = i;
+
+        while (j < len && val[j])
+            j++;
+        if (j >= len)                   /* not terminated: malformed */
+            return false;
+        if (str_eq((const char *)val + i, s))
+            return true;
+        i = j + 1;
+    }
+    return false;
+}
+
+int fdt_find_compatible_reg(void *fdt, const char *compat, struct fdt_reg_info *info)
+{
+    uint8_t *h = fdt;
+    struct compat_node n = { 0 };
+    uint32_t a[MAX_DEPTH], s[MAX_DEPTH], ra[MAX_DEPTH], rs[MAX_DEPTH];
+    int depth = -1;
+    bool pending = false;               /* the node at `depth` has not been evaluated yet */
+
+    info->found = false;
+    info->base = info->size = 0;
+    if (fdt_check(fdt))
+        return -1;
+    uint32_t off = be32(h + 8), end = off + be32(h + 36);
+    const char *strs = (const char *)h + be32(h + 12);
+    uint32_t str_size = be32(h + 32);
+
+    while (off + 4 <= end) {
+        uint32_t tok = be32(h + off);
+
+        off += 4;
+        if (tok == FDT_BEGIN_NODE || tok == FDT_END_NODE) {
+            if (pending && depth >= 1 && n.match && n.has_reg && !n.disabled) {
+                info->found = true;             /* the first usable node wins */
+                info->base = n.base;
+                info->size = n.size;
+                return 0;
+            }
+            pending = false;
+        }
+        if (tok == FDT_BEGIN_NODE) {
+            const char *name = (const char *)h + off;
+            uint32_t len = 0;
+
+            while (off + len < end && name[len])
+                len++;
+            if (off + len >= end || depth + 1 >= MAX_DEPTH)
+                return -1;
+            depth++;
+            a[depth] = 2;                               /* defaults for this node's children */
+            s[depth] = 1;
+            ra[depth] = depth ? a[depth - 1] : 2;       /* cells for this node's own reg: the parent's */
+            rs[depth] = depth ? s[depth - 1] : 1;
+            n = (struct compat_node){ 0 };
+            pending = true;
+            off += align4(len + 1);
+        } else if (tok == FDT_END_NODE) {
+            if (depth < 0)
+                return -1;
+            depth--;
+        } else if (tok == FDT_PROP) {
+            if (off + 8 > end || depth < 0)
+                return -1;
+            uint32_t len = be32(h + off), nameoff = be32(h + off + 4);
+
+            off += 8;
+            if (len > end - off || nameoff >= str_size)
+                return -1;
+            char prop[24];
+            uint32_t pn = 0;
+
+            while (pn < sizeof(prop) - 1 && nameoff + pn < str_size && strs[nameoff + pn]) {
+                prop[pn] = strs[nameoff + pn];
+                pn++;
+            }
+            prop[pn] = 0;
+            const uint8_t *v = h + off;
+
+            if (len == 4 && str_eq(prop, "#address-cells")) {
+                a[depth] = be32(v);
+            } else if (len == 4 && str_eq(prop, "#size-cells")) {
+                s[depth] = be32(v);
+            } else if (pending && depth >= 1 && str_eq(prop, "compatible")) {
+                n.match = stringlist_has(v, len, compat);
+            } else if (pending && depth >= 1 && str_eq(prop, "status")) {
+                n.disabled = !(len >= 1 && v[len - 1] == 0 &&
+                               (str_eq((const char *)v, "okay") || str_eq((const char *)v, "ok")));
+            } else if (pending && depth >= 1 && str_eq(prop, "reg")) {
+                if (ra[depth] >= 1 && ra[depth] <= 2 && rs[depth] <= 2 && len >= 4 * (ra[depth] + rs[depth])) {
+                    n.has_reg = true;
+                    n.base = be_cells(v, ra[depth]);
+                    n.size = rs[depth] ? be_cells(v + 4 * ra[depth], rs[depth]) : 0;
+                }
+            }
+            off += align4(len);
+        } else if (tok == FDT_NOP) {
+            continue;
+        } else if (tok == FDT_END) {
+            return 0;
+        } else {
+            return -1;
+        }
+    }
+    return -1;
+}
+
+/* ---- /chosen/framebuffer@*: the simple-framebuffer node the loader (m1n1) fills ----------------------------
+ * Own structure walk (not fdt_walk_props) because the parent of the node must be known even when /chosen carries no
+ * property of its own. Accepted: a node at depth 2 named "framebuffer" or "framebuffer@..." under "chosen", with a
+ * "compatible" list containing "simple-framebuffer", no status "disabled" (the template m1n1 fills has it
+ * disabled until it has written reg, then deletes it), and all of reg, width, height, stride, format. "reg" is
+ * decoded with the #address-cells/#size-cells of /chosen if it has them, else of the root, else 2 and 1 (the DT
+ * defaults). The first usable node wins; later ones are ignored. Only these properties are read: nothing else of the
+ * blob (serial number, MAC addresses...) is looked at, let alone kept. */
+struct fbnode {
+    bool compat, disabled, sized, has_reg, has_w, has_h, has_s, has_f;
+    uint64_t base, size;
+    uint32_t w, h, s;
+    const char *fmt;
+    uint32_t flen;
+};
+
+static void fb_prop(struct fbnode *n, unsigned ac, unsigned sc, const char *prop, const uint8_t *val, uint32_t len)
+{
+    if (str_eq(prop, "compatible")) {
+        n->compat = stringlist_has(val, len, "simple-framebuffer");
+    } else if (str_eq(prop, "status")) {
+        /* absent or "okay"/"ok" = usable; anything else (disabled, reserved, fail, garbage) = not */
+        n->disabled = !(len >= 1 && val[len - 1] == 0 &&
+                        (str_eq((const char *)val, "okay") || str_eq((const char *)val, "ok")));
+    } else if (str_eq(prop, "reg")) {
+        if (ac >= 1 && ac <= 2 && sc <= 2 && len >= 4 * (ac + sc)) {
+            n->base = be_cells(val, ac);
+            n->size = sc ? be_cells(val + 4 * ac, sc) : 0;
+            n->sized = sc > 0;
+            n->has_reg = true;
+        }
+    } else if (str_eq(prop, "width") && len == 4) {
+        n->w = be32(val);
+        n->has_w = true;
+    } else if (str_eq(prop, "height") && len == 4) {
+        n->h = be32(val);
+        n->has_h = true;
+    } else if (str_eq(prop, "stride") && len == 4) {
+        n->s = be32(val);
+        n->has_s = true;
+    } else if (str_eq(prop, "format") && len >= 1 && val[len - 1] == 0) {
+        n->fmt = (const char *)val;
+        n->flen = len;
+        n->has_f = true;
+    }
+}
+
+int fdt_get_framebuffer(void *fdt, struct wel2_fb *fb)
+{
+    uint8_t *h = fdt;
+    struct fbnode n = { 0 };
+    const char *stack[MAX_DEPTH];
+    uint32_t a[MAX_DEPTH], s[MAX_DEPTH];
+    int depth = -1;
+    bool in_fb = false;
+
+    *fb = (struct wel2_fb){ 0 };
+    fb->cp = -1;
+    if (fdt_check(fdt))
+        return -1;
+    uint32_t off = be32(h + 8), end = off + be32(h + 36);
+    const char *strs = (const char *)h + be32(h + 12);
+    uint32_t str_size = be32(h + 32);
+
+    while (off + 4 <= end) {
+        uint32_t tok = be32(h + off);
+
+        off += 4;
+        if (tok == FDT_BEGIN_NODE) {
+            const char *name = (const char *)h + off;
+            uint32_t len = 0;
+
+            while (off + len < end && name[len])
+                len++;
+            if (off + len >= end || depth + 1 >= MAX_DEPTH)
+                return -1;
+            stack[++depth] = name;
+            a[depth] = 0xffffffffu;             /* "not defined at this node" */
+            s[depth] = 0xffffffffu;
+            off += align4(len + 1);
+            in_fb = depth == 2 && name_is(name, "framebuffer") && name_is(stack[1], "chosen");
+            if (in_fb)
+                n = (struct fbnode){ 0 };
+        } else if (tok == FDT_END_NODE) {
+            if (depth < 0)
+                return -1;
+            if (in_fb && depth == 2 && n.compat && !n.disabled && n.has_reg && n.has_w && n.has_h && n.has_s &&
+                n.has_f &&
+                (!n.sized || n.size >= (uint64_t)n.h * n.s) &&      /* reg must cover the whole screen */
+                wel2_fb_setup(fb, n.base, n.w, n.h, n.s, n.fmt, n.flen) == 0)
+                return 0;                       /* the first usable node wins */
+            in_fb = false;
+            depth--;
+        } else if (tok == FDT_PROP) {
+            if (off + 8 > end || depth < 0)
+                return -1;
+            uint32_t len = be32(h + off), nameoff = be32(h + off + 4);
+
+            off += 8;
+            if (len > end - off || nameoff >= str_size)
+                return -1;
+            /* the property name, copied with a bound by the strings block (a name not terminated inside it is
+             * cut at 23 characters, which matches none of the names looked for) */
+            char prop[24];
+            uint32_t pn = 0;
+
+            while (pn < sizeof(prop) - 1 && nameoff + pn < str_size && strs[nameoff + pn]) {
+                prop[pn] = strs[nameoff + pn];
+                pn++;
+            }
+            prop[pn] = 0;
+
+            if (len == 4 && str_eq(prop, "#address-cells"))
+                a[depth] = be32(h + off);
+            else if (len == 4 && str_eq(prop, "#size-cells"))
+                s[depth] = be32(h + off);
+            else if (in_fb && depth == 2) {
+                /* /chosen's own cells, else the root's, else the DT defaults */
+                unsigned ac = a[1] != 0xffffffffu ? a[1] : (a[0] != 0xffffffffu ? a[0] : 2);
+                unsigned sc = s[1] != 0xffffffffu ? s[1] : (s[0] != 0xffffffffu ? s[0] : 1);
+
+                fb_prop(&n, ac, sc, prop, h + off, len);
+            }
+            off += align4(len);
+        } else if (tok == FDT_NOP) {
+            continue;
+        } else if (tok == FDT_END) {
+            return 0;
+        } else {
+            return -1;
+        }
+    }
+    return -1;
+}

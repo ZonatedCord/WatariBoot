@@ -10,7 +10,7 @@
 # QEMU TCG, -smp 1, 20 s timeout. Exit 0 on success.
 set -u
 APPEND_STR=""
-[ "${CPUIF:-hw}" = trap ] && APPEND_STR="wel2.cpuif=trap"
+case "${CPUIF:-hw}" in trap|trap-notc) APPEND_STR="wel2.cpuif=${CPUIF}";; esac   # trap-notc: T6g
 [ "${NOEOI:-0}" = 1 ] && APPEND_STR="$APPEND_STR wel2.test=noeoi"
 [ -n "${WEL2_ARGS:-}" ] && APPEND_STR="$APPEND_STR $WEL2_ARGS"   # e.g. "wel2.e2h=1 wel2.gran=16k"
 APPEND=()
@@ -59,9 +59,9 @@ nonzero "LR evictions (higher priority arrived)"
 if [ "${NOEOI:-0}" = 1 ]; then
     expect "TEST knob wel2.test=noeoi"
     # in TRAP_EMULATE mode the guest's EOIR traps, EL2 refills at once and UIE is moot
-    [ "${CPUIF:-hw}" = trap ] || nonzero "underflow maintenance irqs (UIE)"
+    [ "${CPUIF:-hw}" != hw ] || nonzero "underflow maintenance irqs (UIE)"
 fi
-if [ "${CPUIF:-hw}" = trap ]; then
+if [ "${CPUIF:-hw}" != hw ]; then
     expect "cpuif mode = TRAP_EMULATE"
 else
     expect "cpuif mode = HW"

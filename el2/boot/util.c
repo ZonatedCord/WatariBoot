@@ -6,11 +6,9 @@
 
 #include <stdint.h>
 #include "boot.h"
+#include "wel2_uart.h"
 
-#define UART0_BASE   0x09000000UL
-#define UART_DR      0x00
-#define UART_FR      0x18
-#define UART_FR_TXFF (1u << 5)
+#define UART0_BASE   0x09000000UL      /* QEMU virt PL011 */
 
 /* ---- Locks ----------------------------------------------------------------
  * At EL2 these are exclusives (ldaxr/stlxr) on Normal Inner-Shareable memory: the
@@ -49,27 +47,74 @@ void big_unlock(void)
     spin_unlock(&g_big);
 }
 
-/* ---- UART (PL011; QEMU needs no init) ---------------------------------------
- * puts_() holds a lock for the whole string so that lines of different cores do
- * not interleave; the EL1 payload shares these functions. */
+/* ---- Console UART -----------------------------------------------------------
+ * One global console (g_con, wel2_uart.h): the PL011 of the QEMU virt machine until con_select_s5l() switches it to
+ * the Apple S5L UART whose "apple,s5l-uart" node the FDT has (stage1_build, before any other output). QEMU needs no
+ * init; the S5L UART is left as iBoot/m1n1 set it up. Initialised data (not a run-time constructor), so the EL1 test
+ * payload that shares putc_/puts_ with its MMU off sees the PL011 setup from the image itself.
+ * puts_() holds a lock for the whole string so that lines of different cores do not interleave. */
+static uint32_t mmio_rd(void *ctx, unsigned off)
+{
+    return *(volatile uint32_t *)((uintptr_t)ctx + off);
+}
+
+static void mmio_wr(void *ctx, unsigned off, uint32_t val)
+{
+    *(volatile uint32_t *)((uintptr_t)ctx + off) = val;
+}
+
+struct wel2_uart g_con = {
+    WEL2_UART_PL011, { mmio_rd, mmio_wr, (void *)UART0_BASE }, 0, 0, 0, 0,
+};
+
+/* T6c: the null console, for the M1 before (or without) a usable S5L UART: no register is ever touched. */
+void con_select_none(void)
+{
+    g_con = (struct wel2_uart){ WEL2_UART_NONE, { mmio_rd, mmio_wr, 0 }, 0, 0, 0, 0 };
+}
+
+void con_select_s5l(uint64_t base)
+{
+    g_con = (struct wel2_uart){
+        WEL2_UART_S5L, { mmio_rd, mmio_wr, (void *)(uintptr_t)base }, WEL2_UART_S5L_LIMIT, 0, 0, 0,
+    };
+}
+
+/* ---- Framebuffer mirror (T5b) -------------------------------------------------------------------------------
+ * g_fb stays all-zero (format NONE) unless stage1_build found /chosen/framebuffer@* in the FDT; then every byte that
+ * goes to the UART is also drawn as text, and checkpoint() paints the squares of the boot stages. Aligned 32-bit
+ * stores only (fb.c), so all of it works with the MMU off too. */
+struct wel2_fb g_fb;
+
+void checkpoint(unsigned n)
+{
+    wel2_fb_checkpoint(&g_fb, n, WEL2_RGB_GREEN);
+}
+
+/* state: 0 running (amber), 1 pass (green), 3 skipped (grey), anything else fail (red) */
+void checkpoint_state(unsigned n, unsigned state)
+{
+    wel2_fb_checkpoint(&g_fb, n, state == 0 ? WEL2_RGB_AMBER : state == 1 ? WEL2_RGB_GREEN :
+                                 state == 3 ? WEL2_RGB_GREY : WEL2_RGB_RED);
+}
+
+void checkpoint_fail(void)
+{
+    wel2_fb_checkpoint_fail(&g_fb);
+}
+
 void putc_(char c)
 {
-    volatile uint32_t *fr = (volatile uint32_t *)(UART0_BASE + UART_FR);
-    volatile uint32_t *dr = (volatile uint32_t *)(UART0_BASE + UART_DR);
-    while (*fr & UART_FR_TXFF)
-        ;
-    *dr = (uint32_t)c;
+    wel2_fb_putc(&g_fb, c);                  /* T6c: the panel first, a stuck UART must not delay or lose it */
+    wel2_uart_putc(&g_con, (uint8_t)c);
 }
 
 void puts_(const char *s)
 {
     bool got = spin_lock(&g_uart, 1UL << 24);
 
-    while (*s) {
-        if (*s == '\n')
-            putc_('\r');
-        putc_(*s++);
-    }
+    wel2_fb_puts(&g_fb, s);
+    wel2_uart_puts(&g_con, s);
     if (got)
         spin_unlock(&g_uart);
 }

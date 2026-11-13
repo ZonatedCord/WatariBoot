@@ -571,6 +571,59 @@ static void t_width_clamps(void)
 	CHECK_EQ(C.prebits, 6);
 }
 
+/* T6g (PLAN S12b): the trap configurations. */
+static void t_hcr_base(void)
+{
+	const uint64_t en = 1, tall = (1ULL << 11) | (1ULL << 12), tc = 1ULL << 10, tdir = 1ULL << 14;
+
+	CHECK_EQ(vcif_hcr_base(WEL2_CPUIF_HW, true), en);
+	CHECK_EQ(vcif_hcr_base(WEL2_CPUIF_HW, false), en);
+	CHECK_EQ(vcif_hcr_base(WEL2_CPUIF_TRAP, true), en | tall | tc | tdir);
+	CHECK_EQ(vcif_hcr_base(WEL2_CPUIF_TRAP, false), en | tall | tc);
+	CHECK_EQ(vcif_hcr_base(WEL2_CPUIF_TRAP_NOTC, true), en | tall | tdir);       /* no TC: PMR, CTLR, RPR to hardware */
+	CHECK_EQ(vcif_hcr_base(WEL2_CPUIF_TRAP_NOTC, false), en | tall);
+	CHECK(!(vcif_hcr_base(WEL2_CPUIF_TRAP_NOTC, true) & tc));
+	CHECK(vcif_hcr_base(WEL2_CPUIF_TRAP, true) & tc);
+	CHECK_EQ(vcif_hcr_base(99, true), en);                                         /* unknown = hw */
+}
+
+/* trap-notc: the guest writes ICC_PMR_EL1 / ICC_CTLR_EL1 straight into the hardware ICH_VMCR_EL2 (the layer never sees
+ * it). The layer reloads VMCR into the model before it emulates the next IAR/EOIR/DIR (cpuif.c hw_in), so the model must
+ * keep no private copy of PMR or EOImode: here "the hardware" is a direct write to C.vmcr. */
+static void t_notc_vmcr_by_hardware(void)
+{
+	uint32_t freed[4];
+
+	setup_vcif();
+	pend_sgi(3, 0x80);
+	vcif_fill(&C, &F.v, 0);
+	C.vmcr = (C.vmcr & 0x00ffffffu) | (0x80u << VCIF_VMCR_VPMR_SH);       /* hardware: guest wrote PMR 0x80 */
+	CHECK_EQ(vcif_iar1(&C), 1023);                                          /* priority 0x80 is masked by it */
+	CHECK_EQ(vcif_pmr_get(&C), 0x80);
+	C.vmcr = (C.vmcr & 0x00ffffffu) | (0xa0u << VCIF_VMCR_VPMR_SH);       /* hardware: guest wrote PMR 0xa0 */
+	CHECK_EQ(vcif_iar1(&C), 3);                                             /* ... and now it is deliverable */
+	/* EOImode written by the guest into VMCR.VEOIM: EOIR is a priority drop only, DIR deactivates */
+	C.vmcr |= VCIF_VMCR_VEOIM;
+	CHECK_EQ(vcif_ctlr_get(&C) & 2, 2);
+	vcif_eoir1(&C, 3);
+	CHECK_EQ(vcif_harvest(&C, &F.v, 0, freed, 4), 0);                     /* still active */
+	vcif_dir(&C, 3);
+	CHECK_EQ(vcif_harvest(&C, &F.v, 0, freed, 4), 1);
+	/* and back to EOImode 0 */
+	C.vmcr &= ~VCIF_VMCR_VEOIM;
+	pend_sgi(4, 0x40);
+	vcif_fill(&C, &F.v, 0);
+	CHECK_EQ(vcif_iar1(&C), 4);
+	vcif_eoir1(&C, 4);
+	CHECK_EQ(vcif_harvest(&C, &F.v, 0, freed, 4), 1);                     /* EOIR deactivated it */
+	/* the list-register policy does not look at VMCR: a change by "hardware" needs no flush of its own */
+	C.vmcr = (C.vmcr & 0x00ffffffu) | (0x10u << VCIF_VMCR_VPMR_SH);
+	pend_sgi(5, 0x20);
+	vcif_fill(&C, &F.v, 0);
+	CHECK_EQ(vcif_valid_lrs(&C), 1);                                        /* injected although above the mask */
+	CHECK_EQ(vcif_iar1(&C), 1023);                                          /* the mask applies at the acknowledge */
+}
+
 int main(void)
 {
 	RUN(t_overflow_refill_in_priority_order);
@@ -595,5 +648,7 @@ int main(void)
 	RUN(t_fine_lr_priorities);
 	RUN(t_width_clamps);
 	RUN(t_idbits);
+	RUN(t_hcr_base);
+	RUN(t_notc_vmcr_by_hardware);
 	TESTS_DONE();
 }

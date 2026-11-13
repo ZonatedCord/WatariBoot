@@ -30,6 +30,7 @@
 
 #define INTR_TRIG_LEVEL   0
 #define INTR_TRIG_EDGE    1
+#define INTR_TRIG_UNKNOWN 2            /* known source, trigger not measured (only in the denied list) */
 
 /* One allow-listed wired source. */
 struct intr_entry {
@@ -46,6 +47,11 @@ struct intr_map {
 	bool     msi_exposed;          /* level 2 (msi-apple-pcie) has enabled the pool */
 	const struct intr_entry *allow;/* default-deny allow-list of wired sources */
 	uint32_t n_allow;
+	/* Documentation list of sources that exist on the machine and are DENIED (the default anyway):
+	 * measured numbers kept next to the allow-list so a later device bring-up starts from facts.
+	 * Never exposed: intr_exposed_*() and intr_trigger() ignore it. May be NULL. */
+	const struct intr_entry *denied;
+	uint32_t n_denied;
 };
 
 /* Validation errors of intr_map_validate(). */
@@ -54,6 +60,8 @@ struct intr_map {
 #define INTR_E_POOL       (-2)   /* allow-listed hwirq inside the MSI pool */
 #define INTR_E_DUP        (-3)   /* hwirq listed twice */
 #define INTR_E_LAYOUT     (-4)   /* pool or vINTID layout does not fit the vGIC model */
+#define INTR_E_TRIG       (-5)   /* allow-listed row with a trigger other than LEVEL / EDGE (e.g. UNKNOWN) */
+/* A denied-list row is checked like an allow-list row (RANGE, POOL, DUP) and must not also be allow-listed (DUP). */
 
 /* The static example table of the 13" M1 MacBook Pro (t8103, j293). */
 extern const struct intr_map INTR_MAP_T8103;
@@ -69,6 +77,8 @@ uint32_t intr_hwirq_of_vintid(const struct intr_map *m, uint32_t vintid, bool *i
 /* GSIV for ACPI: equals the vINTID (GIC GSIV = INTID). INTR_INVALID if unmapped. */
 uint32_t intr_gsiv(const struct intr_map *m, uint32_t hwirq);
 
+/* Row of the denied (documented, not exposed) list for a hwirq, or NULL. */
+const struct intr_entry *intr_find_denied(const struct intr_map *m, uint32_t hwirq);
 /* Allow-list row of a wired hwirq, or NULL. */
 const struct intr_entry *intr_find(const struct intr_map *m, uint32_t hwirq);
 /* vINTID the guest may see for a physical hwirq: wired and allow-listed, or an MSI pool

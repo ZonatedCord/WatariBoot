@@ -10,6 +10,15 @@
  */
 #include "wel2_vcif.h"
 
+uint64_t vcif_hcr_base(unsigned mode, bool tds)
+{
+	uint64_t h = VCIF_HCR_EN;
+
+	if (mode == WEL2_CPUIF_TRAP || mode == WEL2_CPUIF_TRAP_NOTC)
+		h |= VCIF_HCR_TALL0 | VCIF_HCR_TALL1 | (tds ? VCIF_HCR_TDIR : 0) | (mode == WEL2_CPUIF_TRAP ? VCIF_HCR_TC : 0);
+	return h;
+}
+
 static unsigned lr_state(uint64_t lr) { return (unsigned)(lr >> VCIF_LR_STATE_SHIFT) & 3; }
 static uint32_t lr_id(uint64_t lr)    { return (uint32_t)lr; }
 

@@ -7,8 +7,8 @@
 // register, what an emulated ICC access does) lives in ../vgic/vcif.c and is
 // host-tested; this file only moves the registers between hardware and that model.
 //
-// Two modes, chosen at boot (g_cpuif_trap; build default WEL2_CPUIF_MODE, boot
-// argument "wel2.cpuif=hw|trap" in /chosen/bootargs overrides):
+// Three modes, chosen at boot (g_cpuif_trap, g_cpuif_notc; build default WEL2_CPUIF_MODE, boot argument
+// "wel2.cpuif=hw|trap|trap-notc" in /chosen/bootargs overrides; trap-notc = trap without ICH_HCR_EL2.TC, T6g):
 //  * HW: the guest's ICC_IAR1/EOIR1/PMR/IGRPEN1/BPR1 are not trapped
 //    (ICH_HCR_EL2.TALL0/TALL1/TC = 0, HCR_EL2.IMO = 1 turns them into ICV_*);
 //    the hardware runs them against the list registers.
@@ -18,6 +18,10 @@
 //    result back. Needed on the Apple M1 because of the SEIS erratum (guest GIC
 //    register accesses must never reach the hardware); QEMU has ICH_VTR_EL2.SEIS=0
 //    so only the logic is exercised, not the erratum (F-19).
+//  * TRAP_NOTC (T6g, DESIGN 5.4): as TRAP without TC. ICC_PMR_EL1, ICC_CTLR_EL1 and ICC_RPR_EL1 are executed by the
+//    hardware virtual interface (ICV_*, against ICH_VMCR_EL2 and the ICH_AP*R_EL2); the model keeps no copy of PMR or
+//    EOImode: icc_emulate() loads ICH_VMCR_EL2 (hw_in, full) before every emulated IAR/EOIR/DIR, so the PMR and the
+//    VEOIM the guest wrote are the ones honoured [verified: vcif.c reads them only from c->vmcr, test_vcif.c].
 // ICC_SGI*R_EL1 writes trap in both modes (IMO/FMO = 1, GIC spec 4.6.4 p.4-67).
 //
 // Life cycle of one interrupt: vgic_next_pending() -> vgic_ack() (the model
@@ -44,16 +48,13 @@
 // unmasked again, so a level interrupt that is still asserted re-fires.
 
 #include "boot.h"
+#include "plat.h"
 #include "wel2_aic.h"
 #include "wel2_vcif.h"
 #include "wel2_ram.h"
+#include "wel2_hvc.h"
 
-#define ICH_HCR_EN     (1ULL << 0)
-#define ICH_HCR_UIE    (1ULL << 1)
-#define ICH_HCR_TC     (1ULL << 10)
-#define ICH_HCR_TALL0  (1ULL << 11)
-#define ICH_HCR_TALL1  (1ULL << 12)
-#define ICH_HCR_TDIR   (1ULL << 14)
+#define ICH_HCR_UIE    VCIF_HCR_UIE
 #define ICH_MISR_U     (1ULL << 1)
 
 #ifndef WEL2_CPUIF_TRAP_DEFAULT
@@ -61,6 +62,14 @@
 #endif
 
 bool g_cpuif_trap = WEL2_CPUIF_TRAP_DEFAULT;
+bool g_cpuif_notc;                 /* T6g: trap-notc, only meaningful with g_cpuif_trap */
+int g_test_tc;                     /* test knobs wel2.test=tcoff (-1) / tcon (+1): the TC bit differs from the reported mode (G5b negative control) */
+
+/* The WEL2_CPUIF_* mode the layer runs with (stats, info block). */
+unsigned cpuif_mode(void)
+{
+    return !g_cpuif_trap ? WEL2_CPUIF_HW : g_cpuif_notc ? WEL2_CPUIF_TRAP_NOTC : WEL2_CPUIF_TRAP;
+}
 bool g_cpuif_noeoi;
 
 struct cif {
@@ -71,6 +80,7 @@ struct cif {
     unsigned st_timer, st_spi, st_kick, st_kick_evict, st_lpi_badtable, st_maint, st_uie, st_lpi;
     unsigned st_iar, st_eoir, st_dir, st_pmr_w, st_pmr_r, st_other;
     unsigned pmr_reported;
+    uint64_t st_reg[WEL2_STAT_COUNT];  /* trapped ICC accesses per register (WEL2_STATS, T7) */
 };
 
 static struct vgic *g_v;
@@ -223,6 +233,8 @@ void cpuif_init_cpu(void)
     c->st_maint = keep.st_maint; c->st_uie = keep.st_uie; c->st_iar = keep.st_iar;
     c->st_eoir = keep.st_eoir; c->st_dir = keep.st_dir; c->st_pmr_w = keep.st_pmr_w;
     c->st_pmr_r = keep.st_pmr_r; c->st_other = keep.st_other; c->pmr_reported = keep.pmr_reported;
+    for (unsigned k = 0; k < WEL2_STAT_COUNT; k++)
+        c->st_reg[k] = keep.st_reg[k];
     vcif_init(&c->vc, nlr, pribits, prebits);
     c->vc.st_inject = keep.vc.st_inject; c->vc.st_evict = keep.vc.st_evict;
     c->vc.st_eoi = keep.vc.st_eoi; c->vc.eoicount = keep.vc.eoicount;
@@ -231,9 +243,11 @@ void cpuif_init_cpu(void)
     c->nap = 1u << (c->vc.prebits - 5);
     hw_out(c);                                           /* LRs 0, VMCR reset, AP 0 */
 
-    c->hcr_base = ICH_HCR_EN;
-    if (g_cpuif_trap)
-        c->hcr_base |= ICH_HCR_TALL0 | ICH_HCR_TALL1 | ICH_HCR_TC | (tds ? ICH_HCR_TDIR : 0);
+    c->hcr_base = vcif_hcr_base(cpuif_mode(), tds);      /* host-tested: En | TALL0 | TALL1 | [TC] | [TDIR] */
+    if (g_test_tc < 0)
+        c->hcr_base &= ~VCIF_HCR_TC;                     /* test: reports trap, runs without TC: G5b must fail and name TC */
+    else if (g_test_tc > 0 && g_cpuif_trap)
+        c->hcr_base |= VCIF_HCR_TC;                      /* test: reports trap-notc, runs with TC */
     c->hcr_cur = ~0ULL;                                  /* force the write */
     hcr_set(c, false);
 
@@ -260,9 +274,9 @@ void cpuif_init(struct vgic *v)
     put_kv("Watari EL2: ICH_VTR_EL2.TDS = ", (vtr >> 19) & 1);
     if (g_cpuif_noeoi)
         puts_("Watari EL2: TEST knob wel2.test=noeoi: list registers without EOI maintenance (UIE refills)\n");
-    puts_(g_cpuif_trap
-              ? "Watari EL2: cpuif mode = TRAP_EMULATE (TALL0|TALL1|TC|TDIR, ICC_* emulated in EL2)\n"
-              : "Watari EL2: cpuif mode = HW (list registers, no ICC traps)\n");
+    puts_(!g_cpuif_trap ? "Watari EL2: cpuif mode = HW (list registers, no ICC traps)\n"
+          : g_cpuif_notc ? "Watari EL2: cpuif mode = TRAP_EMULATE without TC (TALL0|TALL1|TDIR; ICC_PMR/CTLR/RPR served by the hardware, trap-notc)\n"
+                         : "Watari EL2: cpuif mode = TRAP_EMULATE (TALL0|TALL1|TC|TDIR, ICC_* emulated in EL2)\n");
     cpuif_init_cpu();
 }
 
@@ -343,11 +357,17 @@ void cpuif_flush(void)
     /* Level-sensitive virtual timer: the model line follows the timer. While
      * the line is high the physical PPI stays masked at EL2 (it would fire
      * again immediately); once the guest has silenced the timer, unmask. */
-    bool line = vtimer_line();
-    vgic_set_irq_level(g_v, me, PPI_VTIMER, line);
-    if (!line && c->vtimer_masked) {
-        c->vtimer_masked = false;
-        gic_phys_ppi_enable(PPI_VTIMER, true);
+    if (g_plat->timer_resync) {
+        /* M1 (T6e): the Apple gate protocol, including the EL1 physical timer (PPI 30); vtimer_line() and
+         * c->vtimer_masked are not used there. */
+        g_plat->timer_resync(me);
+    } else {
+        bool line = vtimer_line();
+        vgic_set_irq_level(g_v, me, PPI_VTIMER, line);
+        if (!line && c->vtimer_masked) {
+            c->vtimer_masked = false;
+            g_plat->ppi_enable(PPI_VTIMER, true);
+        }
     }
 
     vcif_fill(v, g_v, me);                   /* priority order, evicting if need be */
@@ -385,7 +405,7 @@ void cpuif_kick_others(void)
             g_cif[me].st_kick++;
             if (!room)
                 g_cif[me].st_kick_evict++;
-            gic_phys_kick(j);
+            g_plat->kick(j);
         }
     }
 }
@@ -443,7 +463,7 @@ void cpuif_irq(void)
     struct cif *c = &g_cif[me];
 
     for (;;) {
-        uint32_t id = gic_phys_ack();
+        uint32_t id = g_plat->irq_ack();
 
         if (id >= 1020 && id <= 1023)
             break;                           /* spurious / none pending */
@@ -452,7 +472,7 @@ void cpuif_irq(void)
              * model line is refreshed from CNTV_CTL in cpuif_flush(). */
             c->st_timer++;
             c->vtimer_masked = true;
-            gic_phys_ppi_enable(PPI_VTIMER, false);
+            g_plat->ppi_enable(PPI_VTIMER, false);
 #ifdef WEL2_CHAIN
             /* M1-4: a firmware ticks every 10 ms; log only the first and every 10x. */
             for (unsigned p = 1; p <= 100000; p *= 10) {
@@ -493,7 +513,7 @@ void cpuif_irq(void)
 
                 /* The table is guest memory: read it only if the byte lies in RAM (a bad PROPBASER
                  * would otherwise data-abort EL2, now that stage 1 maps just the RAM). */
-                if (wel2_ram_contains(&(struct wel2_ram){ g_ram_base, g_ram_end }, a)) {
+                if (guest_ram_contains(a)) {
                     cfg = *(volatile uint8_t *)a;
                     prio = (uint8_t)(cfg & 0xfc);
                 } else {
@@ -531,16 +551,37 @@ void cpuif_irq(void)
         } else {
             put_kv("Watari EL2: unexpected physical INTID ", id);
         }
-        gic_phys_eoi(id);
+        g_plat->irq_eoi(id);
     }
     /* #42: the CPU IRQ line is the OR of the GIC and the AIC. The GIC is asked first (cheap system
      * register, and it carries the timer / maintenance PPIs that fire all the time); once it reports
      * nothing, the AIC is drained with EVENT reads (MMIO) until it reports 0. Both are empty before
      * the flush, and a source that asserts meanwhile keeps the line high, so the next IRQ finds it. */
-    if (g_aic_on)
-        pirq_qemu_aic_irq(me);
+    if (g_plat->irq_post)
+        g_plat->irq_post(me);
     cpuif_flush();
+    cpuif_maint_backstop();                  /* M1: the maintenance signal may be the IRQ (T6e D-1) */
     cpuif_kick_others();
+}
+
+/* T6e D-1: the vGIC maintenance interrupt reaches EL2 as a physical interrupt on QEMU (PPI 25, handled above). On the
+ * M1 its signal type is [hypothesis] until measured (FIQ or IRQ), so both exit tails call this after the flush: if the
+ * condition is still asserted the platform clears the enables itself and never loops. QUENCHED invalidates the cached
+ * ICH_HCR_EL2 (the module wrote it behind hcr_set()); FATAL (not clearable) halts with the reason. */
+void cpuif_maint_backstop(void)
+{
+    unsigned me = this_cpu();
+    int r;
+
+    if (!g_plat->maint_backstop)
+        return;
+    r = g_plat->maint_backstop(me);
+    if (r == 0)
+        return;
+    g_cif[me].st_maint++;
+    g_cif[me].hcr_cur = ~0ULL;               /* the next hcr_set() writes whatever it wants, not what it believes is on */
+    if (r >= 2)
+        fatal_msg("vGIC maintenance interrupt is not clearable (ICH_MISR_EL2 stays non-zero)");
 }
 
 /* vGIC effects (INTERFACES section 5): wire the guest's SPI configuration to
@@ -569,6 +610,40 @@ void cpuif_vgic_effect(enum vgic_effect eff, uint32_t intid, int arg)
  *   CRn 12 CRm 11: DIR 1 (w), RPR 3 (r)
  *   CRn  4 CRm  6: PMR 0
  */
+/* Which WEL2_STAT_* counter an emulated ICC access belongs to. ICC_SRE_EL1 never traps (not in the TALL1 group) so
+ * WEL2_STAT_ICC_SRE stays 0, which is what G5a checks. */
+static unsigned icc_stat_of(uint32_t crn, uint32_t crm, uint32_t op2)
+{
+    if (crn == 4 && crm == 6 && op2 == 0)
+        return WEL2_STAT_ICC_PMR;
+    if (crn == 12 && crm == 12) {
+        switch (op2) {
+        case 0: return WEL2_STAT_ICC_IAR1;
+        case 1: return WEL2_STAT_ICC_EOIR1;
+        case 3: return WEL2_STAT_ICC_BPR1;
+        case 4: return WEL2_STAT_ICC_CTLR;
+        case 7: return WEL2_STAT_ICC_IGRPEN1;
+        }
+    }
+    if (crn == 12 && crm == 11 && op2 == 1)
+        return WEL2_STAT_ICC_DIR;
+    if (crn == 12 && crm == 11 && op2 == 3)
+        return WEL2_STAT_ICC_RPR;
+    return WEL2_STAT_ICC_OTHER;
+}
+
+/* WEL2_STATS: system-wide totals. */
+void cpuif_stats_fill(struct wel2_stats *out)
+{
+    out->version = WEL2_HVC_ABI_VERSION;
+    out->cpuif_mode = cpuif_mode();
+    for (unsigned k = 0; k < WEL2_STAT_COUNT; k++) {
+        out->count[k] = 0;
+        for (unsigned i = 0; i < g_ncpu; i++)
+            out->count[k] += g_cif[i].st_reg[k];
+    }
+}
+
 static bool icc_emulate(struct frame *f, uint32_t crn, uint32_t crm, uint32_t op2,
                         uint32_t rt, bool rd)
 {
@@ -638,6 +713,7 @@ static bool icc_emulate(struct frame *f, uint32_t crn, uint32_t crm, uint32_t op
     }
     if (!known)
         return false;
+    c->st_reg[icc_stat_of(crn, crm, op2)]++;
     if (g_trace_on && crn == 12) {
         static unsigned n_icc;
         bool iar = crm == 12 && op2 == 0 && rd, eoi = (crm == 12 && op2 == 1 && !rd) || (crm == 11 && op2 == 1 && !rd);
@@ -681,9 +757,35 @@ bool cpuif_sysreg_trap(struct frame *f)
         f->elr += 4;
         return true;
     }
-    if (!g_cpuif_trap)
+    if (!g_cpuif_trap || (crn != 12 && crn != 4))     /* ICC_* are CRn 12 (and ICC_PMR_EL1 CRn 4): nothing else reads the ICH registers */
         return false;
-    return icc_emulate(f, crn, crm, op2, rt, dir);
+    if (icc_emulate(f, crn, crm, op2, rt, dir))
+        return true;
+    /* T6g review: an ICC access in trap mode that nothing emulates (e.g. ICC_SRE_EL1 if ICH_HCR_EL2.TC turns out to trap it,
+     * [hypothesis], or a register the model lacks): say which one, on the UART and in the panel's error line, before the
+     * caller's register dump halts. Name format S3_<op1>_C<CRn>_C<CRm>_<op2>. */
+    {
+        char nm[48] = "unemulated ICC access S3_0_C";
+        unsigned k = 0;
+
+        while (nm[k])
+            k++;
+        if (crn >= 10)
+            nm[k++] = (char)('0' + crn / 10);
+        nm[k++] = (char)('0' + crn % 10);
+        nm[k++] = '_'; nm[k++] = 'C';
+        if (crm >= 10)
+            nm[k++] = (char)('0' + crm / 10);
+        nm[k++] = (char)('0' + crm % 10);
+        nm[k++] = '_'; nm[k++] = (char)('0' + op2);
+        nm[k++] = dir ? 'R' : 'W';                       /* R = MRS (read), W = MSR (write) */
+        nm[k] = 0;
+        puts_("Watari EL2: ");
+        puts_(nm);
+        puts_("\n");
+        wel2_fb_set_error(&g_fb, nm);
+    }
+    return false;
 }
 
 static unsigned lpi_total(void)
@@ -768,4 +870,8 @@ void cpuif_stats(void)
         icc_report();
         put_kv("Watari EL2: stats: EOIR/DIR without a matching active LR = ", t[8]);
     }
+    if (g_tid3)
+        put_kv("Watari EL2: stats: TID3 ID-register reads emulated = ", g_idreg_n);
+    if (g_plat->stats)
+        g_plat->stats();
 }
