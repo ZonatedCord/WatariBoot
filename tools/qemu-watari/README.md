@@ -69,9 +69,7 @@ tree: `cd /private/tmp/watari-qemu/src && diff -urN orig/<dir> qemu-11.1.2/<dir>
   the `virt` changes have not even been compiled, and `run-m1-6.sh` has never run (it exits 77 = SKIP without the
   binary). Phase 1 (stock build boots the existing tests) is therefore also open. Phase 4 (timer to FIQ,
   Windows on the hybrid machine) not started.
-- **Blocker found:** `configure` fails offline in the venv step: `Could not find a version that satisfies the
-  requirement setuptools>=44.1.1` (the `[tooling]` group of `pythondeps.toml` needs `setuptools`/`wheel`, which
-  are not vendored, and Homebrew's Python 3.14 venv does not ship them). `build.sh` passes `--disable-download`
-  on purpose. Next attempts: `configure --python=/opt/homebrew/bin/python3.12` (or 3.13) if its venv has
-  setuptools, or allow that one PyPI download (needs Marco's go-ahead, it is a download).
+- **Blocker found, then solved offline (T9, 2026-11-13):** `configure` failed in the venv step; it now passes with no
+  download using the Command Line Tools Python 3.9 plus a tomli shim, see `re/qemu-configure-offline.md` and F-28.
+  `build.sh` carries the exact command. The build itself (3165 ninja steps) has still not been run.
 - Expect compile errors on the first build of the patches (written against the 11.1.2 headers without compiling).

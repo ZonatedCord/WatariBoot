@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: MIT
-# T7a: the EL1 test guest (el2/guest, checks G1-G11 of DESIGN section 8) on top of Watari EL2, QEMU TCG, -smp 4.
+# T7a: the EL1 test guest (el2/guest, checks G1-G11 of DESIGN section 8, plus G12 (E9, skipped here: no framebuffer; run-fb.sh runs it)) on top of Watari EL2, QEMU TCG, -smp 4.
 #   QEMU -kernel build-chain/wel2.bin         : the layer, chain build (x0 = FDT)
 #   QEMU -device loader,addr=0x40280000       : the guest image, entered by the layer at EL1 instead of EDK2
 # wel2.guest=1 makes the layer pass the guest info block in x0 and enter the guest at the EDK2 entry. QEMU runs with
@@ -47,7 +47,7 @@ rc=0
 # The guest's own lines, whichever sink carried them: "...G5a PASS ..." (HVC log line or PL011 fallback).
 gline() { grep -aE "(^|[: ])$1 (PASS|FAIL|SKIP) " $OUT/guest-uart.txt | head -1; }
 echo "---- results"
-for g in G1 G2 G3 G4 G5a G5b G6 G7 G8 G9 G10 G11; do
+for g in G1 G2 G3 G4 G5a G5b G6 G7 G8 G9 G10 G11 G12; do
     l=$(gline $g)
     if [ -z "$l" ]; then echo "MISSING: $g"; rc=1
     elif echo "$l" | grep -q " FAIL "; then echo "FAILED: $l"; rc=1
@@ -69,7 +69,7 @@ fi
 SUMMARY=$(awk '/Watari EL1: SUMMARY /{f=1} f' $OUT/guest-uart.txt | grep -a "Watari EL1:")
 if [ -z "$SUMMARY" ]; then echo "MISSING: the guest's SUMMARY block"; rc=1
 else
-    for g in G1 G2 G3 G4 G5a G5b G6 G7 G8 G9 G10 G11; do
+    for g in G1 G2 G3 G4 G5a G5b G6 G7 G8 G9 G10 G11 G12; do
         echo "$SUMMARY" | grep -aqE "Watari EL1: $g (PASS|FAIL|SKIP) " || { echo "MISSING: $g in the SUMMARY block"; rc=1; }
     done
     echo "$SUMMARY" | tail -1 | grep -aq "MPIDR 0x" || { echo "MISSING: MPIDR line last in the SUMMARY block"; rc=1; }
@@ -79,12 +79,12 @@ fi
 grep -q "UNEXPECTED\|FATAL\|unhandled guest\|non-PSCI SMC" $OUT/guest-uart.txt && { echo "FAIL: unexpected event reported"; rc=1; }
 # T17, over ALL UART lines: QEMU has no panel, so the mute of the final statistics (psci.c final_stats, UART only) cannot be
 # seen directly. What is testable: after the SUMMARY header only the block, "Watari EL2: stats:" lines (muted on the panel)
-# and the reset line follow, and the panel-bound lines (everything but stats) stay within the 18 reserved rows (18).
+# and the reset line follow, and the panel-bound lines (everything but stats) stay within the 19 reserved rows (19).
 AFTER=$(awk '/Watari EL1: SUMMARY /{f=1} f' $OUT/guest-uart.txt | grep -av "^Watari EL2: stats:\|^Watari EL2:   \|^Watari EL2: trapped " | grep -a .)
 NPANEL=$(echo "$AFTER" | wc -l | tr -d ' ')
-[ "$NPANEL" -le 18 ] || { echo "FAIL: $NPANEL panel-bound lines after the SUMMARY header (reserve is 18)"; rc=1; }
+[ "$NPANEL" -le 19 ] || { echo "FAIL: $NPANEL panel-bound lines after the SUMMARY header (reserve is 19)"; rc=1; }
 echo "$AFTER" | grep -av "^Watari EL1: \(SUMMARY\|G[0-9]\|MPIDR\)" | grep -aqv "^Watari EL2: PSCI SYSTEM_\(RESET\|OFF\)" && { echo "FAIL: unexpected line after the SUMMARY block:"; echo "$AFTER" | grep -av "^Watari EL1: \(SUMMARY\|G[0-9]\|MPIDR\)" | grep -av "^Watari EL2: PSCI SYSTEM_"; rc=1; }
 grep -aq "PSCI SYSTEM_\(RESET\|OFF\)" $OUT/guest-uart.txt || { echo "MISSING: the layer's SYSTEM_RESET/OFF line"; rc=1; }
 [ "$EXITED" = 1 ] || { echo "FAIL: QEMU still running after 60 s (SYSTEM_RESET not honoured?)"; rc=1; }
-[ $rc = 0 ] && echo "PASS: EL1 test guest G1-G11 under Watari EL2 (CPUIF=${CPUIF:-hw})"
+[ $rc = 0 ] && echo "PASS: EL1 test guest G1-G12 under Watari EL2 (CPUIF=${CPUIF:-hw})"
 exit $rc

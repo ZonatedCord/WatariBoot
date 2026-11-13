@@ -3,7 +3,7 @@
 # T6g PART 3: wel2.hold=1 keeps the final state on the screen instead of resetting (for photos on the M1).
 #   wel2.step=2 wel2.hold=1       : after checkpoint 5 the layer prints the HOLD message and does NOT reset: QEMU must still be
 #                                    running 5 s after the message (then this script kills it)
-#   wel2.guest=1 wel2.hold=1      : the guest runs G1-G11 and issues SYSTEM_RESET: HOLD message, QEMU still running 5 s later
+#   wel2.guest=1 wel2.hold=1      : the guest runs G1-G12 (G12 skips) and issues SYSTEM_RESET: HOLD message, QEMU still running 5 s later
 #   wel2.step=1 wel2.hold=1       : the immediate reset of rung L1 is NOT held: QEMU exits at once, no text
 # Chain build, QEMU TCG, -smp 4, -no-reboot. Env: CPUIF=hw|trap|trap-notc (default trap), QEMU. Exit 0 on success. About 60 s.
 set -u

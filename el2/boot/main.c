@@ -177,7 +177,7 @@ static bool hvc_range_ok(void *ctx, uint64_t pa, uint64_t len)
     if (g_plat->m1_memory || g_nguest_ram) {
         if (!wel2_ranges_cover(g_guest_ram, g_nguest_ram, pa, len))
             return false;
-    } else if (pa < g_ram_base || len > g_ram_end - pa || pa >= g_ram_end) {
+    } else if (pa < g_ram_base || pa >= guest_ram_span_end() || len > guest_ram_span_end() - pa) {
         return false;
     }
     uint64_t last = pa + len - 1;
@@ -435,8 +435,9 @@ static void stage2_init(void)
 
     /* The framebuffer is the layer's too (checkpoints and log text): never given to the guest. The guest's stage 2
      * is RAM plus these holes; unmapping the framebuffer pages makes a guest access fault to EL2 and be reported. */
-    if (!g_plat->m1_memory && g_fb.fmt && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, wel2_fb_bytes(&g_fb), g_gran))
-        fatal_msg("stage-2 holes: framebuffer does not fit");
+    if (!g_plat->m1_memory && g_fb.fmt && g_fb_plan.mode != WEL2_FBM_GUEST &&
+        wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, g_fb_plan.mode == WEL2_FBM_BAND ? g_fb_plan.band_bytes : wel2_fb_bytes(&g_fb), g_gran))
+        fatal_msg("stage-2 holes: framebuffer does not fit");     /* E9: band mode: only the band; guest mode: none */
 
     /* wel2.split (QEMU bench): the gaps between the guest's RAM pieces are holes, so a guest access there is reported. */
     for (unsigned i = 0; !g_plat->m1_memory && i + 1 < g_nguest_ram; i++) {
@@ -456,6 +457,10 @@ static void stage2_init(void)
         (g_plat->m1_memory ? wel2_s2_build_ram(&s2_pt, g_guest_ram, g_nguest_ram)
                            : wel2_s2_build(&s2_pt, &ram, holes, nholes)))
         fatal_msg("stage-2 tables: bad geometry or the table pool is too small");
+    /* E9: wel2.fb=band|guest: the guest's part of the panel (Normal non-cacheable, never executable); in band mode the band
+     * stays unmapped (QEMU: a hole above; the M1 maps RAM only) so a guest bug cannot wipe the layer's checkpoints. */
+    if (g_fb.fmt && g_fb_plan.mode != WEL2_FBM_LAYER && wel2_s2_map_fb(&s2_pt, g_fb_plan.guest_base, g_fb_plan.guest_bytes))
+        fatal_msg("stage-2 tables: the framebuffer does not fit the table pool");
     /* VTCR_EL2.PS = min(ID_AA64MMFR0_EL1.PARange, 0b010 = 40 bit): the M1 may implement fewer physical address
      * bits than the 40-bit IPA space the QEMU guest is given (an output address above PARange is an address size fault);
      * on the M1 the IPA space is 36 bits itself (g_plat->s2_ipa_bits), the PARange measured on the j293. */
@@ -730,7 +735,7 @@ static uint64_t write_guest_info(uint64_t at)
         fatal_msg("guest info block does not lie in guest RAM");
     memset(gi, 0, sizeof(*gi));
     gi->magic = WEL2_GINFO_MAGIC;
-    gi->version = WEL2_GINFO_VERSION;
+    gi->version = WEL2_GINFO_VERSION_1;
     gi->size = sizeof(*gi);
     for (unsigned i = 0; name[i] && i < sizeof(gi->platform) - 1; i++)
         gi->platform[i] = name[i];
@@ -746,6 +751,17 @@ static uint64_t write_guest_info(uint64_t at)
         gi->flags |= WEL2_GINFO_F_PAUTH;
     if (!g_plat->timer_resync)
         gi->flags |= WEL2_GINFO_F_NO_PTIMER;
+    if (g_fb.fmt && g_fb_plan.mode != WEL2_FBM_LAYER) {          /* E9: the guest owns (part of) the panel: version 2 */
+        gi->version = WEL2_GINFO_VERSION;
+        gi->flags |= WEL2_GINFO_F_FB;
+        gi->fb_base = g_fb_plan.guest_base;
+        gi->fb_width = g_fb.width;
+        gi->fb_height = g_fb_plan.guest_rows;
+        gi->fb_stride = g_fb.stride;
+        gi->fb_format = g_fb.fmt == WEL2_FB_X2R10G10B10 ? WEL2_GFB_X2R10G10B10 : WEL2_GFB_X8R8G8B8;
+        gi->fb_mode = g_fb_plan.mode;
+        gi->fb_band_rows = g_fb_plan.band_rows;
+    }
     for (unsigned i = 0; i < gi->ncores; i++)
         gi->mpidr[i] = ((uint64_t)(g_pcpu[i].aff >> 24) << 32) | (g_pcpu[i].aff & 0xffffff);
     dcache_clean_range(gi, sizeof(*gi));
@@ -801,6 +817,7 @@ static void __attribute__((noreturn)) m1_enter_guest(void)
     put_kv("Watari EL2: guest info block at ", info);
     layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
     put_kv("Watari EL2: eret to the EL1 test guest, entry = ", entry);
+    fb_handover();
     enter_el1(entry, 0, SPSR_EL1H_MASKED, g_hcr, info);
 }
 
@@ -818,6 +835,7 @@ static void __attribute__((noreturn)) chain_fdt(void)
     static struct wel2_range ranges[WEL2_MAX_GUEST_RANGES];
     static struct wel2_gfdt_place gp;
     struct wel2_gfdt_in gi;
+    struct wel2_gfdt_fb gfb;
     uint64_t entry = g_guest_entry, image_size;
     uint32_t size = 0;
     unsigned n;
@@ -862,7 +880,17 @@ static void __attribute__((noreturn)) chain_fdt(void)
     for (unsigned i = 0; i < gi.ncores; i++)
         gi.mpidr[i] = ((uint64_t)(g_pcpu[i].aff >> 24) << 32) | (g_pcpu[i].aff & 0xffffff);
     gi.msi_frame_base = g_plat->m1_memory && g_v2m_on ? V2M_T8103_BASE : 0;
-    gi.fb_mode = "none";                                     /* the framebuffer stays the layer's (wel2.fb is a later step) */
+    gi.fb_mode = "none";                                     /* wel2.fb=layer: the framebuffer stays the layer's */
+    if (g_fb.fmt && g_fb_plan.mode != WEL2_FBM_LAYER) {      /* E9: a simple-framebuffer node for the guest's part */
+        gfb.base = g_fb_plan.guest_base;
+        gfb.size = g_fb_plan.guest_bytes;
+        gfb.width = g_fb.width;
+        gfb.height = g_fb_plan.guest_rows;
+        gfb.stride = g_fb.stride;
+        gfb.format = g_fb.fmt == WEL2_FB_X2R10G10B10 ? "x2r10g10b10" : "x8r8g8b8";
+        gi.fb = &gfb;
+        gi.fb_mode = g_fb_plan.mode == WEL2_FBM_BAND ? "band" : "guest";
+    }
     if (guest_fdt_build((void *)(uintptr_t)gp.fdt, WEL2_GFDT_MAX, &gi, &size))
         fatal_msg("guest FDT: the builder refused the input or the result does not fit 32 KB");
     dcache_clean_range((const void *)(uintptr_t)gp.fdt, size);   /* EL2 wrote through its cacheable map; the guest reads with caches off */
@@ -876,6 +904,7 @@ static void __attribute__((noreturn)) chain_fdt(void)
     put_kn("Watari EL2:   built, ", size, " bytes\n");
     layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
     put_kv("Watari EL2: eret to the guest at EL1, entry = ", gp.entry);
+    fb_handover();
     enter_el1(gp.entry, 0, SPSR_EL1H_MASKED, g_hcr, gp.fdt);
 }
 
@@ -939,8 +968,12 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
         put_kv("Watari EL2: guest info block at ", info);
         layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
         put_kv("Watari EL2: eret to the EL1 test guest, entry = ", entry);
+        fb_handover();
         enter_el1(entry, 0, SPSR_EL1H_MASKED, g_hcr, info);
     }
+    /* The plain EDK2 chain has no hand-over point (no info block, no built FDT): stage 2 was already built for wel2.fb. */
+    if (g_fb_plan.mode != WEL2_FBM_LAYER)
+        fatal_msg("wel2.fb=band|guest needs wel2.abi=fdt wel2.gfdt=build or the test guest (wel2.guest), not the plain EDK2 chain");
     uint32_t magic = *(volatile uint32_t *)(EDK2_ENTRY + 0x38);
     if (magic != 0x644d5241) {               /* "ARM\x64" */
         put_kv("Watari EL2: no arm64 Image header at EDK2 entry ", EDK2_ENTRY);
@@ -975,7 +1008,7 @@ static bool arg_is(const char *p, const char *key)
 
 static void parse_bootargs(uint64_t fdt)
 {
-    char args[160];
+    char args[256];
 
     if (!fdt || (fdt & 7) || fdt_check((void *)fdt) || fdt_get_bootargs((void *)fdt, args, sizeof(args)) < 0)
         return;
@@ -1142,6 +1175,15 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
         put_kn("Watari EL2:   stride = ", g_fb.stride, " bytes\n");
         puts_(g_fb.fmt == WEL2_FB_X2R10G10B10 ? "Watari EL2:   format = x2r10g10b10\n"
                                                : "Watari EL2:   format = x8r8g8b8\n");
+        if (g_fb_fake)
+            puts_("Watari EL2:   bench panel: a block of RAM (wel2.fakefb), not in the guest's memory map\n");
+        puts_(g_fb_plan.mode == WEL2_FBM_BAND ? "Watari EL2:   wel2.fb = band\n" :
+              g_fb_plan.mode == WEL2_FBM_GUEST ? "Watari EL2:   wel2.fb = guest\n" : "Watari EL2:   wel2.fb = layer\n");
+        if (g_fb_plan.mode != WEL2_FBM_LAYER) {
+            put_kn("Watari EL2:   band rows = ", g_fb_plan.band_rows, " (the layer's, unmapped for the guest)\n");
+            put_kv("Watari EL2:   guest part at ", g_fb_plan.guest_base);
+            put_kn("Watari EL2:   guest rows = ", g_fb_plan.guest_rows, "\n");
+        }
     }
     stage1_report();
     put_kv("Watari EL2: CurrentEL = ", el >> 2);
@@ -1169,6 +1211,9 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
      * routed to EL2, as designed). E2H as stage1.c left it on this core (1 on the M1; the guest then runs
      * with TGE=0 at EL1, its exceptions and the HVC/SMC/IRQ paths are the same); VM=1 since M1-1 (stage-2
      * with the GIC windows unmapped). M1-4 chain build: TSC=1 (EL1 SMC trapped). */
+    /* E9: wel2_s2_map_fb uses stage-2 MemAttr 0b0101 (Normal NC), which is the encoding only while HCR_EL2.FWB (bit 46) is 0:
+     * with FWB = 1 the field means something else. g_hcr never sets it; the assert keeps it so. */
+    _Static_assert(!((HCR_RW | HCR_IMO | HCR_FMO | HCR_AMO | HCR_VM | HCR_E2H) & (1ULL << 46)), "HCR_EL2.FWB must stay 0 (stage-2 MemAttr encoding)");
     g_hcr = HCR_RW | HCR_IMO | HCR_FMO | HCR_AMO | HCR_VM | (g_e2h ? HCR_E2H : 0);
 #ifdef WEL2_CHAIN
     g_hcr |= HCR_TSC;

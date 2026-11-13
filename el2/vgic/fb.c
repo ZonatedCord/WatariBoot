@@ -87,15 +87,29 @@ uint32_t wel2_fb_pixel(const struct wel2_fb *fb, uint32_t rgb)
 	return (r << 16) | (g << 8) | b;
 }
 
-/* Fill the rectangle [x0, x0+w) x [y0, y0+h), clipped to the screen. */
+/* Rows the layer may store to: the whole screen, or after a band hand-over only the band (E9). */
+static uint32_t draw_h(const struct wel2_fb *fb)
+{
+	return fb->hand == WEL2_FBH_BAND && fb->band_rows < fb->height ? fb->band_rows : fb->height;
+}
+
+/* After a guest hand-over nothing is drawn at all. */
+static bool muted(const struct wel2_fb *fb)
+{
+	return fb->hand == WEL2_FBH_GUEST;
+}
+
+/* Fill the rectangle [x0, x0+w) x [y0, y0+h), clipped to the screen (to the band after a band hand-over). */
 static void fill(const struct wel2_fb *fb, uint32_t x0, uint32_t y0, uint32_t w, uint32_t h, uint32_t pix)
 {
-	if (x0 >= fb->width || y0 >= fb->height)
+	uint32_t lim = draw_h(fb);
+
+	if (x0 >= fb->width || y0 >= lim)
 		return;
 	if (w > fb->width - x0)
 		w = fb->width - x0;
-	if (h > fb->height - y0)
-		h = fb->height - y0;
+	if (h > lim - y0)
+		h = lim - y0;
 	for (uint32_t y = y0; y < y0 + h; y++) {
 		volatile uint32_t *p = (volatile uint32_t *)(uintptr_t)(fb->base + (uint64_t)y * fb->stride) + x0;
 
@@ -266,7 +280,7 @@ static void draw_error(const struct wel2_fb *fb)
 /* ---- scrolling text --------------------------------------------------------------------------------------------- */
 /* The legend of the checkpoint squares: two lines of at most 52 characters, printed at the top of the text area when
  * it can hold them (56+ columns, 8+ rows) so that it never wraps. */
-#define LEGEND1 "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11\n"
+#define LEGEND1 "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G12\n"
 #define LEGEND2 "GREEN = OK  AMBER = RUNNING  RED = FAIL  GREY = SKIP\n"
 
 static void putc_raw(struct wel2_fb *fb, char c);
@@ -388,6 +402,8 @@ void wel2_fb_set_error(struct wel2_fb *fb, const char *msg)
 		return;
 	copy_text(fb->err, WEL2_FB_ERR_MAX, msg);
 	fb->err_kind = fb->err[0] ? 2u : 0u;
+	if (muted(fb))
+		return;
 	ensure_init(fb);
 	refresh(fb);
 }
@@ -398,6 +414,8 @@ void wel2_fb_set_rung(struct wel2_fb *fb, unsigned rung, unsigned step)
 		return;
 	fb->rung1 = rung + 1u;
 	fb->step1 = step + 1u;
+	if (muted(fb))
+		return;
 	ensure_init(fb);
 	refresh(fb);
 }
@@ -407,6 +425,8 @@ void wel2_fb_checkpoint_text(struct wel2_fb *fb, const char *label)
 	if (!fb->fmt)
 		return;
 	copy_text(fb->label, WEL2_FB_LABEL_MAX, label);
+	if (muted(fb))
+		return;
 	ensure_init(fb);
 	refresh(fb);
 }
@@ -428,8 +448,10 @@ void wel2_fb_checkpoint(struct wel2_fb *fb, unsigned index, uint32_t rgb)
 	x = WEL2_FB_MARGIN + (uint64_t)index * WEL2_FB_CP_PITCH;
 	if (x + WEL2_FB_CP_SIZE > fb->width || WEL2_FB_CP_SIZE > fb->height)
 		return;
-	ensure_init(fb);
-	fill(fb, (uint32_t)x, 0, WEL2_FB_CP_SIZE, WEL2_FB_CP_SIZE, wel2_fb_pixel(fb, rgb));
+	if (!muted(fb)) {
+		ensure_init(fb);
+		fill(fb, (uint32_t)x, 0, WEL2_FB_CP_SIZE, WEL2_FB_CP_SIZE, wel2_fb_pixel(fb, rgb));
+	}
 	fb->cp = (int32_t)index;
 	fb->cp_state = st;
 	if (index >= WEL2_FB_GUEST_BASE && index < WEL2_FB_GUEST_BASE + WEL2_FB_GUEST_N) {
@@ -447,7 +469,8 @@ void wel2_fb_checkpoint(struct wel2_fb *fb, unsigned index, uint32_t rgb)
 	}
 	if (st == WEL2_CPS_FAIL)
 		err_auto(fb, "CHECKPOINT ", index, " FAILED");
-	refresh(fb);
+	if (!muted(fb))
+		refresh(fb);
 }
 
 void wel2_fb_checkpoint_fail(struct wel2_fb *fb)
@@ -456,6 +479,7 @@ void wel2_fb_checkpoint_fail(struct wel2_fb *fb)
 
 	if (!fb->fmt)
 		return;
+	wel2_fb_take_back(fb);              /* E9: a fatal error always gets the panel back */
 	n = fb->cp < 0 ? 0u : (uint32_t)fb->cp;
 	wel2_fb_checkpoint(fb, n, WEL2_RGB_RED);
 	if (fb->cp >= 0) {                  /* the square fitted on the screen */
@@ -466,8 +490,8 @@ void wel2_fb_checkpoint_fail(struct wel2_fb *fb)
 
 void wel2_fb_reserve(struct wel2_fb *fb, unsigned lines)
 {
-	if (!fb->fmt || !fb->cols || !fb->rows)
-		return;
+	if (!fb->fmt || !fb->cols || !fb->rows || fb->hand)
+		return;                         /* after a hand-over there is no scrolling area to keep free */
 	ensure_init(fb);
 	if (fb->cx)                         /* a block starts on its own row */
 		putc_raw(fb, '\n');
@@ -477,11 +501,41 @@ void wel2_fb_reserve(struct wel2_fb *fb, unsigned lines)
 	}
 }
 
+/* Band hand-over: one text line at text_y with the latest console line. '\n' only arms the next line; the first
+ * character after it wipes the row. Characters past the last column are dropped. */
+static void ticker_putc(struct wel2_fb *fb, char c)
+{
+	uint32_t chh = (FONT_H + 2u) * fb->scale;
+
+	if (c == '\r')
+		return;
+	if (c == '\n') {
+		fb->tfresh = 1;
+		return;
+	}
+	if (fb->tfresh) {
+		fill(fb, 0, fb->text_y, fb->width, chh, wel2_fb_pixel(fb, WEL2_RGB_BLACK));
+		fb->tcol = 0;
+		fb->tfresh = 0;
+	}
+	if (fb->tcol >= fb->cols)
+		return;
+	draw_glyph(fb, WEL2_FB_MARGIN + fb->tcol * (FONT_W + 1u) * fb->scale, fb->text_y, c, WEL2_RGB_WHITE,
+		   WEL2_RGB_BLACK);
+	fb->tcol++;
+}
+
 void wel2_fb_putc(struct wel2_fb *fb, char c)
 {
-	if (!fb->fmt || !fb->cols || !fb->rows)
+	if (!fb->fmt || !fb->cols || !fb->rows || muted(fb))
 		return;
 	ensure_init(fb);
+	if (fb->hand == WEL2_FBH_BAND) {
+		ticker_putc(fb, c);
+		if (c == '\n')
+			sync_stores();
+		return;
+	}
 	putc_raw(fb, c);
 	if (c == '\n')
 		sync_stores();
@@ -494,4 +548,90 @@ void wel2_fb_puts(struct wel2_fb *fb, const char *s)
 	while (*s)
 		wel2_fb_putc(fb, *s++);
 	sync_stores();
+}
+
+/* ---- E9: hand-over to the guest ---------------------------------------------------------------------------------- */
+static uint64_t gcd64(uint64_t a, uint64_t b)
+{
+	while (b) {
+		uint64_t t = a % b;
+
+		a = b;
+		b = t;
+	}
+	return a;
+}
+
+uint32_t wel2_fb_band_min_rows(const struct wel2_fb *fb)
+{
+	uint32_t chh;
+
+	if (!fb->fmt || !band_fits(fb))
+		return 0;
+	chh = (FONT_H + 2u) * fb->scale;
+	return fb->text_y + chh <= fb->height ? fb->text_y + chh : 0;
+}
+
+int wel2_fb_plan(const struct wel2_fb *fb, unsigned mode, unsigned gshift, struct wel2_fb_plan *out)
+{
+	uint64_t page = 1ULL << gshift, bytes = wel2_fb_bytes(fb);
+
+	*out = (struct wel2_fb_plan){ 0 };
+	out->mode = mode;
+	if (mode == WEL2_FBM_LAYER)
+		return 0;
+	if ((mode != WEL2_FBM_BAND && mode != WEL2_FBM_GUEST) || !fb->fmt || (fb->base & (page - 1)) ||
+	    (bytes & (page - 1)))
+		return -1;
+	if (mode == WEL2_FBM_GUEST) {
+		out->guest_rows = fb->height;
+		out->guest_base = fb->base;
+		out->guest_bytes = bytes;
+		return 0;
+	}
+	{
+		uint32_t min = wel2_fb_band_min_rows(fb);
+		uint64_t step = page / gcd64(fb->stride, page);      /* B x stride is a multiple of the page iff step divides B */
+		uint64_t b = ((uint64_t)min + step - 1u) / step * step;
+
+		if (!min || b >= fb->height)
+			return -1;
+		out->band_rows = (uint32_t)b;
+		out->guest_rows = fb->height - (uint32_t)b;
+		out->band_bytes = b * fb->stride;
+		out->guest_base = fb->base + out->band_bytes;
+		out->guest_bytes = (uint64_t)out->guest_rows * fb->stride;
+	}
+	return 0;
+}
+
+void wel2_fb_handover(struct wel2_fb *fb, unsigned mode, uint32_t band_rows)
+{
+	if (!fb->fmt || fb->hand || (mode != WEL2_FBM_BAND && mode != WEL2_FBM_GUEST))
+		return;
+	ensure_init(fb);
+	if (mode == WEL2_FBM_GUEST) {
+		sync_stores();
+		fb->hand = WEL2_FBH_GUEST;
+		return;
+	}
+	if (band_rows > fb->height)
+		band_rows = fb->height;
+	/* the ticker line and whatever the text area left in the band: black, drawn before the clip is switched on */
+	fill(fb, 0, fb->text_y, fb->width, band_rows > fb->text_y ? band_rows - fb->text_y : 0,
+	     wel2_fb_pixel(fb, WEL2_RGB_BLACK));
+	fb->band_rows = band_rows;
+	fb->tcol = 0;
+	fb->tfresh = 1;
+	fb->hand = WEL2_FBH_BAND;
+	sync_stores();
+}
+
+void wel2_fb_take_back(struct wel2_fb *fb)
+{
+	if (!fb->fmt || !fb->hand)
+		return;
+	fb->hand = WEL2_FBH_NONE;
+	fb->band_rows = 0;
+	refresh(fb);
 }

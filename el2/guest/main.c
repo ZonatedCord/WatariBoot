@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Watari EL2 test guest (T7a): checks G1-G11 of docs/design/watari-el2-m1boot/DESIGN.md section 8.
+// Watari EL2 test guest (T7a): checks G1-G11 (and G12, E9: colour bars in the handed-over framebuffer) of docs/design/watari-el2-m1boot/DESIGN.md section 8.
 // All output goes through the layer's vendor hypercalls (WEL2_LOG, WEL2_CHECKPOINT; include/wel2_hvc.h). Only when
 // the layer answers NOT_SUPPORTED and no info block was passed (= QEMU chain build before the layer implements the
 // calls) the log lines are written to the QEMU PL011 instead, so the same binary can be tested today.
@@ -146,9 +146,9 @@ static bool selected(unsigned n)
 
 /* T17: the per-check summary printed last, right before the final reset/hold (see summary()). One slot per check;
  * `key` is the short result text (the detail's start, or what the check put into g_key). */
-#define SUM_N   12
+#define SUM_N   13
 #define SUM_KEY 44
-static const char g_sum_name[SUM_N][5] = { "G1", "G2", "G3", "G4", "G5a", "G5b", "G6", "G7", "G8", "G9", "G10", "G11" };
+static const char g_sum_name[SUM_N][5] = { "G1", "G2", "G3", "G4", "G5a", "G5b", "G6", "G7", "G8", "G9", "G10", "G11", "G12" };
 static struct { char verdict; char key[SUM_KEY]; } g_sum[SUM_N];     /* verdict: 0 not run, 'P', 'F', 'S' */
 static struct buf g_key;                                              /* optional key text of the running check */
 
@@ -1011,7 +1011,7 @@ static void summary(void)
     unsigned cores = g_ncores < 8 ? g_ncores : 8;
 
     b_init(&b);
-    b_str(&b, WEL2_SUMMARY_MARK " G1-G11 PASS ");
+    b_str(&b, WEL2_SUMMARY_MARK " G1-G12 PASS ");
     b_dec(&b, g_pass);
     b_str(&b, " FAIL ");
     b_dec(&b, g_fail);
@@ -1033,6 +1033,79 @@ static void summary(void)
         }
         b_flush(&b);
     }
+}
+
+/* G12 (E9): the layer handed (part of) the panel over (info version 2, WEL2_GINFO_F_FB). Four vertical bars across the
+ * whole guest part, each a quarter of the width: red, green, blue, yellow at full intensity in the layer's pixel format
+ * (the layer's own palette has none of these four values, so the host can tell the guest's pixels from the layer's).
+ * Written with the MMU off (Device memory) as aligned 32-bit stores, then read back at the first, middle and last row of
+ * every bar. PASS = the read-back equals what was written. The host side (bench: QEMU monitor pmemsave of the fake panel)
+ * checks the pixels from outside. */
+static u32 g12_pix(unsigned format, unsigned bar)
+{
+    static const u32 p8[4] = { 0xff0000u, 0x00ff00u, 0x0000ffu, 0xffff00u };
+    static const u32 p10[4] = { 0x3ff00000u, 0x000ffc00u, 0x000003ffu, 0x3ffffc00u };
+
+    return format == WEL2_GFB_X2R10G10B10 ? p10[bar] : p8[bar];
+}
+
+static void g12(void)
+{
+    struct buf d;
+    const struct wel2_guest_info *i = &g_info;
+    volatile u32 *base;
+    u32 w, h, stride, mask;
+    bool ok = true;
+
+    if (!g_have_info || !(i->flags & WEL2_GINFO_F_FB)) {
+        skip(WEL2_CHK_G12, "G12", "no framebuffer handed over (wel2.fb=layer)");
+        return;
+    }
+    begin(WEL2_CHK_G12);
+    b_init(&d);
+    w = i->fb_width;
+    h = i->fb_height;
+    stride = i->fb_stride;
+    base = (volatile u32 *)(uintptr_t)i->fb_base;
+    mask = i->fb_format == WEL2_GFB_X2R10G10B10 ? 0x3fffffffu : 0x00ffffffu;
+    if ((i->fb_format != WEL2_GFB_X8R8G8B8 && i->fb_format != WEL2_GFB_X2R10G10B10) || w < 4 || !h || stride < 4 * w ||
+        (stride & 3) || (i->fb_base & 3)) {
+        b_str(&d, "bad framebuffer description");
+        finish(WEL2_CHK_G12, "G12", false, &d);
+        return;
+    }
+    for (u32 y = 0; y < h; y++) {
+        volatile u32 *row = base + (u64)y * (stride / 4);
+
+        for (u32 x = 0; x < w; x++)
+            row[x] = g12_pix(i->fb_format, (u32)((u64)x * 4 / w));
+    }
+    __asm__ volatile("dsb sy" ::: "memory");
+    for (unsigned bar = 0; bar < 4; bar++) {
+        u32 x = (u32)(((u64)w * (2 * bar + 1)) / 8);
+        u32 ys[3] = { 0, h / 2, h - 1 };
+
+        for (unsigned k = 0; k < 3; k++) {
+            u32 got = base[(u64)ys[k] * (stride / 4) + x] & mask;
+
+            if (got != (g12_pix(i->fb_format, bar) & mask))
+                ok = false;
+        }
+    }
+    b_str(&d, i->fb_format == WEL2_GFB_X2R10G10B10 ? "x2r10g10b10 " : "x8r8g8b8 ");
+    b_dec(&d, w);
+    b_str(&d, "x");
+    b_dec(&d, h);
+    b_str(&d, i->fb_mode == WEL2_GFB_MODE_GUEST ? " guest" : " band ");
+    if (i->fb_mode != WEL2_GFB_MODE_GUEST)
+        b_dec(&d, i->fb_band_rows);
+    b_str(&d, ok ? " bars RGBY read back" : " bars read back WRONG");
+    b_init(&g_key);
+    b_str(&g_key, i->fb_format == WEL2_GFB_X2R10G10B10 ? "X2R10G10B10 " : "X8R8G8B8 ");
+    b_dec(&g_key, w);
+    b_str(&g_key, "X");
+    b_dec(&g_key, h);
+    finish(WEL2_CHK_G12, "G12", ok, &d);
 }
 
 static void g11(void)
@@ -1088,10 +1161,17 @@ void guest_main(const struct wel2_guest_info *info)
 {
     g_frq = SYSREG_RD(cntfrq_el0);
     g_is_apple = ((SYSREG_RD(midr_el1) >> 24) & 0xff) == 0x61;
-    if (info_ptr_plausible(info) && info->magic == WEL2_GINFO_MAGIC && info->version == WEL2_GINFO_VERSION &&
-        info->size >= sizeof(*info)) {
-        for (unsigned i = 0; i < sizeof(g_info) / 8; i++)      /* no memcpy: copy word by word */
+    /* Version 1 (no framebuffer fields, size = offset of fb_base) and 2 are both understood; the layer's block may be shorter
+     * than this struct (an older layer), then only what it has is copied and the framebuffer flag is cleared. */
+    if (info_ptr_plausible(info) && info->magic == WEL2_GINFO_MAGIC &&
+        (info->version == WEL2_GINFO_VERSION_1 || info->version == WEL2_GINFO_VERSION) &&
+        info->size >= __builtin_offsetof(struct wel2_guest_info, fb_base)) {
+        unsigned nw = (info->size < sizeof(g_info) ? info->size : sizeof(g_info)) / 8;
+
+        for (unsigned i = 0; i < nw; i++)                      /* no memcpy: copy word by word */
             ((volatile u64 *)&g_info)[i] = ((const volatile u64 *)info)[i];
+        if (info->version < 2 || info->size < sizeof(g_info))
+            g_info.flags &= ~WEL2_GINFO_F_FB;
         g_info.platform[sizeof(g_info.platform) - 1] = 0;
         g_have_info = true;
         g_gicd = g_info.gicd_base;
@@ -1103,7 +1183,7 @@ void guest_main(const struct wel2_guest_info *info)
      * implementer is not Apple (0x61). On an Apple core without an info block no MMIO is touched at all. */
     g_uart_fallback_ok = !g_have_info && !g_is_apple;
 
-    say("Watari EL1 test guest: G1-G11");
+    say("Watari EL1 test guest: G1-G12");
     console_probe();
     if (!g_have_info && g_is_apple) {
         g1();                                            /* FAILs: no info block */
@@ -1125,5 +1205,6 @@ void guest_main(const struct wel2_guest_info *info)
     if (selected(WEL2_CHK_G8)) g8();
     if (selected(WEL2_CHK_G9)) g9();
     if (selected(WEL2_CHK_G10)) g10();
+    if (selected(WEL2_CHK_G12)) g12();
     g11();
 }

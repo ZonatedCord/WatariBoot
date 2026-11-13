@@ -1,4 +1,4 @@
-# M3a day 2: first boot of the Watari EL2 layer and the EL1 test guest (G1-G11) on the real M1, read from photos of the screen
+# M3a day 2: first boot of the Watari EL2 layer and the EL1 test guest (G1-G12; G12 skips here) on the real M1, read from photos of the screen
 
 Status: Run on 2026-11-13: all PASS (`re/m3a-day2-results.md`; surprises in F-32). Written 2026-11-13; the expected lines below were corrected from the real run. Repository text is English; Claude talks to the people in Italian.
 
@@ -155,7 +155,7 @@ No separate measurement session: the L0 read-back FDT (rung L0, step 3) lists ev
 | Top strip, y 0-31 | **Checkpoint squares**, 24 px, pitch 28 px, the first square at x = 8 | Square n = checkpoint n. Green = reached/ok, amber = running, red = failed, grey = skipped, **no square = not reached**. Cross-check only; the band says the same in words |
 | Status band, dark blue, 3 lines | line 1 `WATARI EL2  RUNG L<n> STEP <s>` (`-` until known); line 2 `CHECKPOINT <n> <OK/RUNNING/FAIL/SKIP>` (+ `(GUEST CHECK <k>)`, + a label such as `G4 TIMER`), coloured like the square; line 3 `GUEST PASS <p> FAIL <f> SKIP <k>` (red when f > 0) | the main source of truth |
 | `LAST ERROR:` (2 lines) | `LAST ERROR: NONE` (grey) or red text up to 128 chars; set to `CHECKPOINT <n> FAILED` when a square turns red, `FATAL AT CHECKPOINT <n>` by `fatal()` | **copy exactly if not NONE**; it survives scrolling |
-| Grey rule, then the scrolling log | the layer's text (same as UART) including the guest's lines `Watari EL1: ...`; the legend `SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11` / `GREEN = OK  AMBER = RUNNING  RED = FAIL  GREY = SKIP` at the top | only the last lines before the stop matter; older lines are wiped when the area fills |
+| Grey rule, then the scrolling log | the layer's text (same as UART) including the guest's lines `Watari EL1: ...`; the legend `SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G12` / `GREEN = OK  AMBER = RUNNING  RED = FAIL  GREY = SKIP` at the top | only the last lines before the stop matter; older lines are wiped when the area fills |
 
 Exact strings printed by `el2/vgic/fb.c` **[verified]**: line 1 `WATARI EL2  RUNG L<n> STEP <s>` (`RUNG -` / `STEP -` until known; two spaces before RUNG); line 2 `CHECKPOINT NONE`, or `CHECKPOINT <n> OK|FAIL|SKIP|RUNNING`, for squares of 16 and up followed by ` (GUEST CHECK <k>)`, then a label if any (e.g. `HOLD: TAKE PHOTO`); line 3 `GUEST PASS <p> FAIL <f> SKIP <k>`; then `LAST ERROR: NONE` or the red error text. The rung/step line is set by `stage1.c` right after the relocation (steps 1-5 = rungs L1-L5).
 
@@ -197,8 +197,9 @@ Each layer checkpoint also prints a log line `Watari EL2: checkpoint <n> <NAME>`
 | 26 | G9 `CPU_ON` for each other core; each reports MPIDR and sends an SGI to core 0 | spin-table release, per-core init, fast-IPI kick | L5 |
 | 27 | G10 `CPU_OFF` on one core, `AFFINITY_INFO`, `CPU_ON` again | the park loop | L5 |
 | 28 | G11 `SYSTEM_RESET` | the watchdog reset (no return expected) | L3+ (last) |
+| 29 | G12 framebuffer bars | grey SKIP unless `wel2.fb=band|guest`; runs before G11 | L5 only (the rung masks of L3/L4 exclude it: `NOT RUN`) |
 
-Check numbering: G1..G4 = 1..4, G5a = 5, G5b = 6, G6..G11 = 7..12, hence squares 17..28 (square 16 is unused) **[verified: T7-wiring section 5]**. Which checks run at which `wel2.step` **[verified: README "Boot ladder", `el2/boot/main.c` mask]**: step 3 = G1-G6 (G5a and G5b included), step 4 = G1-G8, step 5 = all (G9 and G10 included); G11, the final `SYSTEM_RESET`, always runs. A check that does not apply reports SKIP (grey square, counted in `SKIP`).
+Check numbering: G1..G4 = 1..4, G5a = 5, G5b = 6, G6..G11 = 7..12, G12 (E9) = 13, hence squares 17..29 (square 16 is unused) **[verified: T7-wiring section 5]**. Which checks run at which `wel2.step` **[verified: README "Boot ladder", `el2/boot/main.c` mask]**: step 3 = G1-G6 (G5a and G5b included), step 4 = G1-G8, step 5 = all (G9 and G10 included); G11, the final `SYSTEM_RESET`, always runs. A check that does not apply reports SKIP (grey square, counted in `SKIP`).
 
 ### 3.4 A black screen: what to do
 1. Press a key / touch the trackpad on the M1, photograph again (display sleep, F-10 analogue) **[check: the M1 in m1n1/layer state has no keyboard handling; the key may do nothing]**.
@@ -251,7 +252,7 @@ wl() {
 
 Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0 prepared but the FDT cannot be read back, **4 L0 BLOCK CHECK failed (do not run L3-L5)**.
 
-**Note on what the held screen shows (T17).** Besides the band, squares and `LAST ERROR`, the held screen ends with the guest's summary block: `SUMMARY G1-G11 PASS <p> FAIL <f>`, one line per check `Gn PASS|FAIL|SKIP <key>` (checks that did not run in this rung show `NOT RUN`), then the MPIDR line(s), then the reset and `HOLD` lines. The final statistics are written to the UART only so they do not scroll the block away (`el2/boot/README.md`, "Guest summary block"). Not yet seen on a real panel **[hypothesis]**: if the block is missing from the photo, fall back to the video.
+**Note on what the held screen shows (T17).** Besides the band, squares and `LAST ERROR`, the held screen ends with the guest's summary block: `SUMMARY G1-G12 PASS <p> FAIL <f>`, one line per check `Gn PASS|FAIL|SKIP <key>` (checks that did not run in this rung show `NOT RUN`), then the MPIDR line(s), then the reset and `HOLD` lines. The final statistics are written to the UART only so they do not scroll the block away (`el2/boot/README.md`, "Guest summary block"). Not yet seen on a real panel **[hypothesis]**: if the block is missing from the photo, fall back to the video.
 
 **After "handed over" the loader waits up to 40 s** (`--boot-timeout`) for a reply that may never come. Once the Mac has restarted or the screen is frozen/held, press **Ctrl-C** in that terminal (the target is gone anyway); do not wait out the 40 s, and do not close the terminal before the log file is saved.
 
@@ -426,7 +427,7 @@ wl L4 --rung L4 --go [--cpuif trap-notc] --args wel2.hold=1
 
 **PHOTOS.** As L3 (end-of-run full screen, close-up on failure). Add a photo during the run if a timer check seems to take long: **each timer check waits for 5 ticks**, so a stuck square stays amber for the bounded wait.
 
-**Expected.** Band 1 `RUNG L4 STEP 4`; band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; band 3 `GUEST PASS 10 FAIL 0 SKIP 0`; layer squares 0-8 green, squares 24 (G7) and 25 (G8) green (G8 is **not** a SKIP any more), 28 green; the tick counts are in the summary block of the held screen (`G7 PASS INTID 27 TICKS 5`, `G8 PASS INTID 30 TICKS 5`; header `SUMMARY G1-G11 PASS 10 FAIL 0`), the video is optional.
+**Expected.** Band 1 `RUNG L4 STEP 4`; band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; band 3 `GUEST PASS 10 FAIL 0 SKIP 0`; layer squares 0-8 green, squares 24 (G7) and 25 (G8) green (G8 is **not** a SKIP any more), 28 green; the tick counts are in the summary block of the held screen (`G7 PASS INTID 27 TICKS 5`, `G8 PASS INTID 30 TICKS 5`; header `SUMMARY G1-G12 PASS 10 FAIL 0`), the video is optional.
 
 **PASS.** `PASS 10 FAIL 0 SKIP 0`, G7 PASS (5 ticks), G8 PASS (5 ticks) in the summary block, `LAST ERROR: NONE`.
 
@@ -458,9 +459,9 @@ L5 starts the secondaries from the host (`smp_start_secondaries`; volatile, rese
 
 **PHOTOS.** As L4, one extra photo after G9 starts (squares 9 and 10 show a core accepted/arrived), and the end screen.
 
-**Expected.** Band 3 `GUEST PASS 12 FAIL 0 SKIP 0`, band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; layer squares 0-10 green (9 and 10: CPU_ON accepted, core arrived), 26 (G9) and 27 (G10) green; the MPIDR each core reports (`0x80000000`..`0x80000003`, `0x80010100`..`0x80010103` **[verified: ehw0]**) is on the held screen in the summary block (`MPIDR ...` lines, 4 per line) and `G9 PASS UP 7 SGI2 7`; the video is optional.
+**Expected.** Band 3 `GUEST PASS 12 FAIL 0 SKIP 1` (the one skip is G12, grey square 29: no framebuffer is handed over, `wel2.fb` absent), summary header `SUMMARY G1-G12 PASS 12 FAIL 0`, last summary lines `G11 PASS ...` then `G12 SKIP no framebuffer handed over (wel2.fb=layer)`, band 2 `CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO`; layer squares 0-10 green (9 and 10: CPU_ON accepted, core arrived), 26 (G9) and 27 (G10) green; the MPIDR each core reports (`0x80000000`..`0x80000003`, `0x80010100`..`0x80010103` **[verified: ehw0]**) is on the held screen in the summary block (`MPIDR ...` lines, 4 per line) and `G9 PASS UP 7 SGI2 7`; the video is optional.
 
-**PASS.** `PASS 12 FAIL 0 SKIP 0`, G9 and G10 green, all 7 secondaries reported (`G9 PASS UP 7 SGI2 7` and the 8 MPIDRs in the summary block), `LAST ERROR: NONE`.
+**PASS.** `PASS 12 FAIL 0 SKIP 1` (G12), G9 and G10 green, all 7 secondaries reported (`G9 PASS UP 7 SGI2 7` and the 8 MPIDRs in the summary block), `LAST ERROR: NONE`.
 
 **FAIL meanings.**
 
@@ -536,7 +537,7 @@ Claude fills this during the day. Never include serial numbers, MAC addresses, t
 - **Proxyclient:** m1n1 source archive (<date>, sha256 <...>).
 
 ## Verdict
-- **Go/no-go (L3 passes G1-G11 in trap or trap-notc):** GO / NO-GO / PARTIAL
+- **Go/no-go (L3 passes G1-G6 and reaches G11 in trap or trap-notc):** GO / NO-GO / PARTIAL
 - Configuration that passed: trap / trap-notc / both / none
 - Default for the M1: wel2.cpuif=<...>
 
@@ -546,7 +547,7 @@ Claude fills this during the day. Never include serial numbers, MAC addresses, t
 - Result: PASS / FAIL / not run / ABORT (criterion).
 - Photos (file name, time): transcription in the 3.5 shape.
 - Reached checkpoint (last green square), last red square, `LAST ERROR` text.
-- Guest checks G1..G11: PASS / FAIL / SKIP per check, trap counters (G5a/G5b), tick counts (G7/G8), MPIDRs (G9): all from the summary block of the final photo.
+- Guest checks G1..G12 (G12 SKIP unless wel2.fb is used): PASS / FAIL / SKIP per check, trap counters (G5a/G5b), tick counts (G7/G8), MPIDRs (G9): all from the summary block of the final photo.
 - Time from "handed over" to the observed behaviour; how long the screen stayed readable.
 - Anomalies.
 
