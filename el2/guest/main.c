@@ -144,8 +144,34 @@ static bool selected(unsigned n)
     return !g_have_info || g_info.checks == 0 || (g_info.checks >> n) & 1;
 }
 
+/* T17: the per-check summary printed last, right before the final reset/hold (see summary()). One slot per check;
+ * `key` is the short result text (the detail's start, or what the check put into g_key). */
+#define SUM_N   12
+#define SUM_KEY 44
+static const char g_sum_name[SUM_N][5] = { "G1", "G2", "G3", "G4", "G5a", "G5b", "G6", "G7", "G8", "G9", "G10", "G11" };
+static struct { char verdict; char key[SUM_KEY]; } g_sum[SUM_N];     /* verdict: 0 not run, 'P', 'F', 'S' */
+static struct buf g_key;                                              /* optional key text of the running check */
+
+static void sum_put(const char *name, char verdict, const char *text)
+{
+    for (unsigned i = 0; i < SUM_N; i++) {
+        unsigned k = 0;
+
+        while (name[k] && name[k] == g_sum_name[i][k])
+            k++;
+        if (name[k] || g_sum_name[i][k])
+            continue;
+        g_sum[i].verdict = verdict;
+        for (k = 0; text[k] && k < SUM_KEY - 1; k++)
+            g_sum[i].key[k] = text[k];
+        g_sum[i].key[k] = 0;
+        return;
+    }
+}
+
 static void begin(unsigned n)
 {
+    b_init(&g_key);
     g_chk_running = n;
     checkpoint(n, WEL2_CHKSTATE_RUNNING);
 }
@@ -165,6 +191,7 @@ static void finish(unsigned n, const char *name, bool ok, struct buf *detail)
     b_str(&b, ok ? " PASS " : " FAIL ");
     b_str(&b, detail->s);
     b_flush(&b);
+    sum_put(name, ok ? 'P' : 'F', g_key.n ? g_key.s : detail->s);
     checkpoint(n, ok ? WEL2_CHKSTATE_PASS : WEL2_CHKSTATE_FAIL);
     if (ok)
         g_pass++;
@@ -183,6 +210,7 @@ static void skip(unsigned n, const char *name, const char *why)
     b_str(&b, " SKIP ");
     b_str(&b, why);
     b_flush(&b);
+    sum_put(name, 'S', why);
     checkpoint(n, WEL2_CHKSTATE_SKIP);
 }
 
@@ -384,6 +412,8 @@ static void g1(void)
         b_dec(&d, g_info.version);
     b_str(&d, " mpidr ");
     b_hex(&d, mpidr_now());
+    b_str(&g_key, "MPIDR ");
+    b_hex(&g_key, mpidr_now());
     b_str(&d, " vectors ");
     if (g_svc == svc0 + 1 && SYSREG_RD(vbar_el1) != 0) {
         b_str(&d, "ok(svc taken)");
@@ -792,6 +822,10 @@ static void timer_test(unsigned intid, unsigned chk, const char *name, bool soft
         b_str(&d, " ms");
     }
     if (g_irq_other) { ok = false; b_str(&d, " other irqs seen"); }
+    b_str(&g_key, "INTID ");
+    b_dec(&g_key, intid);
+    b_str(&g_key, " TICKS ");
+    b_dec(&g_key, got);
     finish(chk, name, ok, &d);
 }
 
@@ -908,6 +942,10 @@ static void g9(void)
         b_str(&d, " SGI 2 received ");
         b_dec(&d, g_irq_count[me][2] - sgi0);
     }
+    b_str(&g_key, "UP ");
+    b_dec(&g_key, want);
+    b_str(&g_key, " SGI2 ");
+    b_dec(&g_key, g_irq_count[me][2] - sgi0);
     finish(WEL2_CHK_G9, "G9", ok, &d);
 }
 
@@ -964,6 +1002,39 @@ static void g10(void)
     finish(WEL2_CHK_G10, "G10", ok, &d);
 }
 
+/* T17: the last thing the guest prints (right after G11's verdict): one line per check, "Gn PASS|FAIL|SKIP <key>"
+ * (key = tick count, MPIDR, counts...), then the MPIDR of every core, 4 per line. Short lines: with the layer's
+ * "Watari EL1: " prefix they fit the 70 columns of the panel at scale 6. */
+static void summary(void)
+{
+    struct buf b;
+    unsigned cores = g_ncores < 8 ? g_ncores : 8;
+
+    b_init(&b);
+    b_str(&b, WEL2_SUMMARY_MARK " G1-G11 PASS ");
+    b_dec(&b, g_pass);
+    b_str(&b, " FAIL ");
+    b_dec(&b, g_fail);
+    b_flush(&b);
+    for (unsigned i = 0; i < SUM_N; i++) {
+        b_init(&b);
+        b_str(&b, g_sum_name[i]);
+        b_str(&b, g_sum[i].verdict == 'P' ? " PASS " : g_sum[i].verdict == 'F' ? " FAIL " :
+                  g_sum[i].verdict == 'S' ? " SKIP " : " NOT RUN ");
+        b_str(&b, g_sum[i].key);
+        b_flush(&b);
+    }
+    for (unsigned n = 0; n < cores; n += 4) {
+        b_init(&b);
+        b_str(&b, "MPIDR");
+        for (unsigned k = n; k < n + 4 && k < cores; k++) {
+            b_str(&b, " ");
+            b_hex(&b, g_mpidr[k]);
+        }
+        b_flush(&b);
+    }
+}
+
 static void g11(void)
 {
     struct buf d;
@@ -981,6 +1052,7 @@ static void g11(void)
     /* No return is expected, so the verdict is given before the call; the layer's own reset/off log line and the
      * reboot (or QEMU exiting) are the proof. */
     finish(WEL2_CHK_G11, "G11", g_exc == 0 && g_log_errs == 0, &d);
+    summary();
     hvc4(off ? PSCI_SYSTEM_OFF : PSCI_SYSTEM_RESET, 0, 0, 0);
     checkpoint(WEL2_CHK_G11, WEL2_CHKSTATE_FAIL);        /* the call returned: the verdict above was wrong */
     say("G11 FAIL SYSTEM_RESET/OFF returned");

@@ -4,10 +4,12 @@
  * synthetic FDTs, and the Normal non-cacheable stage-1 mapping (wel2_s1_map_fb). The drawing runs on a host buffer
  * surrounded by canary words: a store outside [base, base + height * stride) or into the line padding fails. */
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "test.h"
 #include "wel2_fb.h"
+#include "wel2_hvc.h"
 #include "wel2_maps.h"
 #include "fdt.h"
 #include "fdt_build.h"
@@ -598,6 +600,74 @@ static void t_error_persists_across_scrolls(void)
 	}
 }
 
+/* T17: the guest's per-check summary block (header, 12 check lines, 2 MPIDR lines, then 2 more lines of the layer)
+ * is reserved with wel2_fb_reserve: whatever the log position before it, all lines are on the panel afterwards,
+ * one under the other, below the legend, inside the text area, with the band and the error line untouched. */
+static void t_summary_block(void)
+{
+	static const char *const L[15] = {
+		"WATARI EL1: SUMMARY G1-G11 PASS 11 FAIL 0",
+		"WATARI EL1: G1 PASS MPIDR 0X0",
+		"WATARI EL1: G2 PASS VERSION 0X10001 FEATURES CPU_ON=0 RESE",
+		"WATARI EL1: G3 PASS GIC FIELD 1 PAUTH SIGN+AUTH OK TAMPER",
+		"WATARI EL1: G4 PASS GICD_TYPER 0X17A001D IIDR 0X43B REDIST",
+		"WATARI EL1: G5A PASS SRE 0X7 IGRPEN1 1 BPR1 7 TALL1-TRAPS",
+		"WATARI EL1: G5B PASS PMR 0XF0 CTLR 0X8C00 FLIPPED 0X8C02 R",
+		"WATARI EL1: G6 PASS IDLE IAR 1023 SGI 1 TAKEN, ACK INTID 1",
+		"WATARI EL1: G7 PASS INTID 27 TICKS 5",
+		"WATARI EL1: G8 PASS INTID 30 TICKS 5",
+		"WATARI EL1: G9 PASS UP 7 SGI2 7",
+		"WATARI EL1: G10 PASS CPU 1 AFFINITY_INFO=1 CPU_ON AGAIN=0",
+		"WATARI EL1: G11 PASS SUMMARY PASS 11 FAIL 0 EXCEPTIONS 0 R",
+		"WATARI EL1: MPIDR 0X0 0X1 0X2 0X3",
+		"WATARI EL1: MPIDR 0X100 0X101 0X102 0X103",
+	};
+	char buf[100];
+
+	for (unsigned pre = 0; pre < 45; pre++) {        /* every cursor position, several wraps of the log area */
+		struct screen s;
+		uint32_t row0;
+
+		scr_new(&s, WEL2_FB_X2R10G10B10, 2560, 1600, 0);
+		CHECK_EQ(s.fb.rows, 23);
+		CHECK(WEL2_SUMMARY_LINES >= 15 + 2 && WEL2_SUMMARY_LINES + 2 <= s.fb.rows);
+		wel2_fb_set_rung(&s.fb, 3, 0);
+		for (unsigned i = 0; i < pre; i++)
+			wel2_fb_puts(&s.fb, "FILLER LINE\n");
+		wel2_fb_reserve(&s.fb, WEL2_SUMMARY_LINES);
+		CHECK(s.fb.cy + WEL2_SUMMARY_LINES <= s.fb.rows);
+		row0 = s.fb.cy;
+		for (unsigned i = 0; i < 15; i++) {
+			snprintf(buf, sizeof(buf), "%s\n", L[i]);
+			wel2_fb_puts(&s.fb, buf);
+		}
+		wel2_fb_puts(&s.fb, "WATARI EL2: HOLD: TAKE THE PHOTO\nWATARI EL2: PSCI SYSTEM_RESET\n");
+		CHECK_EQ(s.fb.cy, row0 + 17);               /* no scroll in the middle of the block */
+		for (unsigned i = 0; i < 15; i++)
+			CHECK(line_is(&s, s.fb.text_y + (row0 + i) * 54, L[i], WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y + (row0 + 16) * 54, "WATARI EL2: PSCI SYSTEM_RESET", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(row0 >= 2 && s.fb.text_y + (row0 + 17) * 54 <= s.h);   /* below the legend, inside the panel */
+		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG L3 STEP 0", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, E0(&s), "LAST ERROR: NONE", C_NOERR, WEL2_RGB_BLACK));
+		if (pre == 44 && getenv("WEL2_FB_PPM_SUMMARY"))
+			write_ppm(&s, getenv("WEL2_FB_PPM_SUMMARY"));
+		CHECK(scr_canaries_ok(&s));
+		scr_free(&s);
+	}
+	/* a screen too small for the block: no reserve (no clear loop), text still works */
+	{
+		struct screen s;
+
+		scr_new(&s, WEL2_FB_X8R8G8B8, 800, 200, 0);
+		wel2_fb_puts(&s.fb, "A\n");
+		wel2_fb_reserve(&s.fb, WEL2_SUMMARY_LINES);
+		CHECK(s.fb.cy < s.fb.rows);
+		CHECK(scr_canaries_ok(&s));
+		scr_free(&s);
+	}
+}
+
 /* QEMU-like 800 x 600: scale 2, 65 columns, 26 rows; the same layout, nothing clipped. */
 static void t_band_800x600(void)
 {
@@ -926,6 +996,7 @@ int main(void)
 	RUN(t_band_2560);
 	RUN(t_error_persists_across_scrolls);
 	RUN(t_band_800x600);
+	RUN(t_summary_block);
 	RUN(t_band_small_screens);
 	RUN(t_fatal_error_text);
 	RUN(t_fdt_present);

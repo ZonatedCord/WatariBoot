@@ -61,6 +61,17 @@ if [ "${CPUIF:-hw}" != hw ]; then
         gline $g | grep -q "n/a" && { echo "FAILED: $g judged without the layer's counters"; rc=1; }
     done
 fi
+# T17: the per-check summary is the guest's last output: SUMMARY header, G1..G11 one line each, then the MPIDR line(s).
+SUMMARY=$(awk '/Watari EL1: SUMMARY /{f=1} f' $OUT/guest-uart.txt | grep -a "Watari EL1:")
+if [ -z "$SUMMARY" ]; then echo "MISSING: the guest's SUMMARY block"; rc=1
+else
+    for g in G1 G2 G3 G4 G5a G5b G6 G7 G8 G9 G10 G11; do
+        echo "$SUMMARY" | grep -aqE "Watari EL1: $g (PASS|FAIL|SKIP) " || { echo "MISSING: $g in the SUMMARY block"; rc=1; }
+    done
+    echo "$SUMMARY" | tail -1 | grep -aq "MPIDR 0x" || { echo "MISSING: MPIDR line last in the SUMMARY block"; rc=1; }
+    echo "$SUMMARY" | grep -aq "G7 PASS.*TICKS [5-9]" || { echo "MISSING: G7 tick count in the summary"; rc=1; }
+    echo "---- summary"; echo "$SUMMARY"
+fi
 grep -q "UNEXPECTED\|FATAL\|unhandled guest\|non-PSCI SMC" $OUT/guest-uart.txt && { echo "FAIL: unexpected event reported"; rc=1; }
 grep -aq "PSCI SYSTEM_\(RESET\|OFF\)" $OUT/guest-uart.txt || { echo "MISSING: the layer's SYSTEM_RESET/OFF line"; rc=1; }
 [ "$EXITED" = 1 ] || { echo "FAIL: QEMU still running after 60 s (SYSTEM_RESET not honoured?)"; rc=1; }

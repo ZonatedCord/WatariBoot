@@ -124,6 +124,10 @@ unsigned wel2_fb_guest_skip(const struct wel2_fb *fb);
  * the scrolling text area is cleared and output restarts at its top. Lower case is drawn as upper case; a character the
  * font does not have is drawn as a blank cell. */
 void wel2_fb_putc(struct wel2_fb *fb, char c);
+/* T17: make sure `lines` text rows are free below the cursor: when fewer are left (and the area can hold them at all,
+ * lines + 2 legend rows <= rows), the scrolling area is cleared and the legend reprinted first, so the next `lines`
+ * lines are never cut by a scroll. Call it at the start of a line (cx == 0). */
+void wel2_fb_reserve(struct wel2_fb *fb, unsigned lines);
 void wel2_fb_puts(struct wel2_fb *fb, const char *s);
 
 #endif

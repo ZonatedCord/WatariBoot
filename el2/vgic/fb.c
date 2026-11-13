@@ -464,6 +464,17 @@ void wel2_fb_checkpoint_fail(struct wel2_fb *fb)
 	}
 }
 
+void wel2_fb_reserve(struct wel2_fb *fb, unsigned lines)
+{
+	if (!fb->fmt || !fb->cols || !fb->rows)
+		return;
+	ensure_init(fb);
+	if (fb->cy + lines > fb->rows && lines + 2u <= fb->rows) {
+		clear_text(fb);
+		legend(fb);
+	}
+}
+
 void wel2_fb_putc(struct wel2_fb *fb, char c)
 {
 	if (!fb->fmt || !fb->cols || !fb->rows)

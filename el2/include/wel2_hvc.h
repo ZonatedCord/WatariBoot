@@ -30,6 +30,13 @@
  * limit, a zero x2, or a range outside guest RAM is INVALID_PARAMETERS and nothing is logged. */
 #define WEL2_LOG_MAX          160u
 
+/* T17: the guest's per-check summary block. Its first line starts with WEL2_SUMMARY_MARK; the layer then makes sure
+ * WEL2_SUMMARY_LINES text rows are free on the panel (clearing the scrolling area first if they are not), so the block
+ * is never cut by a scroll. Block = header + 12 checks + up to 2 MPIDR lines, plus slack for the layer's own last
+ * lines (hold / reset message). */
+#define WEL2_SUMMARY_MARK     "SUMMARY"
+#define WEL2_SUMMARY_LINES    18u
+
 /* WEL2_CHECKPOINT numbers: the layer paints square WEL2_CHK_SQUARE_BASE + n and logs one line. */
 #define WEL2_CHK_SQUARE_BASE  16u
 #define WEL2_CHK_MAX          47u           /* largest accepted n (the checkpoint row has 64 squares) */

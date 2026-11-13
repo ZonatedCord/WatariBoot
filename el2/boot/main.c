@@ -214,6 +214,15 @@ static void hvc_log_line(void *ctx, const char *line, unsigned n)
     unsigned k = 0;
 
     (void)ctx;
+    /* T17: the guest's summary block starts with the mark; reserve its rows on the panel so no scroll cuts it. */
+    if (n >= sizeof(WEL2_SUMMARY_MARK) - 1) {
+        unsigned m = 0;
+
+        while (m < sizeof(WEL2_SUMMARY_MARK) - 1 && line[m] == WEL2_SUMMARY_MARK[m])
+            m++;
+        if (m == sizeof(WEL2_SUMMARY_MARK) - 1)
+            wel2_fb_reserve(&g_fb, WEL2_SUMMARY_LINES);
+    }
     for (unsigned i = 0; i < sizeof(pre) - 1; i++)
         buf[k++] = pre[i];
     for (unsigned i = 0; i < n && k < sizeof(buf) - 2; i++)
