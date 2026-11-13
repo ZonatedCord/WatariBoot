@@ -53,6 +53,19 @@ static bool has_apple(const char *s)
 	return false;
 }
 
+/* case-insensitive scan of raw bytes (a value is not always a string) */
+static bool bytes_have_apple(const uint8_t *v, uint32_t len)
+{
+	for (uint32_t i = 0; i + 5 <= len; i++)
+		if (!strncasecmp((const char *)v + i, "apple", 5))
+			return true;
+	return false;
+}
+
+#ifndef GFDT_PLATFORM
+#define GFDT_PLATFORM "t8103"            /* the unit test builds a variant with an "apple" platform to exercise the exit 3 */
+#endif
+
 struct walk {
 	char last[80];
 	unsigned last_depth;
@@ -77,6 +90,10 @@ static bool walk_cb(void *ctx, unsigned depth, const char *node, const char *pro
 	printf("%*s%s", 2 * (int)depth + 2, "", prop);
 	if (wel2_fdtw_forbidden(prop) || has_apple(prop)) {
 		fprintf(stderr, "PRIVACY: forbidden or Apple property: %s\n", prop);
+		w->hits++;
+	}
+	if (len && bytes_have_apple(val, len)) {
+		fprintf(stderr, "PRIVACY: a value of %s contains 'apple' (raw byte scan)\n", prop);
 		w->hits++;
 	}
 	if (len == 0) {
@@ -108,7 +125,7 @@ static bool walk_cb(void *ctx, unsigned depth, const char *node, const char *pro
 
 static int usage(const char *a0)
 {
-	fprintf(stderr, "usage: %s prepared.dtb [--layer 0xA] [--entry 0xE] [--image-size N] [--fb layer|band|guest] [-o guest.dtb]\n", a0);
+	fprintf(stderr, "usage: %s prepared.dtb [--layer 0xA] [--entry 0xE] [--image-size N] [--fb layer|band|guest] [--gran 4k|16k] [-o guest.dtb]\n", a0);
 	return 2;
 }
 
@@ -117,6 +134,7 @@ int main(int argc, char **argv)
 	const char *in_path = NULL, *out_path = NULL, *fbmode = "layer";
 	uint64_t layer = 0, entry = 0, image_size = 0x2000000ULL;
 	bool have_layer = false;
+	unsigned gshift = 14;                                  /* WEL2_DEF_GRAN: 16 KB; --gran 4k for wel2.gran=4k */
 
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--layer") && i + 1 < argc)
@@ -127,6 +145,8 @@ int main(int argc, char **argv)
 			image_size = strtoull(argv[++i], NULL, 0);
 		else if (!strcmp(argv[i], "--fb") && i + 1 < argc)
 			fbmode = argv[++i];
+		else if (!strcmp(argv[i], "--gran") && i + 1 < argc)
+			gshift = !strcmp(argv[++i], "4k") ? 12 : !strcmp(argv[i], "16k") ? 14 : 0;
 		else if (!strcmp(argv[i], "-o") && i + 1 < argc)
 			out_path = argv[++i];
 		else if (argv[i][0] != '-' && !in_path)
@@ -134,7 +154,7 @@ int main(int argc, char **argv)
 		else
 			return usage(argv[0]);
 	}
-	if (!in_path || (strcmp(fbmode, "layer") && strcmp(fbmode, "band") && strcmp(fbmode, "guest")))
+	if (!gshift || !in_path || (strcmp(fbmode, "layer") && strcmp(fbmode, "band") && strcmp(fbmode, "guest")))
 		return usage(argv[0]);
 
 	FILE *f = fopen(in_path, "rb");
@@ -195,7 +215,7 @@ int main(int argc, char **argv)
 	struct wel2_gfdt_in gi;
 	struct wel2_gfdt_fb fb;
 	memset(&gi, 0, sizeof(gi));
-	gi.platform = "t8103";
+	gi.platform = GFDT_PLATFORM;
 	gi.ranges = ordered;
 	gi.nranges = nord;
 	gi.gicd_base = M1_GICD;
@@ -215,22 +235,31 @@ int main(int argc, char **argv)
 				in_ram = true;
 		gi.msi_frame_base = in_ram ? 0 : M1_V2M_BASE;          /* [hypothesis: g_v2m_on is "the page is not guest RAM"] */
 	}
-	gi.fb_mode = !strcmp(fbmode, "layer") ? "none" : fbmode;
-	if (strcmp(fbmode, "layer")) {
-		if (p.fb.fmt == WEL2_FB_NONE) {
-			fprintf(stderr, "wel2.fb=%s but the FDT has no framebuffer\n", fbmode);
-			return 1;
+	/* E9: exactly main.c chain_fdt() / stage1.c: wel2_fb_plan with the stage-2 granule (16 KB by default on the M1); a plan
+	 * that fails falls back to wel2.fb=layer (no node). */
+	{
+		unsigned mode = !strcmp(fbmode, "band") ? WEL2_FBM_BAND : !strcmp(fbmode, "guest") ? WEL2_FBM_GUEST : WEL2_FBM_LAYER;
+		struct wel2_fb_plan plan;
+
+		if (wel2_fb_plan(&p.fb, mode, gshift, &plan)) {
+			printf("// wel2.fb=%s: the layer's plan fails (no framebuffer, not whole %u KB pages, or no room for the band): it keeps the panel, no node\n",
+			       fbmode, 1u << (gshift - 10));
+			wel2_fb_plan(&p.fb, WEL2_FBM_LAYER, gshift, &plan);
 		}
-		memset(&fb, 0, sizeof(fb));
-		fb.base = p.fb.base;
-		fb.size = (uint64_t)p.fb.stride * p.fb.height;
-		fb.width = p.fb.width;
-		fb.height = p.fb.height;
-		fb.stride = p.fb.stride;
-		fb.format = p.fb.fmt == WEL2_FB_X2R10G10B10 ? "x2r10g10b10" : "x8r8g8b8";
-		gi.fb = &fb;
-		if (!strcmp(fbmode, "band"))
-			fprintf(stderr, "NOTE: wel2.fb=band: the node shown is the WHOLE framebuffer; the layer's band arithmetic (E9) moves its start below the band [hypothesis]\n");
+		gi.fb_mode = "none";
+		if (p.fb.fmt != WEL2_FB_NONE && plan.mode != WEL2_FBM_LAYER) {
+			memset(&fb, 0, sizeof(fb));
+			fb.base = plan.guest_base;
+			fb.size = plan.guest_bytes;
+			fb.width = p.fb.width;
+			fb.height = plan.guest_rows;
+			fb.stride = p.fb.stride;
+			fb.format = p.fb.fmt == WEL2_FB_X2R10G10B10 ? "x2r10g10b10" : "x8r8g8b8";
+			gi.fb = &fb;
+			gi.fb_mode = plan.mode == WEL2_FBM_BAND ? "band" : "guest";
+		}
+		printf("// framebuffer plan (%u KB granule): mode %s, band rows %u, guest rows %u, guest base 0x%" PRIx64 ", guest bytes 0x%" PRIx64 "\n",
+		       1u << (gshift - 10), gi.fb_mode, plan.band_rows, plan.guest_rows, X64(plan.guest_base), X64(plan.guest_bytes));
 	}
 
 	static uint64_t blob[WEL2_GFDT_MAX / 8 + 8];

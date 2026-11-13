@@ -81,7 +81,32 @@ with tempfile.TemporaryDirectory() as tmp:
     r = sh([tool, fx, "--layer", "0x802000000", "--entry", "0x814000000", "--image-size", "0x800000"])
     check(r.returncode == 0 and "framebuffer@" not in r.stdout and 'fb-mode = "none"' in r.stdout, "default --fb layer: no framebuffer node, fb-mode none")
     r = sh([tool, fx, "--layer", "0x802000000", "--entry", "0x814000000", "--image-size", "0x800000", "--fb", "band"])
-    check(r.returncode == 0 and 'fb-mode = "band"' in r.stdout and "band arithmetic" in r.stderr, "--fb band is passed through, with a NOTE about the band")
+    o = r.stdout
+    check(r.returncode == 0 and 'fb-mode = "band"' in o, "--fb band: fb-mode band")
+    check("mode band, band rows 360, guest rows 1240, guest base 0x9e28f4000, guest bytes 0xc20000" .replace("0xc20000", "0x%x" % (1240 * 10240)) in o,
+          "--fb band on 2560x1600 stride 10240 (16 KB granule): band 360 rows, guest 1240 rows, as wel2_fb_plan")
+    check(re.search(r"^    framebuffer@9e28f4000:", o, re.M) and "height = <0x4d8>" in o and "width = <0xa00>" in o and
+          "reg = <0x9 0xe28f4000 0x0 0x%x>" % (1240 * 10240) in o, "the band node starts below the band: base, height 1240, size")
+    r = sh([tool, fx, "--layer", "0x802000000", "--entry", "0x814000000", "--image-size", "0x800000", "--fb", "band", "--gran", "4k"])
+    check("band rows 360, guest rows 1240" in r.stdout, "--gran 4k: the same 360 rows for stride 10240")
+    r = sh([tool, fx, "--layer", "0x802000000", "--entry", "0x814000000", "--image-size", "0x800000", "--fb", "guest"])
+    check("mode guest, band rows 0, guest rows 1600" in r.stdout, "--fb guest: the whole panel")
+
+    # the layer's fallback: a plan that fails (no framebuffer in the tree) keeps the panel with the layer, no node
+    if shutil.which("dtc"):
+        mdtb = os.path.join(tmp, "min.dtb")
+        sh(["dtc", "-q", "-I", "dts", "-O", "dtb", "-o", mdtb, os.path.join(HERE, "j293-minimal.dts")])
+        r = sh([tool, mdtb, "--fb", "band"])
+        check(r.returncode == 0 and "plan fails" in r.stdout and 'fb-mode = "none"' in r.stdout and "framebuffer@" not in r.stdout,
+              "wel2.fb=band without a usable framebuffer falls back to layer: no node, fb-mode none")
+
+    # privacy self-check really fires: a build whose platform string says Apple (stands for any leak) exits 3
+    bad = os.path.join(tmp, "gfdt_dump_leak")
+    r = sh(["cc", "-std=c11", "-O1", "-DGFDT_PLATFORM=\"AppleT8103\"", "-I" + os.path.join(EL2, "include"), "-I" + os.path.join(EL2, "boot")]
+           + srcs + ["-o", bad])
+    check(r.returncode == 0, "the leak variant builds")
+    r = sh([bad, fx, "--layer", "0x802000000", "--entry", "0x814000000", "--image-size", "0x800000"])
+    check(r.returncode == 3 and "PRIVACY" in r.stderr, "an 'apple' value (any case, raw byte scan) makes the tool exit 3")
 
     # the layer's placement rule is applied: an entry in the 64 MB piece (below 128 MB) is refused, as is one near the top
     r = sh([tool, fx, "--layer", "0x8c0000000", "--entry", "0x804000000", "--image-size", "0x800000"])

@@ -301,10 +301,42 @@ with tempfile.TemporaryDirectory() as tmp:
         check(rc == want_rc and "kboot_boot" not in names(t), "D2 stops before the jump on %s (exit %d)" % (label, rc))
     open(os.path.join(tmp, "gfdt-rc.txt"), "w").write("0\n")
 
-    # D2 whose FDT cannot be read back warns and goes on (the checks could not be done); D0 exits 3
+    # gfdt_dump exit 2 (usage / malformed input) or a crash is not a placement verdict: stop, exit 1, say so
+    for code, label in ((2, "exit 2"), (139, "a crash-like exit 139")):
+        open(os.path.join(tmp, "gfdt-rc.txt"), "w").write("%d\n" % code)
+        t = Fake()
+        rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+        check(rc == 1 and "kboot_boot" not in names(t) and "not a verdict" in out, "D2 stops before the jump on gfdt_dump %s, not called a placement refusal" % label)
+    open(os.path.join(tmp, "gfdt-rc.txt"), "w").write("1\n")
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    check(rc == 4 and "placement rule" in out and "kboot_boot" not in names(t), "gfdt_dump exit 1 is the placement refusal (exit 4)")
+    open(os.path.join(tmp, "gfdt-rc.txt"), "w").write("0\n")
+    # a tool that cannot be started (OSError from subprocess) stops before the jump with a clear message
+    broken = os.path.join(tmp, "broken_dump")
+    open(broken, "w").write("#!/nonexistent/interpreter\n")
+    os.chmod(broken, 0o755)
+    for opts, label in ((["--fdt-dump", broken, "--gfdt-dump", GD], "fdt_m1_dump"), (["--fdt-dump", FD, "--gfdt-dump", broken], "gfdt_dump")):
+        t = Fake()
+        rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go"] + opts, t, tmp)
+        check(rc == 1 and "NOT jumping" in out and "kboot_boot" not in names(t), "a %s that cannot start stops before the jump" % label)
+
+    # D2 whose FDT cannot be read back must NOT jump (exit 3, hint --fdt-addr); the same for a bad magic; --fdt-addr fixes it
     t = NoConsole()
     rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--gfdt-dump", GD], t, tmp)
-    check(rc == 0 and "no read-back" in out and "kboot_boot" in names(t), "D2 without a captured FDT address warns and jumps")
+    check(rc == 3 and "--fdt-addr" in out and "kboot_boot" not in names(t) and "msr_daif" not in names(t),
+          "D2 without a captured FDT address does not jump (exit 3, --fdt-addr hint)")
+
+    class BadMagic(Fake):
+        def read(self, addr, n):
+            super().read(addr, n)
+            return b"\0" * n
+    t = BadMagic()
+    rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    check(rc == 3 and "no FDT magic" in out and "kboot_boot" not in names(t), "D2 with no FDT magic at the address does not jump (exit 3)")
+    t = NoConsole()
+    rc, _ = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--fdt-addr", "0x840000000", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    check(rc == 0 and names(t)[-1] == "kboot_boot", "D2 with --fdt-addr reads back, checks and jumps")
     t = NoConsole()
     rc, _ = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd"], t, tmp)
     check(rc == 3, "D0 without a captured FDT address exits 3")

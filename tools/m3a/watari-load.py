@@ -16,7 +16,7 @@ Call order of a run (the unit test test_watari_load.py asserts it):
   6. kboot_prepare_dt(dtb)   (m1n1 fills the DTB from the ADT; a non-zero return aborts before anything runs)
   7. rung L0 and D0 stop here: read the prepared FDT back, save it in the host folder, run fdt_m1_dump on it (D0 also
      gfdt_dump: the guest FDT the layer would build, and the placement check of the EDK2 block). NO jump.
-     D2 does the same read-back and the same checks, then jumps (a read-back that cannot be done only warns).
+     D2 does the same read-back and the same checks, then jumps; a read-back that cannot be done (exit 3) or any refusal stops it.
   8. DAIF = 0xc0, kboot_boot(layer). USB goes away during this request: a lost reply or a timeout AFTER the request was
      sent counts as "handed over".
 
@@ -580,7 +580,6 @@ def run(args, target):
     # --- 7. rungs L0 / D0: read it back, check it, stop. D2: the same, then the jump ----------------------------------
     if preview or edk2_name:
         label = args.rung
-        soft = not preview                       # D2: a read-back that cannot be done only warns; a refusal still stops
         path = None
         if fdt_addr is None:
             say("%s: the prepared FDT address could not be captured from m1n1's console text." % label)
@@ -602,14 +601,18 @@ def run(args, target):
                     (total, fdt_addr, path))
                 say("never commit it, never paste it). sha256 %s" % sha256(blob)[:16])
         if path is None:
-            if not soft:
-                return 3
-            say("D2: no read-back, so the block and placement checks could not be done. Going on is the user's risk: "
-                "rung D0 first.")
+            # the checks could not be made: no jump, on any rung (D2 included). Safe default, no override flag.
+            say("%s: no read-back, so the block and placement checks cannot be made: NOT jumping. Rerun with "
+                "--fdt-addr 0x<address from the m1n1 console line 'FDT prepared at ...'>." % label)
+            return 3
         else:
             if isinstance(target, DryTarget):
                 say("(dry run: the 'prepared' FDT is the unmodified DTB; on hardware m1n1 adds memory, cpus, framebuffer)")
-            dump_text = run_dump(ensure_dump_tool(bundle, args.fdt_dump), path)
+            try:
+                dump_text = run_dump(ensure_dump_tool(bundle, args.fdt_dump), path)
+            except OSError as e:
+                say("fdt_m1_dump could not be run (%s: %s): NOT jumping." % (type(e).__name__, e))
+                return 1
             if preview:
                 blocks = l0_blocks
                 say("== block placement check (host side): are the layer/guest%s blocks wholly inside usable RAM? ==" %
@@ -630,14 +633,22 @@ def run(args, target):
             if edk2_name:
                 gaddr = l0_blocks["edk2"] if preview else edk2_addr
                 laddr = l0_blocks["layer"] if preview else layer_addr
-                grc, _ = run_gfdt(ensure_dump_tool(bundle, args.gfdt_dump, "gfdt_dump"), path, laddr, gaddr,
-                                  struct.unpack_from("<Q", edk2, 16)[0], args.fb)
+                try:
+                    grc, _ = run_gfdt(ensure_dump_tool(bundle, args.gfdt_dump, "gfdt_dump"), path, laddr, gaddr,
+                                      struct.unpack_from("<Q", edk2, 16)[0], args.fb)
+                except OSError as e:
+                    say("gfdt_dump could not be run (%s: %s): NOT jumping." % (type(e).__name__, e))
+                    return 1
                 if grc == 3:
                     say("GUEST FDT CHECK: FAIL - privacy self-check hit; do not use or share this output.")
                     return 1
+                if grc not in (0, 1):
+                    say("GUEST FDT CHECK: ERROR - gfdt_dump failed with exit %d (usage error, unreadable or malformed FDT, or a "
+                        "crash), which is not a verdict on the placement. NOT jumping." % grc)
+                    return 1
                 if grc and not target.dry_run:
-                    say("GUEST FDT CHECK: FAIL - the layer's placement rule or the builder would refuse this (rc %d); the "
-                        "layer would stop with a FATAL line. Nothing was jumped to." % grc)
+                    say("GUEST FDT CHECK: FAIL - the layer's placement rule or the builder would refuse this (exit 1); the "
+                        "layer would stop with a FATAL line. Nothing was jumped to.")
                     return 4
                 if grc:
                     say("(dry run: gfdt_dump refused the unmodified DTB with the fake addresses, rc %d: expected)" % grc)
