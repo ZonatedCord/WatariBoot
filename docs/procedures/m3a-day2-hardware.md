@@ -345,7 +345,7 @@ The loader builds `wel2.step=2 wel2.cpuif=trap` (default `--cpuif trap` for L2-L
 | **Nothing at all (black)**, Mac not restarting | L1 passed, so the layer ran: either no drawing (no framebuffer node, L0 would have told), or **m1n1's `fb_shutdown(false)` switched the panel off / the layer's stage-1 mapping of the framebuffer (Normal non-cacheable, `MAIR_EL2` Attr2 = `0x44`) is wrong** (Q-5, R-2), or a hang before checkpoint 0 | abort after 60 s; if the Mac restarts by itself after 5 s the layer ran to the reset but drew nothing -> display path problem (record exactly). Candidates for a next build: write to the framebuffer cacheable + flush, or keep m1n1's display on. Escalate to Opus |
 | Black, then Mac **restarts** | the code ran to the reset with a dark panel | as above: display problem, not a layer problem |
 | Square 0 green, square 1 **missing/amber**, no more | died between the MMU-off paint and `s1_enable` or right after the enable: stage-1 tables/MAIR/granule or E2H switch | record; abort; (cache incoherence R-7 is the usual suspect) |
-| Red square n, `LAST ERROR: FATAL AT CHECKPOINT <n>` | the layer's `fatal()` fired; the log's last lines have the reason and `ESR/ELR/FAR/SPSR` | transcribe all; ESR class table in the layer's source; map: see 3.2 for the stage |
+| Red square n, `LAST ERROR:` with the reason text (e.g. `guest info block does not lie in guest RAM`, or the exception vector name); `FATAL AT CHECKPOINT <n>` only if no reason was set; read n from the red square or band line 2 | the layer's `fatal()` fired; the log's last lines have the reason and `ESR/ELR/FAR/SPSR` | transcribe all; ESR class table in the layer's source; map: see 3.2 for the stage |
 | Red/stopped at 3 (platform discovery) | FDT field missing/unexpected (cpu count, memory) | compare with the L0 dump |
 | Stopped at 4 or 5 (FIQ / AIC init) | unknown FIQ source storming, AIC window/base wrong (note the 0xc000 vs 0x8000 window in `re/m3a-ehw0-measurements.md`), R-4 | transcribe counters; abort |
 | Garbled text, wrong colours, striped | framebuffer stride/format mismatch (`x2r10g10b10` vs `x8r8g8b8`) | record format from the L0 dump; Q-5 |
@@ -391,7 +391,7 @@ wl L3-notc --rung L3 --go --cpuif trap-notc --args wel2.hold=1
 | What the photo shows | Cause | Next |
 |---|---|---|
 | Stopped after square 8 (entering the guest), no guest square | the `eret` to the guest did not run, or the guest crashed silently: exception at EL1 with no vectors, hand-over of RAM (T7b), wrong `wel2.guest`, guest not 4 KB aligned/size | transcribe the log; any `UNEXPECTED EXCEPTION`/`FATAL` line with its ESR/ELR; check the guest address in the loader text |
-| `FATAL: guest info block not in guest RAM` | guest RAM bookkeeping (R-10) / T7b | abort, record; Opus |
+| `Watari EL2: FATAL: guest info block does not lie in guest RAM` | guest RAM bookkeeping (R-10) / T7b | abort, record; Opus |
 | G1 FAIL (square 17 red) | hand-over to EL1 or the HVC path: no `WEL2_LOG`, no info block, CurrentEL not 1 | record the log lines exactly |
 | G2 FAIL | PSCI dispatch | record |
 | G3 FAIL | `ID_AA64PFR0_EL1.GIC` not 1 (TID3 emulation) or PAuth keys trapped (`API/APK` not set: log shows EC 0x18 with `APIAKey...`) | record ESR |

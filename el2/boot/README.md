@@ -122,7 +122,7 @@ Success = EDK2 prints `BdsDxe: Press any key to enter the Boot Manager Menu` (ab
 
 
 ## Hardening before M2 (#54, #53, #52; QEMU TCG, all verified by `./run-all.sh`, both modes)
-`./run-all.sh` runs the host tests and `run-qemu`, `run-m1`, `run-m1-2`, `run-m1-3`, `run-m1-5` (plus its `noeoi` variant) and `run-m1-4` with `CPUIF=hw` and `CPUIF=trap` (`SKIP_M14=1` skips the EDK2 chain test, which needs the data disk). Dead ends and limits: `docs/FAILURES.md` F-22.
+`./run-all.sh` runs the host tests and `run-qemu`, `run-m1`, `run-m1-2`, `run-m1-3`, `run-m1-5` (plus its `noeoi` variant) and `run-m1-4` with `CPUIF=hw`, `CPUIF=trap` and `CPUIF=trap-notc`, plus `run-step`, `run-hold`, `run-tid3` and `run-g5b-negative` (`SKIP_M14=1` skips the EDK2 chain test, which needs the data disk). Dead ends and limits: `docs/FAILURES.md` F-22.
 
 **Mode switch (#52).** The virtual CPU interface runs in `HW` mode (list registers only, no ICC traps; the default) or `TRAP_EMULATE`. Chosen at boot: build default `-DWEL2_CPUIF_TRAP_DEFAULT=1` (e.g. `make XFLAGS=-DWEL2_CPUIF_TRAP_DEFAULT=1`), overridden at run time by `/chosen/bootargs`: QEMU `-append "wel2.cpuif=trap"` (or `hw`). The test scripts take `CPUIF=trap`. A second boot argument, `wel2.test=noeoi`, is a test knob (SGI list registers without the EOI maintenance bit, so only the underflow interrupt refills them).
 
