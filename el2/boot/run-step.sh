@@ -48,11 +48,11 @@ echo "step 1: reset with no UART text: $([ ! -s "$OUT/step1-uart.txt" ] && [ "$E
 run_qemu 2
 [ "$EXITED" = 1 ] || { echo "FAIL (step 2): QEMU still running after 60 s, no reset"; rc=1; }
 need 2 "Watari EL2: hello from EL2"
-need 2 "Watari EL2: checkpoint 0x0000000000000002 BANNER"
-need 2 "Watari EL2: checkpoint 0x0000000000000005 CPU_INIT"
+need 2 "Watari EL2: checkpoint 2 BANNER"
+need 2 "Watari EL2: checkpoint 5 CPU_INIT"
 need 2 "Watari EL2: wel2.step=2: platform and interrupt controller are up, resetting the machine"
 forbid 2 "stage-2 on"
-forbid 2 "checkpoint 0x0000000000000006"
+forbid 2 "checkpoint 6"
 forbid 2 "Watari EL1:"
 forbid 2 "FATAL"
 echo "step 2: banner and checkpoints 0-5, then reset, no stage 2: $([ $rc = 0 ] && echo ok || echo FAILED)"
@@ -66,7 +66,7 @@ done
 for g in G7 G8 G9 G10; do
     grep -aqE "(^|[: ])$g (PASS|FAIL|SKIP) " "$OUT/step3-uart.txt" && { echo "UNEXPECTED (step 3): $g ran"; rc=1; }
 done
-need 3 "Watari EL2: checkpoint 0x0000000000000008 ENTER_GUEST"
+need 3 "Watari EL2: checkpoint 8 ENTER_GUEST"
 grep -aE "(^|[: ])G[0-9]+[ab]? (FAIL) " "$OUT/step3-uart.txt" && { echo "FAIL (step 3): a guest check failed"; rc=1; }
 echo "step 3: G1-G6 only: $([ $rc = 0 ] && echo ok || echo FAILED)"
 

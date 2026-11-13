@@ -267,6 +267,8 @@ static void report_exception(unsigned idx, u64 esr, u64 elr, u64 far)
     b_flush(&b);
 }
 
+static volatile u32 g_fpac_expect, g_fpac_seen;          /* G3: a failed AUTIA may raise FEAT_FPAC's EC 0x1c exception */
+
 void guest_exception(unsigned idx, void *frame)
 {
     (void)frame;
@@ -276,6 +278,11 @@ void guest_exception(unsigned idx, void *frame)
     }
     u64 esr = SYSREG_RD(esr_el1), elr = SYSREG_RD(elr_el1), far = SYSREG_RD(far_el1);
 
+    if (idx == 4 && (esr >> 26) == 0x1c && g_fpac_expect) {   /* FEAT_FPAC: the authentication failure is an exception */
+        g_fpac_seen++;
+        SYSREG_WR(elr_el1, elr + 4);                     /* skip the AUTIA, as the check wants */
+        return;
+    }
     if (idx == 4 && (esr >> 26) == 0x15) {               /* SVC from the G1 round trip */
         g_svc++;
         return;
@@ -446,8 +453,11 @@ static bool pauth_test(u64 *signed_out, bool *tamper_ok)
     u64 a = s;
     __asm__ volatile(".arch_extension pauth\n autia %0, %1" : "+r"(a) : "r"(mod));
     u64 bad = s ^ (1ull << 51);                          /* corrupt the signature */
+    u32 fpac0 = g_fpac_seen;
+    g_fpac_expect = 1;                                   /* with FEAT_FPAC the failure is an EC 0x1c exception, else a poisoned pointer */
     __asm__ volatile(".arch_extension pauth\n autia %0, %1" : "+r"(bad) : "r"(mod));
-    *tamper_ok = bad != p;                               /* a failed authentication must not give the pointer back */
+    g_fpac_expect = 0;
+    *tamper_ok = bad != p || g_fpac_seen != fpac0;       /* a failed authentication must not give the pointer back */
     SYSREG_WR(sctlr_el1, sctlr);
     __asm__ volatile("isb");
     return a == p && s != p;
