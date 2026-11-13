@@ -133,7 +133,9 @@ The proxy request `kboot_boot` (src/proxy.c:406-409 calls `kboot_boot`, then the
 
 General rules for the script (same as `ehw0.py`): never import `m1n1.setup`; only `read32`/`read64` on the proxy and ADT parsing on the host; **no writes of any kind**; `--dry-run` prints the plan with addresses and the gating decision without touching the proxy; a fake-proxy test asserts that no write method is ever called. Derive every address from the ADT where possible and compare with the constant in the table; on a mismatch print both and **skip** the register (never guess).
 
-**Gating (mandatory):** reading the registers of an unpowered block can hang or raise an SError. For every block, first read its PMGR PS register and read the block only if `ACTUAL == 0xf`. The proxy guards memory reads with an exception guard (`GUARD_RETURN`, src/uartproxy.c:225), which catches a synchronous error but not a bus that never answers [hypothesis: whether the t8103 fabric hangs or faults on a gated block].
+**Gating (mandatory):** reading the registers of an unpowered block can hang or raise an SError. For every block, first read its PMGR PS register and read the block only if `ACTUAL == 0xf`. **Exception guard (mandatory):** the `GUARD_RETURN` in src/uartproxy.c:225 covers only the bulk `readmem` request; `p.read32`/`p.read64` are `P_READ32`/`P_READ64`, and the exception guard defaults to `GUARD_OFF` (src/exception.c:21), so a faulting read ends in "Unhandled exception, rebooting..." (`flush_and_reboot`, src/exception.c:356-359; SError path near 470) [verified by the independent verifier, 2026-11-13]. ehw2 must therefore call `p.set_exc_guard(GUARD.SKIP | GUARD.SILENT)` (proxyclient proxy.py:479-484, 799) **before the first read**, check `p.get_exc_count()` (proxy.py:801) after **each** read and treat a change as "read faulted, value invalid", and restore `GUARD.OFF` at exit (also on error). A bus that never answers may still hang the proxy; the guard does not help there [hypothesis: whether the t8103 fabric hangs or faults on a gated block].
+
+**Caveat: what ehw2 can and cannot see.** ehw2 runs over the proxy **before** `kboot_boot` and before the tail of `m1n1_main` (section 1.2). It therefore reads the state m1n1 has **while serving the proxy**, not the true hand-over state: the DWC3 of the console port reads as running device mode (RUN_STOP = 1, not halted); `pcie_init` has not run, so `apcie_gp` may still be off (then the apcie DARTs are skipped by the gate); `nvme_shutdown`, `display_shutdown`, `fb_shutdown` and `mmu_shutdown` have not run yet. The exact hand-over state needs a read from inside the layer (a later item).
 
 ### 5.1 PMGR (always readable)
 | What | Address | Decode | Source |
@@ -141,34 +143,34 @@ General rules for the script (same as `ehw0.py`): never import `m1n1.setup`; onl
 | All device PS registers of the main PMGR | derived from ADT `/arm-io/pmgr` `ps-regs` + `devices` (m1n1's `pmgr_device_get_addr`), same as proxyclient `PMGR.dump_all()` | `ACTUAL` 7:4, `TARGET` 3:0, `PARENT_OFF` 11, `DEV_DISABLE` 10, `WAS_CLKGATED` 9, `WAS_PWRGATED` 8, `AUTO_ENABLE` 28, `RESET` 31 | src/pmgr.c:9-17, 120-138; proxyclient hw/pmgr.py:57-71 |
 | Named cross-check set (main PMGR, base 0x23b700000) | +0x3f0 ans2, +0x418 apcie_st, +0x348 apcie, +0x3e8 apcie_gp, +0x360 disp0_fe, +0x10018 disp0_cpu0, +0xc00 sep, +0x3d8 pmp, +0x1c8 sio, +0x258 spi3, +0x240 spi0, +0x1e0 fpwm1, +0x1f0 i2c0, +0x420..+0x468 atc0/atc1 common, pcie, cio, cio_pcie, cio_usb | as above | linux t8103-pmgr.dtsi |
 | Mini PMGR (base 0x23d280000) | +0x88 atc0_usb_aon, +0x90 atc1_usb_aon, +0x98 atc0_usb, +0xa0 atc1_usb, +0xb8 debug_usb | as above | linux t8103-pmgr.dtsi; t8103.dtsi:629 |
-| Clock configuration | PMGR ADT reg 2: 86 words at +0x40000, 8 at +0x40200, 2 at +0x40280 | raw words (`SRC` bits 30:24); record only | proxyclient hw/pmgr.py:18-23, 52-55 |
+| Clock configuration | **offsets relative to PMGR ADT reg 2** (never 0x23b700000 + 0x40000): 86 words at +0x40000, 8 at +0x40200, 2 at +0x40280 | raw words (`SRC` bits 30:24); record only | proxyclient hw/pmgr.py:18-23, 52-55 |
 
 ### 5.2 Coprocessors (read only if the owning PS is 0xf)
 | Block | Base | Registers (read32) | Owning PS | Source |
 |---|---|---|---|---|
-| ANS ASC | 0x277400000 (ADT `/arm-io/ans` reg 0) | +0x44 CPU_CONTROL (bit 4 = running), +0x48 CPU_STATUS, +0x8110 and +0x8114 mailbox status | `ans2` 0x3f0 | src/asc.c:8-24; docs/hw/soc/asc.md:8-20, 66; linux t8103.dtsi:686-698 |
+| ANS ASC | 0x277400000 (ADT `/arm-io/ans` reg 0) | +0x44 CPU_CONTROL (bit 4 = running), +0x48 CPU_STATUS, +0x8110 and +0x8114 mailbox status (only bit 17 EMPTY is reliable: m1n1 `asc.c` names bit 16 FULL for the A2I side; "bit 16 = not empty" in the docs is [hypothesis]) | `ans2` 0x3f0 | src/asc.c:8-24; docs/hw/soc/asc.md:8-20, 66; linux t8103.dtsi:686-698 |
 | ANS NVMe | 0x27bcc0000 (ADT `/arm-io/ans` reg 3 per src/nvme.c:310) | +0x1300 boot status (`0xde71ce55` = firmware up) and CSTS at the NVMe-standard offset +0x1c (Linux reads `NVME_REG_CSTS` through the same mapping) | `ans2` | linux apple.c:48-49, 801, 883, 1038; src/nvme.c:39-40 |
 | SART (ANS) | 0x27bc50000 (ADT `/arm-io/sart-ans` reg 0) | 16 x `CONFIG` at +0x00+4*i, 16 x `PADDR` at +0x40+4*i (v2); print flags, size (x 4 KB), paddr (x 4 KB) and flag whether the range overlaps the guest RAM list of `kboot_prepare_dt` | `ans2` | src/sart.c:34-43; linux t8103.dtsi:700-704 |
 | DCP ASC | 0x231c00000 (ADT `/arm-io/dcp` reg 0) | +0x44, +0x48, +0x8110, +0x8114 | `disp0_cpu0` 0x10018 | asahi-dts t8103.dtsi:644-652; src/asc.c |
-| SMC ASC | 0x23e400000 (ADT `/arm-io/smc`) | +0x44, +0x48 | `smc` domain (main PMGR, offset from ADT) | asahi-dts t8103.dtsi:1235 |
+| SMC ASC | 0x23e400000 (ADT `/arm-io/smc`) | +0x44, +0x48 | none known in Linux; read only if the ADT node gives a `clock-gates` entry, else **skip** | asahi-dts t8103.dtsi:1235 |
 | SEP ASC | 0x242400000 (ADT `/arm-io/sep`) | +0x44, +0x48 (expect stopped or idle) | `sep` 0xc00 | asahi-dts t8103.dtsi:1309; docs/platform/introduction.md:151 |
-| AOP, PMP ASC | ADT `/arm-io/aop`, `/arm-io/pmp` reg 0 (aop mailbox at 0x24a408000 implies ASC base 0x24a400000, to be checked against the ADT) | +0x44, +0x48 | `pmp` 0x3d8 and ADT clock gates | asahi-dts t8103.dtsi:1360, 1396 |
+| AOP, PMP ASC | ADT `/arm-io/aop`, `/arm-io/pmp` reg 0 (aop mailbox at 0x24a408000 implies ASC base 0x24a400000, to be checked against the ADT) | +0x44, +0x48 | none known in Linux for AOP; PMP: `pmp` 0x3d8 if the ADT agrees; read only if the ADT gives a gate, else **skip** | asahi-dts t8103.dtsi:1360, 1396 |
 
 ### 5.3 DARTs (read only if the owning PS is 0xf; no register is written, no stream command issued)
 Per DART (`dart,t8020` style on the t8103): `PARAMS1` +0x00 (page shift bits 27:24), `PARAMS2` +0x04 (bypass support bit 0), `ERROR` +0x40, `CONFIG` +0x60 (lock = bit 15), `ENABLED_STREAMS` +0xfc, and for each stream 0..15 `TCR` at +0x100+4*s (translate bit 7, bypass-DART bit 8, bypass-DAPF bit 12) and the first `TTBR` at +0x200+16*s (valid bit 31, address bits 30:0 in 4 KB units) [verified: src/dart.c (T8020 defines); linux apple-dart.c:43-47, 69, 79-87]. Do **not** read anything else (no `STREAM_COMMAND`, `STREAM_SELECT`, TLB registers).
 | DART | Base | Why | Source |
 |---|---|---|---|
-| dart-disp0, dart-dcp | 0x231304000, 0x23130c000 | confirm the lock bit, the framebuffer mapping, no active error | asahi-dts t8103.dtsi:610-626; src/kboot.c:1938 |
-| dart-usb0, dart-usb1 (ADT `/arm-io/dart-usb<N>`; Linux names them `dwc3_N_dart_0/1` at 0x382f00000, 0x382f80000 and 0x502f00000, 0x502f80000) | as given | m1n1 left translation entries from its USB console | asahi-dts t8103.dtsi:1664-1679, 1813-1828; src/usb.c:36-39 |
-| apcie DARTs 0..2 | 0x681008000, 0x682008000, 0x683008000 | bypass vs translate for Wi-Fi/BT/SD DMA | linux t8103.dtsi:720-745 |
-| sio DART | 0x235004000 | SPI/I2C DMA masters | linux t8103.dtsi:359-366 (v6.12 `sio_dart`) |
+| dart-disp0, dart-dcp (gate `disp0_cpu0` 0x10018) | 0x231304000, 0x23130c000 | confirm the lock bit, the framebuffer mapping, no active error | asahi-dts t8103.dtsi:610-626; src/kboot.c:1938 |
+| dart-usb0, dart-usb1 (gate `atc0_usb` 0x98 / `atc1_usb` 0xa0, mini PMGR; ADT `/arm-io/dart-usb<N>`; Linux names them `dwc3_N_dart_0/1` at 0x382f00000, 0x382f80000 and 0x502f00000, 0x502f80000) | as given | m1n1 left translation entries from its USB console | asahi-dts t8103.dtsi:1664-1679, 1813-1828; src/usb.c:36-39 |
+| apcie DARTs 0..2 (gate `apcie_gp` 0x3e8) | 0x681008000, 0x682008000, 0x683008000 | bypass vs translate for Wi-Fi/BT/SD DMA | linux t8103.dtsi:720-745 |
+| sio DART (gate `sio_cpu` 0x1d0) | 0x235004000 | SPI/I2C DMA masters | linux t8103.dtsi:359-366 (v6.12 `sio_dart`) |
 
 ### 5.4 USB and SPI blocks
 | Block | Registers (read32) | Gate | Source |
 |---|---|---|---|
 | DWC3 0 and 1 (ADT `/arm-io/usb-drd<N>` reg 0; asahi-dts shows 0x382280000 and 0x502280000) | `GCTL` +0xc110 (bits `PRTCAPDIR`: host / device / OTG), `GSTS` +0xc118 (current mode, bits 1:0: 0 device, 1 host; linux drivers/usb/dwc3/core.h:294-296), `DCTL` +0xc704 (RUN_STOP bit 31), `DSTS` +0xc70c (`DEVCTRLHLT` bit 22) | `atc0_usb` 0x98 / `atc1_usb` 0xa0 (mini PMGR) | src/usb_dwc3_regs.h:91-138; src/usb.c:114; asahi-dts t8103.dtsi:1648, 1797 |
-| ATC PHY 0 and 1 (ADT `/arm-io/atc-phy<N>` reg 0; 0x383000000 and 0x503000000) | the five words m1n1 writes: +0x00, +0x04, +0x08, +0x1c (record raw) | same | src/usb.c:149-153; asahi-dts t8103.dtsi:1682, 1831 |
-| Pipehandler (ADT `/arm-io/usb-drd<N>` reg 3) | +0x0c MUX_CTRL, +0x1c AON_GEN, +0x20 NONSELECTED_OVERRIDE | same | src/usb.c:47-63, 118, 155-157 |
+| ATC PHY 0 and 1 (ADT `/arm-io/atc-phy<N>` reg 0; 0x383000000 and 0x503000000) | the four words m1n1 writes: +0x00, +0x04, +0x08, +0x1c (record raw) | same | src/usb.c:149-153; asahi-dts t8103.dtsi:1682, 1831 |
+| Pipehandler (ADT `/arm-io/usb-drd<N>` reg 3; cross-check 0x382a84000 for usb-drd0, per the verifier) | +0x0c MUX_CTRL, +0x1c AON_GEN, +0x20 NONSELECTED_OVERRIDE | same | src/usb.c:47-63, 118, 155-157 |
 | SPI3 controller 0x23510c000 | none beyond the PMGR states of `sio`, `spi_p`, `spi3` (the controller's register map is not documented publicly; reading unknown registers is not justified) | PMGR only | asahi-dts t8103.dtsi:862 |
 | GPIO 195 `spien` (pinctrl_ap 0x23c100000) | skip: the pin-control register layout is Linux-driver knowledge (`apple-pinctrl`), keep for a later read-only addition | n/a | asahi-dts j293 dts:93 |
 
@@ -181,7 +183,7 @@ Per DART (`dart,t8020` style on the t8103): `PARAMS1` +0x00 (page shift bits 27:
 2. Is DCP running (CPU_CONTROL bit 4) or stopped, and are dart-disp0 and dart-dcp locked with the framebuffer mapped?
 3. Which domains are left on that nothing in our design needs (candidates for a later, deliberate shutdown by the layer, never by Windows)?
 4. DART mode (translate or bypass) for the PCIe and USB masters.
-5. DWC3 mode (device, halted) and PD/PHY words, for the T15 follow-up.
+5. DWC3 mode **as seen over the proxy** (running, device mode; not the halted hand-over state) and the PHY words, for the T15 follow-up.
 
 ## 6. Risks for the layer and EDK2 now
 
