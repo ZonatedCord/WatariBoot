@@ -78,3 +78,6 @@
 ## Deferred / not done
 - Transcription of the videos (tick counts of G7/G8, MPIDRs of G9): not done; the videos stay on the host and are deleted at cleanup unless Marco wants them.
 - DFU dry run: not offered again today (still unproven, F-29).
+
+## Observation added after the run (Marco, 2026-11-13)
+- **Panel brightness carries over:** the backlight level set in macOS stays in effect after rebooting into m1n1 and the layer (neither drives the backlight). With low brightness in macOS the M1 screen was dim under m1n1; raising it to the maximum in macOS before the reboot kept it at maximum. [verified: Marco's observation, day 2] -> preparation step for every hardware day: set brightness to maximum in macOS before booting into m1n1 (better photos).
