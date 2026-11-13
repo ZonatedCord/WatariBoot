@@ -8,12 +8,15 @@ m1n1.sysreg. It NEVER imports m1n1.setup: setup.py resets a panic counter in the
 
 Call order of a run (the unit test test_watari_load.py asserts it):
   1. verify the bundle against SHA256SUMS (refuse otherwise)
-  2. allocate + write: DTB (malloc), layer (memalign 32 MB), guest (memalign 32 MB, rungs L3-L5)
+  2. allocate + write: DTB (malloc), layer (memalign 32 MB), guest (memalign 32 MB, rungs L3-L5), EDK2 (memalign 32 MB,
+     its own block, rungs D0/D2: --edk2 <file>; wel2.guest = its entry, wel2.abi=fdt, wel2.gfdt=build, wel2.fb=<--fb>)
   3. cache maintenance: dc cvau + ic ivau over each image
   4. ONLY NOW set the boot arguments (they contain the guest address, DESIGN L-2): kboot_set_chosen("bootargs", ...)
   5. optional smp_start_secondaries (rung L5)
   6. kboot_prepare_dt(dtb)   (m1n1 fills the DTB from the ADT; a non-zero return aborts before anything runs)
-  7. rung L0 stops here: read the prepared FDT back, save it in the host folder, run fdt_m1_dump on it. NO jump.
+  7. rung L0 and D0 stop here: read the prepared FDT back, save it in the host folder, run fdt_m1_dump on it (D0 also
+     gfdt_dump: the guest FDT the layer would build, and the placement check of the EDK2 block). NO jump.
+     D2 does the same read-back and the same checks, then jumps (a read-back that cannot be done only warns).
   8. DAIF = 0xc0, kboot_boot(layer). USB goes away during this request: a lost reply or a timeout AFTER the request was
      sent counts as "handed over".
 
@@ -21,7 +24,8 @@ The loader writes only RAM (heap blocks, the DTB, m1n1's FDT copy). m1n1's own k
 non-persistent hardware initialisation (ISP heap, display DART lock, USB/PCIe bring-up, SEP random bytes), all reset by a
 reboot [hypothesis: not every helper was read]. Nothing is written to storage, NVRAM or the PMU by us.
 
-Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0: prepared but cannot read the FDT back, 4 L0: a heap block is not wholly inside usable RAM.
+Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0/D0: prepared but cannot read the FDT back,
+4 L0/D0/D2: a heap block is not wholly inside usable RAM, or the layer's placement rule would refuse the EDK2 block.
 """
 import argparse
 import hashlib
@@ -42,7 +46,13 @@ RUNGS = {
     "L3": ("wel2-chain.bin", "m1guest.bin", 3, False),
     "L4": ("wel2-chain.bin", "m1guest.bin", 4, False),
     "L5": ("wel2-chain.bin", "m1guest.bin", 5, True),
+    # Day 3 (PLAN T13 H2-H7): the guest is EDK2 (--edk2 <file>), the test guest is not loaded. D0 prepares and previews, no
+    # jump; D2 jumps (chain layer, no wel2.step). D1 is "--rung L5 --fb band" (check G12) [check]; D3-D5 are D2 with other options.
+    "D0": (None, None, None, True),
+    "D2": ("wel2-chain.bin", None, None, False),
 }
+EDK2_RUNGS = ("D0", "D2")
+FB_MODES = ("layer", "band", "guest")
 
 
 class LoadError(Exception):
@@ -117,15 +127,23 @@ def check_dtb(data):
 # Boot arguments
 # ----------------------------------------------------------------------------------------------------------------------
 
-def build_bootargs(step, cpuif, guest_addr, extra):
-    """wel2.* arguments (el2/boot/README.md). Built only after the guest block exists (its address is in them)."""
+def build_bootargs(step, cpuif, guest_addr, extra, edk2=False, fb="layer"):
+    """wel2.* arguments (el2/boot/README.md). Built only after the guest block exists (its address is in them).
+    edk2: the guest is EDK2: wel2.abi=fdt wel2.gfdt=build (the layer builds the guest FDT) and always wel2.fb=<mode>.
+    The mode is passed through as given; nothing here depends on which modes the layer knows. Without edk2, wel2.fb is
+    added only when it is not the default "layer"."""
     parts = []
     if step is not None:
         parts.append("wel2.step=%d" % step)
-    if step is not None and step >= 2 and cpuif:
+    if cpuif and ((step is not None and step >= 2) or edk2):
         parts.append("wel2.cpuif=%s" % cpuif)
     if guest_addr is not None:
         parts.append("wel2.guest=0x%x" % guest_addr)
+    if edk2:
+        parts.append("wel2.abi=fdt")
+        parts.append("wel2.gfdt=build")
+    if edk2 or (fb and fb != "layer"):
+        parts.append("wel2.fb=%s" % fb)
     if extra:
         parts.extend(extra.split())
     return " ".join(parts)
@@ -384,10 +402,10 @@ def run_dump(dump_tool, blob_path):
     return r.stdout
 
 
-def ensure_dump_tool(bundle, given):
-    """Prefer the prebuilt arm64 fdt_m1_dump of the bundle (covered by SHA256SUMS). Never run `cc` blind: on a Mac
+def ensure_dump_tool(bundle, given, name="fdt_m1_dump"):
+    """Prefer the prebuilt arm64 tool of the bundle (covered by SHA256SUMS). Never run `cc` blind: on a Mac
     without the Command Line Tools /usr/bin/cc can open the installer (an install on a zero-footprint host)."""
-    for tool in (given, os.path.join(bundle, "fdt_m1_dump")):
+    for tool in (given, os.path.join(bundle, name)):
         if not tool:
             continue
         if os.path.isfile(tool) and not os.access(tool, os.X_OK):
@@ -398,13 +416,33 @@ def ensure_dump_tool(bundle, given):
             raise LoadError("--fdt-dump %s is not usable" % given)
     build = os.path.join(bundle, "fdt-dump-src", "build.sh")
     if os.path.isfile(build) and subprocess.run(["xcode-select", "-p"], capture_output=True).returncode == 0:
-        say("building fdt_m1_dump with the installed Command Line Tools (output stays in the bundle folder) ...")
+        say("building %s with the installed Command Line Tools (output stays in the bundle folder) ..." % name)
         subprocess.run(["sh", build], check=True)
-        built = os.path.join(bundle, "fdt-dump-src", "fdt_m1_dump")
+        built = os.path.join(bundle, "fdt-dump-src", name)
         if os.access(built, os.X_OK):
             return built
-    raise LoadError("no usable fdt_m1_dump (prebuilt one missing or not runnable, Command Line Tools not installed): "
-                    "the prepared FDT is saved; check it on Marco's Mac with the same tool")
+    raise LoadError("no usable %s (prebuilt one missing or not runnable, Command Line Tools not installed): "
+                    "the prepared FDT is saved; check it on Marco's Mac with the same tool" % name)
+
+
+def run_gfdt(tool, blob_path, layer_addr, entry, image_size, fb):
+    """gfdt_dump on the prepared FDT: the guest FDT the layer would build. Returns (rc, stdout). Prints the tool's stdout;
+    its stderr lines (NOTE / PRIVACY / refusal reasons) are echoed. Output is the guest tree, never the prepared FDT."""
+    cmd = [tool, blob_path, "--layer", "0x%x" % layer_addr, "--entry", "0x%x" % entry,
+           "--image-size", "0x%x" % image_size, "--fb", fb]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    say("== gfdt_dump (the guest FDT the layer would build; no serial number, MAC or seed can appear) ==")
+    sys.stdout.write(r.stdout)
+    for ln in r.stderr.splitlines():
+        say("  gfdt_dump: " + ln)
+    if shutil.which("dtc") and r.returncode == 0:
+        out = os.path.join(os.path.dirname(blob_path), "guest-fdt.dtb")
+        if subprocess.run(cmd + ["-o", out], capture_output=True).returncode == 0:
+            d = subprocess.run(["dtc", "-q", "-I", "dtb", "-O", "dts", out], capture_output=True, text=True)
+            if d.returncode == 0:
+                say("== the same guest FDT through dtc ==")
+                sys.stdout.write(d.stdout)
+    return r.returncode, r.stdout
 
 
 def run(args, target):
@@ -414,7 +452,19 @@ def run(args, target):
     if args.smp is not None:
         smp = args.smp
 
-    required = [x for x in (layer_name, guest_name) if x]
+    edk2_name = None
+    if args.edk2:
+        # the EDK2 image must be a file of the bundle (SHA256SUMS covers it): a bare name, or a path inside the bundle
+        full = os.path.abspath(os.path.join(bundle, args.edk2))
+        if os.path.dirname(full) != bundle:
+            raise LoadError("--edk2 %s is not a file of the bundle %s (it must be listed in SHA256SUMS)" % (args.edk2, bundle), 2)
+        edk2_name = os.path.basename(full)
+    if args.rung in EDK2_RUNGS and not edk2_name:
+        raise LoadError("rung %s needs --edk2 <file of the bundle> (WATARI_M1_EFI.fd)" % args.rung, 2)
+    if edk2_name and args.rung not in EDK2_RUNGS + ("L0",):
+        raise LoadError("--edk2 goes with rung D0 or D2 (or L0: the same preview as D0)", 2)
+    preview = args.rung in ("L0", "D0")                # prepares the FDT, reads it back, never jumps
+    required = [x for x in (layer_name, guest_name, edk2_name) if x]
     if not args.dtb:
         required.append("j293-minimal.dtb")
     verified = verify_bundle(bundle, required)
@@ -436,23 +486,30 @@ def run(args, target):
     if guest_name:
         guest = load(guest_name)
         check_image(guest_name, guest, guest=True)
+    edk2 = None
+    if edk2_name:
+        edk2 = load(edk2_name)
+        check_image(edk2_name, edk2)
 
-    say("rung %s: layer=%s guest=%s step=%s cpuif=%s secondaries=%s" %
-        (args.rung, layer_name or "-", guest_name or "-", step if step is not None else "-",
-         args.cpuif if (step or 0) >= 2 else "-", smp))
-    if args.rung != "L0":
+    say("rung %s: layer=%s guest=%s edk2=%s step=%s cpuif=%s fb=%s secondaries=%s" %
+        (args.rung, layer_name or "-", guest_name or "-", edk2_name or "-", step if step is not None else "-",
+         args.cpuif if ((step or 0) >= 2 or edk2_name) else "-", args.fb, smp))
+    if not preview:
         say("rung %s ends with a JUMP to the layer; the target leaves m1n1 (recovery: power button ~10 s)." % args.rung)
 
     # --- 2. allocate and write ---------------------------------------------------------------------------------------
     dtb_addr = target.malloc(len(dtb))
     target.write(dtb_addr, dtb)
     say("DTB    %-22s %7d bytes at 0x%x  sha256 %s" % (dtb_name, len(dtb), dtb_addr, sha256(dtb)[:16]))
-    layer_addr = guest_addr = None
+    layer_addr = guest_addr = edk2_addr = None
     l0_blocks = {}
-    if args.rung == "L0":
-        # L0 allocates the two blocks the jump rungs would use, WITHOUT writing them: the host then checks that m1n1's
-        # proxy heap is plain usable RAM (the main unverified risk for L3).
+    if preview:
+        # L0 allocates the blocks the jump rungs would use, WITHOUT writing them: the host then checks that m1n1's proxy
+        # heap is plain usable RAM (the main unverified risk for L3). With --edk2 (D0) a third block is allocated, in the
+        # same order D2 allocates (layer, guest = a spacer D2 leaves unwritten, EDK2), so D2 gets the addresses D0 checked.
         l0_blocks = {"layer": target.memalign(BLOCK, BLOCK), "guest": target.memalign(BLOCK, BLOCK)}
+        if edk2_name:
+            l0_blocks["edk2"] = target.memalign(BLOCK, BLOCK)
         for k, v in l0_blocks.items():
             say("BLOCK  %-5s 32 MB aligned block at 0x%x (not written)" % (k, v))
     if layer is not None:
@@ -467,16 +524,25 @@ def run(args, target):
             raise LoadError("the guest block is not 32 MB aligned (0x%x)" % guest_addr)
         target.write(guest_addr, guest)
         say("GUEST  %-22s %7d bytes at 0x%x  sha256 %s" % (guest_name, len(guest), guest_addr, sha256(guest)[:16]))
+    if edk2 is not None and not preview:
+        spacer = target.memalign(BLOCK, BLOCK)          # the "guest" block of D0's check: kept so the addresses are D0's
+        say("SPACER 32 MB aligned block at 0x%x (not written: keeps D2's addresses equal to D0's)" % spacer)
+        edk2_addr = target.memalign(BLOCK, BLOCK)
+        if edk2_addr % BLOCK:
+            raise LoadError("the EDK2 block is not 32 MB aligned (0x%x)" % edk2_addr)
+        target.write(edk2_addr, edk2)
+        say("EDK2   %-22s %7d bytes at 0x%x  sha256 %s" % (edk2_name, len(edk2), edk2_addr, sha256(edk2)[:16]))
 
     # --- 3. cache maintenance ----------------------------------------------------------------------------------------
-    for addr, data in ((layer_addr, layer), (guest_addr, guest)):
+    for addr, data in ((layer_addr, layer), (guest_addr, guest), (edk2_addr, edk2 if not preview else None)):
         if data is not None:
             target.dc_cvau(addr, len(data))
             target.dc_cvac(addr, len(data))      # to the point of coherency; the real guarantee is m1n1's set/way flush in mmu_shutdown
             target.ic_ivau(addr, len(data))
 
     # --- 4. boot arguments, after the allocations --------------------------------------------------------------------
-    bootargs = build_bootargs(step, args.cpuif, guest_addr, args.args)
+    bootargs = build_bootargs(step, args.cpuif, edk2_addr if edk2_addr is not None else guest_addr, args.args,
+                              edk2=edk2_addr is not None, fb=args.fb)
     if bootargs:
         say('boot arguments: "%s"' % bootargs)
         target.set_chosen("bootargs", bootargs)
@@ -508,44 +574,75 @@ def run(args, target):
                 say("  m1n1: " + line.strip())
     fdt_addr = find_fdt_addr(console, args.fdt_addr)
 
-    # --- 7. rung L0: read it back, check it, stop --------------------------------------------------------------------
-    if args.rung == "L0":
+    # --- 7. rungs L0 / D0: read it back, check it, stop. D2: the same, then the jump ----------------------------------
+    if preview or edk2_name:
+        label = args.rung
+        soft = not preview                       # D2: a read-back that cannot be done only warns; a refusal still stops
+        path = None
         if fdt_addr is None:
-            say("L0: the prepared FDT address could not be captured from m1n1's console text.")
+            say("%s: the prepared FDT address could not be captured from m1n1's console text." % label)
             say("Read it from the m1n1 console (line 'FDT prepared at 0x...') and rerun with --fdt-addr 0x...")
-            return 3
-        hdr = target.read(fdt_addr, 40)
-        if hdr[:4] != b"\xd0\x0d\xfe\xed":
-            say("L0: no FDT magic at 0x%x (wrong address?)" % fdt_addr)
-            return 3
-        total = struct.unpack_from(">I", hdr, 4)[0]
-        if not 40 <= total <= 4 * 1024 * 1024:
-            say("L0: implausible totalsize %d in the FDT header" % total)
-            return 3
-        blob = target.read(fdt_addr, total)
-        os.makedirs(args.out, exist_ok=True)
-        path = os.path.join(args.out, "prepared-fdt.dtb")
-        with open(path, "wb") as f:
-            f.write(blob)
-        say("prepared FDT: %d bytes at 0x%x, saved to %s (host folder only: it holds the board serial number;" %
-            (total, fdt_addr, path))
-        say("never commit it, never paste it). sha256 %s" % sha256(blob)[:16])
-        if isinstance(target, DryTarget):
-            say("(dry run: the 'prepared' FDT is the unmodified DTB; on hardware m1n1 adds memory, cpus, framebuffer)")
-        dump_text = run_dump(ensure_dump_tool(bundle, args.fdt_dump), path)
-        say("== block placement check (host side): are the layer/guest blocks wholly inside usable RAM? ==")
-        ok, lines = check_blocks(dump_text, l0_blocks)
-        for ln in lines:
-            say(ln)
-        if isinstance(target, DryTarget):
-            say("(dry run: the fake addresses are not m1n1's heap; this only exercises the check)")
-        if not ok:
-            say("BLOCK CHECK: FAIL - the heap blocks are not plain usable RAM in this FDT. Do NOT run L3-L5: the layer "
-                "would refuse the guest. L1/L2 do not need the guest block but still use the layer block.")
-            return 4
-        say("BLOCK CHECK: PASS")
-        say("L0 done: no jump was made; m1n1 is still alive on the proxy.")
-        return 0
+        else:
+            hdr = target.read(fdt_addr, 40)
+            total = struct.unpack_from(">I", hdr, 4)[0] if len(hdr) >= 8 else 0
+            if hdr[:4] != b"\xd0\x0d\xfe\xed":
+                say("%s: no FDT magic at 0x%x (wrong address?)" % (label, fdt_addr))
+            elif not 40 <= total <= 4 * 1024 * 1024:
+                say("%s: implausible totalsize %d in the FDT header" % (label, total))
+            else:
+                blob = target.read(fdt_addr, total)
+                os.makedirs(args.out, exist_ok=True)
+                path = os.path.join(args.out, "prepared-fdt.dtb")
+                with open(path, "wb") as f:
+                    f.write(blob)
+                say("prepared FDT: %d bytes at 0x%x, saved to %s (host folder only: it holds the board serial number;" %
+                    (total, fdt_addr, path))
+                say("never commit it, never paste it). sha256 %s" % sha256(blob)[:16])
+        if path is None:
+            if not soft:
+                return 3
+            say("D2: no read-back, so the block and placement checks could not be done. Going on is the user's risk: "
+                "rung D0 first.")
+        else:
+            if isinstance(target, DryTarget):
+                say("(dry run: the 'prepared' FDT is the unmodified DTB; on hardware m1n1 adds memory, cpus, framebuffer)")
+            dump_text = run_dump(ensure_dump_tool(bundle, args.fdt_dump), path)
+            if preview:
+                blocks = l0_blocks
+                say("== block placement check (host side): are the layer/guest%s blocks wholly inside usable RAM? ==" %
+                    ("/edk2" if edk2_name else ""))
+            else:
+                blocks = {"layer": layer_addr, "edk2": edk2_addr}      # the spacer is never used
+                say("== block placement check (host side): are the layer and edk2 blocks wholly inside usable RAM? ==")
+            ok, lines = check_blocks(dump_text, blocks)
+            for ln in lines:
+                say(ln)
+            if isinstance(target, DryTarget):
+                say("(dry run: the fake addresses are not m1n1's heap; this only exercises the check)")
+            if not ok:
+                say("BLOCK CHECK: FAIL - the heap blocks are not plain usable RAM in this FDT. Do NOT run L3-L5 / D2: the "
+                    "layer would refuse the guest. L1/L2 do not need the guest block but still use the layer block.")
+                return 4
+            say("BLOCK CHECK: PASS")
+            if edk2_name:
+                gaddr = l0_blocks["edk2"] if preview else edk2_addr
+                laddr = l0_blocks["layer"] if preview else layer_addr
+                grc, _ = run_gfdt(ensure_dump_tool(bundle, args.gfdt_dump, "gfdt_dump"), path, laddr, gaddr,
+                                  struct.unpack_from("<Q", edk2, 16)[0], args.fb)
+                if grc == 3:
+                    say("GUEST FDT CHECK: FAIL - privacy self-check hit; do not use or share this output.")
+                    return 1
+                if grc and not isinstance(target, DryTarget):
+                    say("GUEST FDT CHECK: FAIL - the layer's placement rule or the builder would refuse this (rc %d); the "
+                        "layer would stop with a FATAL line. Nothing was jumped to." % grc)
+                    return 4
+                if grc:
+                    say("(dry run: gfdt_dump refused the unmodified DTB with the fake addresses, rc %d: expected)" % grc)
+                else:
+                    say("GUEST FDT CHECK: PASS (placement rule of the layer, builder accepted)")
+        if preview:
+            say("%s done: no jump was made; m1n1 is still alive on the proxy." % label)
+            return 0
 
     # --- 8. the jump -------------------------------------------------------------------------------------------------
     target.set_timeout(args.boot_timeout)
@@ -567,7 +664,7 @@ def run(args, target):
 
 def parse_args(argv):
     ap = argparse.ArgumentParser(description="Watari EL2 host loader (M3a). Writes on the target are RAM only.")
-    ap.add_argument("--rung", required=True, choices=sorted(RUNGS), help="L0 = prepare the DT only, no jump")
+    ap.add_argument("--rung", required=True, choices=sorted(RUNGS), help="L0, D0 = prepare the DT only, no jump; D0 needs --edk2")
     ap.add_argument("--m1n1", default=os.environ.get("M1N1_DIR"), help="m1n1 checkout or its proxyclient dir (env M1N1_DIR)")
     ap.add_argument("--device", help="proxy serial device (default: env M1N1DEVICE)")
     ap.add_argument("--bundle", default=os.path.dirname(os.path.abspath(__file__)), help="bundle folder (default: this script's)")
@@ -579,6 +676,12 @@ def parse_args(argv):
     ap.add_argument("--args", default="", help="extra boot arguments, appended")
     ap.add_argument("--fdt-addr", type=lambda s: int(s, 0), help="address of the prepared FDT if the console line is not captured")
     ap.add_argument("--fdt-dump", help="path of the fdt_m1_dump binary (default: built from the bundle's sources)")
+    ap.add_argument("--gfdt-dump", help="path of the gfdt_dump binary (default: the bundle's)")
+    ap.add_argument("--edk2", help="EDK2 image, a file of the bundle (WATARI_M1_EFI.fd), for rungs D0 (preview) and D2 (jump); "
+                    "loaded into its own 32 MB block, passes wel2.guest=<entry> wel2.abi=fdt wel2.gfdt=build wel2.fb=<--fb>")
+    ap.add_argument("--fb", choices=FB_MODES, default="layer",
+                    help="wel2.fb=<mode>: passed through as given (layer = the layer keeps the panel; band and guest are for "
+                    "the EDK2 rungs). Without --edk2, wel2.fb is added only when not 'layer'")
     ap.add_argument("--boot-timeout", type=float, default=40.0, help="seconds to wait for kboot_boot's reply (default 40, as linux.py)")
     ap.add_argument("--dry-run", action="store_true", help="no device: print every proxy call (the 'prepared' FDT is the DTB itself)")
     ap.add_argument("--go", action="store_true", help="required for rungs L1-L5 on a real device (they jump)")
@@ -596,7 +699,7 @@ def main(argv=None, target=None):
                 say("DRY RUN: no device is opened; every proxy call is printed.")
                 target = DryTarget()
             else:
-                if args.rung != "L0" and not args.go:
+                if args.rung not in ("L0", "D0") and not args.go:
                     raise LoadError("rung %s jumps into the layer: add --go once you mean it (try --dry-run first)" % args.rung, 2)
                 if not args.m1n1:
                     raise LoadError("no m1n1 proxyclient: pass --m1n1 <checkout> or set M1N1_DIR", 2)
