@@ -90,9 +90,9 @@ mkdir -p "$SRC"
 cp "$REPO/tools/m3a/fdt_m1_dump.c" "$REPO/el2/boot/fdt.c" "$REPO/el2/boot/fdt.h" "$REPO/el2/boot/fdt_m1.c" \
    "$REPO/el2/boot/fdt_m1.h" "$REPO/el2/boot/boot.h" "$REPO/el2/vgic/fb.c" "$REPO/el2/vgic/font5x7.h" \
    "$REPO/el2/vgic/ram_map.c" "$SRC/"
-for h in wel2_fb.h wel2_ram.h wel2_coreidx.h wel2_vgic.h wel2_pirq.h wel2_maps.h wel2_intr_map.h wel2_pt.h; do
-    [ -f "$REPO/el2/include/$h" ] && cp "$REPO/el2/include/$h" "$SRC/"
-done
+# every layer header (boot.h pulls several in; the list changes with the layer)
+cp "$REPO"/el2/include/*.h "$SRC/"
+
 cat > "$SRC/build.sh" <<'EOF'
 #!/bin/sh
 # SPDX-License-Identifier: MIT

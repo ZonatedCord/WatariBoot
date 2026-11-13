@@ -48,7 +48,9 @@ def make_bundle(tmp):
             f.write(d)
     dump = os.path.join(tmp, "fdt_m1_dump")           # stub: the real tool is tested by make -C el2 test
     with open(dump, "w") as f:
-        f.write("#!/bin/sh\necho 'platform m1 (stub)'\n")
+        f.write("#!/bin/sh\necho 'platform m1 (stub)'\ncat \"$(dirname \"$0\")/usable.txt\"\n")
+    with open(os.path.join(tmp, "usable.txt"), "w") as f:
+        f.write("usable 0 base=0x800000000 size=0x200000000 end=0xa00000000\n")
     os.chmod(dump, 0o755)
     with open(os.path.join(tmp, "SHA256SUMS"), "w") as f:
         for n in sorted(files):
@@ -115,10 +117,41 @@ with tempfile.TemporaryDirectory() as tmp:
     check("kboot_boot" not in n and "msr_daif" not in n, "L0 never jumps")
     check(idx(t, "cpufreq_init") < idx(t, "smp_start_secondaries") < idx(t, "kboot_prepare_dt"),
           "L0 starts the secondaries (cpufreq_init first) before prepare_dt so the FDT keeps 8 cpus")
-    check("kboot_set_chosen" not in n and "memalign" not in n, "L0 sets no wel2 arguments and allocates no blocks")
+    check("kboot_set_chosen" not in n, "L0 sets no wel2 arguments and allocates no blocks")
+    check(n.count("memalign") == 2 and n.count("writemem") == 1, "L0 memaligns two blocks and writes only the DTB")
+    check("BLOCK CHECK: PASS" in out, "L0 block check passes when the blocks are inside usable RAM")
     check(n.count("readmem") == 2 and idx(t, "readmem") > idx(t, "kboot_prepare_dt"), "L0 reads the FDT back after prepare_dt")
     check(os.path.isfile(os.path.join(tmp, "out", "prepared-fdt.dtb")), "L0 saves the prepared FDT locally")
     check("platform m1 (stub)" in out, "L0 runs fdt_m1_dump on the blob")
+
+    # --- L0 block check FAIL: heap blocks outside / straddling usable RAM -------------------------------------------
+    usable_path = os.path.join(tmp, "usable.txt")
+    good = open(usable_path).read()
+    for label, text in (("a reserved hole over the guest block", "usable 0 base=0x800000000 size=0x44000000 end=0x844000000\n"
+                         "usable 1 base=0x846000000 size=0x1ba000000 end=0xa00000000\n"),
+                        ("a block straddling the end of a range", "usable 0 base=0x800000000 size=0x43000000 end=0x843000000\n")):
+        open(usable_path, "w").write(text)
+        t = Fake()
+        rc, out = run(["--rung", "L0", "--fdt-dump", os.path.join(tmp, "fdt_m1_dump")], t, tmp)
+        check(rc == 4 and "BLOCK CHECK: FAIL" in out and "FAIL (not wholly" in out, "L0 block check FAILs with %s" % label)
+    open(usable_path, "w").write(good)
+    ok, _ = wl.check_blocks(good, {"x": 0x840000000})
+    bad, _ = wl.check_blocks("usable 0 base=0x800000000 size=0x1000 end=0x800001000\n", {"x": 0x800000000})
+    check(ok and not bad, "check_blocks: inside passes, bigger than the range fails")
+    ok2, _ = wl.check_blocks(good, {"x": 0x840100000})
+    check(not ok2, "check_blocks: an unaligned block is refused")
+
+    # --- guest image must leave room for 4 KB + the info block in its block ----------------------------------------
+    try:
+        wl.check_image("g", image(wl.BLOCK - 4096), guest=True)
+        check(False, "a guest image_size leaving no room for the info block is refused")
+    except wl.LoadError:
+        check(True, "a guest image_size leaving no room for the info block is refused")
+    try:
+        wl.check_image("g", image(wl.BLOCK - 4096 - wl.GUEST_INFO_SIZE), guest=True)
+        check(True, "the largest guest image that still leaves room is accepted")
+    except wl.LoadError:
+        check(False, "the largest guest image that still leaves room is accepted")
 
     # --- L5: secondaries between set_chosen and prepare_dt ---------------------------------------------------------
     t = Fake()
