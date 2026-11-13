@@ -91,10 +91,11 @@ void checkpoint(unsigned n)
     wel2_fb_checkpoint(&g_fb, n, WEL2_RGB_GREEN);
 }
 
-/* state: 0 running (amber), 1 pass (green), anything else fail (red) */
+/* state: 0 running (amber), 1 pass (green), 3 skipped (grey), anything else fail (red) */
 void checkpoint_state(unsigned n, unsigned state)
 {
-    wel2_fb_checkpoint(&g_fb, n, state == 0 ? WEL2_RGB_AMBER : state == 1 ? WEL2_RGB_GREEN : WEL2_RGB_RED);
+    wel2_fb_checkpoint(&g_fb, n, state == 0 ? WEL2_RGB_AMBER : state == 1 ? WEL2_RGB_GREEN :
+                                 state == 3 ? WEL2_RGB_GREY : WEL2_RGB_RED);
 }
 
 void checkpoint_fail(void)

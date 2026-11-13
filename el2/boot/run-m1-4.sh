@@ -7,10 +7,10 @@
 # Success = EDK2 reaches the Boot Manager / BDS end state (or the UEFI Shell) with the layer
 # having handled the vGIC traps and injected timer interrupts. 60 s timeout. Exit 0 on success.
 set -u
-# CPUIF=trap runs the same test with the virtual CPU interface in TRAP_EMULATE mode
+# CPUIF=trap (or trap-notc, T6g) runs the same test with the virtual CPU interface in TRAP_EMULATE mode
 # (boot argument wel2.cpuif=trap, see cpuif.c); the default is HW list registers.
 APPEND=()
-[ "${CPUIF:-hw}" = trap ] && APPEND=(-append "wel2.cpuif=trap")
+case "${CPUIF:-hw}" in trap|trap-notc) APPEND=(-append "wel2.cpuif=${CPUIF}");; esac   # trap-notc: T6g
 # WEL2_ARGS: extra boot arguments for the layer, e.g. "wel2.e2h=1 wel2.gran=16k" (see README, E2H and granule)
 [ -n "${WEL2_ARGS:-}" ] && APPEND=(-append "${APPEND[1]:-} $WEL2_ARGS")
 cd "$(dirname "$0")"
@@ -66,7 +66,7 @@ expect "Watari EL2:   timer irqs on this cpu so far = 0x0000000000000064"
 expect "[Bds]BdsWait ...Zzzzzzzzzzzz..."
 expect "[Bds]Exit the waiting!"
 [ "${WITH_NIC:-0}" = 1 ] && expect "BdsDxe: failed to load Boot0002"
-if [ "${CPUIF:-hw}" = trap ]; then
+if [ "${CPUIF:-hw}" != hw ]; then
     expect "Watari EL2: cpuif mode = TRAP_EMULATE"
     expect "Watari EL2: trapped ICC_PMR_EL1 writes so far = "
     # input for #43 / RISKS R-05: the last periodic report of the layer (every 100th timer tick)

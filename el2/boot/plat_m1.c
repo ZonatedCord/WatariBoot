@@ -20,10 +20,10 @@
 #include "wel2_apple_fiq.h"
 #include "wel2_cpu_start.h"
 
-/* Checkpoint squares of the PSCI events (the layer's own row, 0..15; S13 owns 0..8). */
-#define CHK_CPU_ACCEPT  9u        /* a CPU_ON was accepted (the core has not arrived yet) */
-#define CHK_CPU_ARRIVE  10u       /* a started core reached the layer and is about to eret to the guest */
-#define CHK_HALT        11u       /* SYSTEM_OFF / SYSTEM_RESET without a watchdog: the halt */
+/* Checkpoint squares of the PSCI events (the layer's own row, wel2_chk.h; S13 owns 0..8). */
+#define CHK_CPU_ACCEPT  WEL2_LCHK_CPU_ACCEPT    /* a CPU_ON was accepted (the core has not arrived yet) */
+#define CHK_CPU_ARRIVE  WEL2_LCHK_CPU_ARRIVE    /* a started core reached the layer and is about to eret to the guest */
+#define CHK_HALT        WEL2_LCHK_HALT          /* SYSTEM_OFF / SYSTEM_RESET without a watchdog: the halt */
 
 static void __attribute__((noreturn)) nyi(const char *hook)
 {
@@ -320,6 +320,12 @@ static void m1_system_reset(void)
     wel2_cs_wait_forever(&g_cs_ops, 0);
 }
 
+/* wel2.hold=1 (main.c layer_hold): the timers are reset first so a pending guest timer cannot turn the wfe into a spin. */
+static void m1_park(void)
+{
+    wel2_cs_wait_forever(&g_cs_ops, 0);
+}
+
 const struct wel2_platform plat_m1 = {
     .name = "m1",
     .m1_memory = true,
@@ -348,6 +354,7 @@ const struct wel2_platform plat_m1 = {
     .cpu_off = m1_cpu_off,
     .system_off = m1_system_off,
     .system_reset = m1_system_reset,
+    .park = m1_park,
     .native_psci = true,
     .cpu_off_begin = m1_cpu_off_begin,
     .cpu_arrive = m1_cpu_arrive,

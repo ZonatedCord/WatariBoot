@@ -63,6 +63,7 @@ struct wel2_platform {
 	int64_t (*cpu_off)(void);                           /* this core powers down; returns only on failure */
 	void (*system_off)(void);                           /* returns only on failure */
 	void (*system_reset)(void);                         /* returns only on failure */
+	void (*park)(void);                                 /* wel2.hold=1: this core parks for good (lock released); NULL = a wfe loop */
 
 	/* ---- T6d/T6e/T6f wiring; every one of these may be NULL (QEMU: NULL, the generic behaviour applies) ---- */
 	bool native_psci;                                   /* no PSCI firmware (M1): psci.c uses the hooks below, strips MPIDR bits 31/30/24 */

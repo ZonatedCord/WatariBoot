@@ -178,10 +178,13 @@ static void t_checkpoint(void)
     unsigned before = g_ncp;
     CHECK_EQ(callf(WEL2_CHECKPOINT, 0, 1), WEL2_HVC_INVALID_PARAMETERS);
     CHECK_EQ(callf(WEL2_CHECKPOINT, WEL2_CHK_MAX + 1, 1), WEL2_HVC_INVALID_PARAMETERS);
-    CHECK_EQ(callf(WEL2_CHECKPOINT, 1, 3), WEL2_HVC_INVALID_PARAMETERS);
+    CHECK_EQ(callf(WEL2_CHECKPOINT, 1, 4), WEL2_HVC_INVALID_PARAMETERS);
     CHECK_EQ(callf(WEL2_CHECKPOINT, 1ull << 32 | 1, 1), WEL2_HVC_INVALID_PARAMETERS);
     CHECK_EQ(g_ncp, before);                               /* rejected calls paint nothing */
-    CHECK_EQ(g_nlines, 3);
+    CHECK_EQ(callf(WEL2_CHECKPOINT, WEL2_CHK_G8, WEL2_CHKSTATE_SKIP), 0);     /* T6g: SKIP is a state */
+    CHECK_EQ(g_cp_n, WEL2_CHK_G8); CHECK_EQ(g_cp_state, WEL2_CHKSTATE_SKIP);
+    CHECK_EQ(g_nlines, 4);
+    CHECK(!strcmp(g_lines[3], "guest checkpoint 9 SKIP"));
 }
 
 static void t_stats(void)
