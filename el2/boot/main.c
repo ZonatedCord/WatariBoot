@@ -15,6 +15,7 @@
 #include "wel2_v2m.h"
 #include "wel2_hvc_vendor.h"
 #include "wel2_guest_info.h"
+#include "wel2_guest_place.h"
 
 #define HCR_VM   (1ULL << 0)
 #define HCR_FMO  (1ULL << 3)
@@ -641,19 +642,17 @@ static bool g_guest_mode;
 static uint64_t g_guest_entry;
 
 
-/* The block lives at the end of the hand-off buffer, 4 KB below the layer: guest RAM the guest can read, within 64 MB
- * of the guest image (which it checks before it dereferences x0). */
-static uint64_t write_guest_info(void)
+/* The block is written at guest-physical address `at` (QEMU: the end of the hand-off buffer, 4 KB below the layer; M1:
+ * the first 4 KB boundary above the guest image, wel2_guest_place.h): guest RAM the guest can read, within 64 MB of the
+ * guest image (which it checks before it dereferences x0). */
+static uint64_t write_guest_info(uint64_t at)
 {
-    struct wel2_guest_info *gi = (struct wel2_guest_info *)((uint64_t)(uintptr_t)__image_start - 0x1000);
+    struct wel2_guest_info *gi = (struct wel2_guest_info *)(uintptr_t)at;
     const char *name = g_plat->name;
-    uint64_t at = (uint64_t)(uintptr_t)gi;
 
-    /* The guest must be able to read it: inside guest RAM. On the M1 the layer's block is cut out of the RAM list and
-     * the spot below __image_start is not necessarily guest RAM (the hand-off there is T10/T11): say so, do not hand
-     * the guest a pointer into the carve-out. */
+    /* The guest must be able to read it: inside guest RAM, never a pointer into the layer's carve-out. */
     if (g_plat->m1_memory && (!guest_ram_contains(at) || !guest_ram_contains(at + sizeof(*gi) - 1)))
-        fatal_msg("guest info block does not lie in guest RAM (M1 hand-off not implemented, T10/T11)");
+        fatal_msg("guest info block does not lie in guest RAM");
     memset(gi, 0, sizeof(*gi));
     gi->magic = WEL2_GINFO_MAGIC;
     gi->version = WEL2_GINFO_VERSION;
@@ -686,10 +685,50 @@ static uint64_t write_guest_info(void)
  * and the FDT is patched first (fdt.c): /memory loses the layer's carve-out, the PSCI
  * conduit becomes "hvc". The entry is the start of the EDK2 image, whose header
  * (code0 = "adr x1, .") tells the relocatable PrePi where it was loaded. */
-/* TODO(T10/T11, M1 hand-off): fdt_patch_for_guest(), EDK2_FDT_ADDR (= g_carve_base) and EDK2_ENTRY (= carve end + 0x80000)
+/* TODO(T12, EDK2 hand-off on the M1; the test guest's M1 hand-off is m1_enter_guest, T7b): fdt_patch_for_guest(), EDK2_FDT_ADDR (= g_carve_base) and EDK2_ENTRY (= carve end + 0x80000)
  * are QEMU conventions (RAM starts at the carve-out, the FDT is copied to the RAM base, EDK2 sits behind a 2 MB block).
  * They do not describe the M1, where the carve-out is a 32 MB block inside the RAM and the guest sees RAM ranges
  * (g_guest_ram[]); the chain build is not an M1 build until that hand-off is redone. */
+/* T7b: the EL1 test guest on the M1. No FDT is patched or copied (the guest needs only the info block; the EDK2 guest FDT is
+ * T12). The host loader put the guest image at the start of its own 32 MB block inside guest RAM and passed
+ * wel2.guest=0x<entry>; the layer reads the arm64 Image header at the entry, checks the placement (wel2_guest_place.h:
+ * image inside ONE guest RAM range, 4 KB aligned entry, room for the info block above the image), writes the info block,
+ * and enters the guest at EL1 with x0 = the block. Secondaries are started by the guest's own PSCI CPU_ON through the
+ * M1 path. */
+static void __attribute__((noreturn)) m1_enter_guest(void)
+{
+    struct wel2_guest_place gp;
+
+    if (!g_guest_mode || !g_guest_entry)
+        fatal_msg("M1: wel2.guest=0x<entry> is required (the EDK2 hand-off is T12)");
+    uint64_t entry = g_guest_entry;
+
+    if (!guest_ram_contains(entry) || (entry & 0xfff))
+        fatal_msg("wel2.guest: entry is not 4 KB aligned guest RAM");
+    hvc_clean_inv(entry, 0x40);                          /* the loader wrote it through the proxy, past our caches */
+    if (*(volatile uint32_t *)(uintptr_t)(entry + 0x38) != 0x644d5241)
+        fatal_msg("wel2.guest: no arm64 Image header at the guest entry");
+    uint64_t image_size = *(volatile uint64_t *)(uintptr_t)(entry + 0x10);
+    int rc = wel2_guest_place(g_guest_ram, g_nguest_ram, entry, image_size, sizeof(struct wel2_guest_info), &gp);
+
+    if (rc != WEL2_GP_OK) {
+        static const char *const why[] = {
+            "ok", "wel2.guest: bad entry", "wel2.guest: bad image_size in the Image header (0 or above 32 MB)",
+            "wel2.guest: entry is not in guest RAM", "wel2.guest: the image does not end inside the RAM range it starts in",
+            "wel2.guest: no room for the info block above the guest image",
+        };
+        fatal_msg(why[(unsigned)rc < sizeof(why) / sizeof(why[0]) ? (unsigned)rc : 0]);
+    }
+    uint64_t info = write_guest_info(gp.info);
+
+    put_kv("Watari EL2: M1 guest image at ", gp.entry);
+    put_kv("Watari EL2:   image end = ", gp.image_end);
+    put_kv("Watari EL2: guest info block at ", info);
+    layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
+    put_kv("Watari EL2: eret to the EL1 test guest, entry = ", entry);
+    enter_el1(entry, 0, SPSR_EL1H_MASKED, g_hcr, info);
+}
+
 static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
 {
     struct fdt_patch_info pi;
@@ -699,6 +738,8 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
      * nothing and the first timer tick would be lost for good (F-21). The boot vCPU
      * (here) and each vCPU PSCI starts (el2_secondary_main) are handed over awake. */
     vgic_vcpu_wake(&g_vgic, this_cpu());
+    if (g_plat->m1_memory)
+        m1_enter_guest();
     put_kv("Watari EL2: FDT from QEMU at ", fdt);
     if (!fdt || (fdt & 7) || fdt_check((void *)fdt))
         fatal_msg("x0 does not point to a valid FDT (is QEMU -kernel used?)");
@@ -737,7 +778,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
             fatal_msg("wel2.guest: entry is not 4 KB aligned guest RAM");
         if (*(volatile uint32_t *)(entry + 0x38) != 0x644d5241)
             fatal_msg("wel2.guest: no arm64 Image header at the guest entry");
-        uint64_t info = write_guest_info();
+        uint64_t info = write_guest_info((uint64_t)(uintptr_t)__image_start - 0x1000);
 
         put_kv("Watari EL2: guest info block at ", info);
         layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
