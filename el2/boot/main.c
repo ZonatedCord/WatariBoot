@@ -16,6 +16,7 @@
 #include "wel2_hvc_vendor.h"
 #include "wel2_guest_info.h"
 #include "wel2_guest_place.h"
+#include "wel2_fdt_build.h"
 
 #define HCR_VM   (1ULL << 0)
 #define HCR_FMO  (1ULL << 3)
@@ -76,6 +77,7 @@ bool g_hold;
 
 static void hold_notice(void)
 {
+    g_fb_mute = false;                  /* T17: the HOLD text must reach the panel */
     puts_(HOLD_MSG);
     wel2_fb_checkpoint_text(&g_fb, "HOLD: TAKE PHOTO");
 }
@@ -106,6 +108,7 @@ static const char *const vec_names[16] = {
 
 void __attribute__((noreturn)) fatal_msg(const char *why)
 {
+    g_fb_mute = false;                  /* T17: a fault inside the muted stats must still reach the panel */
     checkpoint_fail();                  /* red square on the panel, even if the text path is the broken part */
     wel2_fb_set_error(&g_fb, why);      /* T6h: the reason stays in the last-error area after the log has scrolled */
     puts_("Watari EL2: FATAL: ");
@@ -120,6 +123,7 @@ void __attribute__((noreturn)) fatal_msg(const char *why)
 /* Never hang silently (lesson F-14): dump state, then halt. */
 static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
 {
+    g_fb_mute = false;
     checkpoint_fail();
     if (g_fb.err_kind != 2)             /* fatal_dump() has set its reason already */
         wel2_fb_set_error(&g_fb, vec_names[idx & 15]);
@@ -153,6 +157,7 @@ static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
  * unexpected exception. */
 void __attribute__((noreturn)) fatal_dump(struct frame *f, unsigned idx, const char *why)
 {
+    g_fb_mute = false;
     wel2_fb_set_error(&g_fb, why);
     puts_("Watari EL2: FATAL: ");
     puts_(why);
@@ -168,19 +173,25 @@ static bool hvc_range_ok(void *ctx, uint64_t pa, uint64_t len)
     (void)ctx;
     if (len == 0 || pa + len < pa)
         return false;
+    /* The whole range inside ONE guest RAM range (the endpoints alone could straddle a hole). */
+    if (g_plat->m1_memory || g_nguest_ram) {
+        if (!wel2_ranges_cover(g_guest_ram, g_nguest_ram, pa, len))
+            return false;
+    } else if (pa < g_ram_base || pa >= guest_ram_span_end() || len > guest_ram_span_end() - pa) {
+        return false;
+    }
     uint64_t last = pa + len - 1;
 
-    if (!guest_ram_contains(pa) || !guest_ram_contains(last))
-        return false;
-    /* QEMU: guest RAM is one span that includes the layer's carve-out; the layer itself is never readable. The M1
-     * list (g_guest_ram) already excludes it. */
+    /* QEMU: guest RAM is one span that includes the layer's carve-out; the layer itself is never readable. The M1 list
+     * (g_guest_ram) already excludes it. */
     if (!g_plat->m1_memory && pa < g_carve_base + g_carve_size && last >= g_layer_base)
         return false;
     return true;
 }
 
-/* The guest runs with MMU and caches off (its stores are in memory, EL2's cacheable map may hold stale lines) and reads
- * the same way: clean+invalidate around every access [hypothesis: needed on the M1, harmless on QEMU TCG]. */
+/* The guest may run with the MMU and caches off (early PrePi) or on (EDK2's identity map): its stores may sit in its caches
+ * or in memory, and EL2's cacheable map may hold stale lines. DC CIVAC by PA cleans and invalidates through the point of
+ * coherency whichever way the guest mapped the page; that the attributes match well enough on the M1 is [hypothesis]. */
 static void hvc_clean_inv(uint64_t pa, uint64_t len)
 {
     uint64_t ctr;
@@ -214,6 +225,18 @@ static void hvc_log_line(void *ctx, const char *line, unsigned n)
     unsigned k = 0;
 
     (void)ctx;
+    /* T17: the guest's summary block starts with the mark; reserve its rows on the panel so no scroll cuts it. */
+    if (n >= sizeof(WEL2_SUMMARY_MARK) - 1) {
+        unsigned m = 0;
+
+        while (m < sizeof(WEL2_SUMMARY_MARK) - 1 && line[m] == WEL2_SUMMARY_MARK[m])
+            m++;
+        if (m == sizeof(WEL2_SUMMARY_MARK) - 1)
+        {
+            wel2_fb_reserve(&g_fb, WEL2_SUMMARY_LINES);
+            g_summary_on_panel = true;
+        }
+    }
     for (unsigned i = 0; i < sizeof(pre) - 1; i++)
         buf[k++] = pre[i];
     for (unsigned i = 0; i < n && k < sizeof(buf) - 2; i++)
@@ -229,6 +252,14 @@ static void hvc_checkpoint(void *ctx, unsigned n, unsigned state)
     checkpoint_state(WEL2_CHK_SQUARE_BASE + n, state);
 }
 
+static void hvc_console_write(void *ctx, const uint8_t *bytes, unsigned len)
+{
+    (void)ctx;
+    console_bytes(bytes, len);
+}
+
+static struct wel2_hvc_counters g_hvc_cnt;      /* WEL2_CONSOLE_WRITE counts (handle_hvc holds the big lock) */
+
 static void hvc_stats_fill(void *ctx, struct wel2_stats *out)
 {
     (void)ctx;
@@ -242,6 +273,8 @@ static const struct wel2_hvc_ops g_hvc_ops = {
     .write_guest = hvc_write_guest,
     .log_line = hvc_log_line,
     .checkpoint = hvc_checkpoint,
+    .console_write = hvc_console_write,
+    .counters = &g_hvc_cnt,
     .stats_fill = hvc_stats_fill,
 };
 
@@ -364,7 +397,7 @@ static void v2m_bell_log(void *ctx, uint32_t val)
 
 /* Capacity of the stage-2 hole list: GICD, GICR, MSI frame, AIC, console UART and the chain carve-out are six; two
  * spare for the M1 devices T6 adds (WDT, ...). */
-#define HOLES_MAX 8
+#define HOLES_MAX 16
 
 static void stage2_init(void)
 {
@@ -402,8 +435,17 @@ static void stage2_init(void)
 
     /* The framebuffer is the layer's too (checkpoints and log text): never given to the guest. The guest's stage 2
      * is RAM plus these holes; unmapping the framebuffer pages makes a guest access fault to EL2 and be reported. */
-    if (!g_plat->m1_memory && g_fb.fmt && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, wel2_fb_bytes(&g_fb), g_gran))
-        fatal_msg("stage-2 holes: framebuffer does not fit");
+    if (!g_plat->m1_memory && g_fb.fmt && g_fb_plan.mode != WEL2_FBM_GUEST &&
+        wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_fb.base, g_fb_plan.mode == WEL2_FBM_BAND ? g_fb_plan.band_bytes : wel2_fb_bytes(&g_fb), g_gran))
+        fatal_msg("stage-2 holes: framebuffer does not fit");     /* E9: band mode: only the band; guest mode: none */
+
+    /* wel2.split (QEMU bench): the gaps between the guest's RAM pieces are holes, so a guest access there is reported. */
+    for (unsigned i = 0; !g_plat->m1_memory && i + 1 < g_nguest_ram; i++) {
+        uint64_t gap_lo = g_guest_ram[i].base + g_guest_ram[i].size;
+
+        if (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, gap_lo, g_guest_ram[i + 1].base - gap_lo, g_gran))
+            fatal_msg("stage-2 holes: wel2.split gap does not fit");
+    }
 
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
@@ -415,6 +457,10 @@ static void stage2_init(void)
         (g_plat->m1_memory ? wel2_s2_build_ram(&s2_pt, g_guest_ram, g_nguest_ram)
                            : wel2_s2_build(&s2_pt, &ram, holes, nholes)))
         fatal_msg("stage-2 tables: bad geometry or the table pool is too small");
+    /* E9: wel2.fb=band|guest: the guest's part of the panel (Normal non-cacheable, never executable); in band mode the band
+     * stays unmapped (QEMU: a hole above; the M1 maps RAM only) so a guest bug cannot wipe the layer's checkpoints. */
+    if (g_fb.fmt && g_fb_plan.mode != WEL2_FBM_LAYER && wel2_s2_map_fb(&s2_pt, g_fb_plan.guest_base, g_fb_plan.guest_bytes))
+        fatal_msg("stage-2 tables: the framebuffer does not fit the table pool");
     /* VTCR_EL2.PS = min(ID_AA64MMFR0_EL1.PARange, 0b010 = 40 bit): the M1 may implement fewer physical address
      * bits than the 40-bit IPA space the QEMU guest is given (an output address above PARange is an address size fault);
      * on the M1 the IPA space is 36 bits itself (g_plat->s2_ipa_bits), the PARange measured on the j293. */
@@ -689,7 +735,7 @@ static uint64_t write_guest_info(uint64_t at)
         fatal_msg("guest info block does not lie in guest RAM");
     memset(gi, 0, sizeof(*gi));
     gi->magic = WEL2_GINFO_MAGIC;
-    gi->version = WEL2_GINFO_VERSION;
+    gi->version = WEL2_GINFO_VERSION_1;
     gi->size = sizeof(*gi);
     for (unsigned i = 0; name[i] && i < sizeof(gi->platform) - 1; i++)
         gi->platform[i] = name[i];
@@ -705,6 +751,17 @@ static uint64_t write_guest_info(uint64_t at)
         gi->flags |= WEL2_GINFO_F_PAUTH;
     if (!g_plat->timer_resync)
         gi->flags |= WEL2_GINFO_F_NO_PTIMER;
+    if (g_fb.fmt && g_fb_plan.mode != WEL2_FBM_LAYER) {          /* E9: the guest owns (part of) the panel: version 2 */
+        gi->version = WEL2_GINFO_VERSION;
+        gi->flags |= WEL2_GINFO_F_FB;
+        gi->fb_base = g_fb_plan.guest_base;
+        gi->fb_width = g_fb.width;
+        gi->fb_height = g_fb_plan.guest_rows;
+        gi->fb_stride = g_fb.stride;
+        gi->fb_format = g_fb.fmt == WEL2_FB_X2R10G10B10 ? WEL2_GFB_X2R10G10B10 : WEL2_GFB_X8R8G8B8;
+        gi->fb_mode = g_fb_plan.mode;
+        gi->fb_band_rows = g_fb_plan.band_rows;
+    }
     for (unsigned i = 0; i < gi->ncores; i++)
         gi->mpidr[i] = ((uint64_t)(g_pcpu[i].aff >> 24) << 32) | (g_pcpu[i].aff & 0xffffff);
     dcache_clean_range(gi, sizeof(*gi));
@@ -760,7 +817,121 @@ static void __attribute__((noreturn)) m1_enter_guest(void)
     put_kv("Watari EL2: guest info block at ", info);
     layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
     put_kv("Watari EL2: eret to the EL1 test guest, entry = ", entry);
+    fb_handover();
     enter_el1(entry, 0, SPSR_EL1H_MASKED, g_hcr, info);
+}
+
+/* T12b/E6: the generalised hand-off (DESIGN watari-edk2-m1 3.3). wel2.abi=fdt: x0 = a guest FDT the layer BUILDS
+ * (guest_fdt_build, include/wel2_fdt_build.h) from what it knows (the guest's RAM ranges, the vGIC windows, the cores),
+ * not a patched copy of the loader's. The image entry is wel2.guest=0x<entry> (the bench: the EDK2 entry when absent;
+ * the M1: required), 4 KB aligned; its arm64 Image header gives image_size, the FDT goes at entry + image_size rounded
+ * up to 16 KB, the range that holds the entry is listed first and must hold the image, the FDT and PrePi's 64 MB UEFI
+ * region (wel2_gfdt_place, host-tested). Entry state as everywhere: EL1h, MMU and caches off, DAIF masked, x0 = FDT. */
+static bool g_abi_fdt;          /* wel2.abi=fdt */
+static bool g_gfdt_build;       /* wel2.gfdt=build */
+static bool g_test_badfbfmt;    /* wel2.test=badfbfmt (E11 bench): the guest FDT's framebuffer node gets a format nobody knows */
+
+static void __attribute__((noreturn)) chain_fdt(void)
+{
+    static struct wel2_range ranges[WEL2_MAX_GUEST_RANGES];
+    static struct wel2_gfdt_place gp;
+    struct wel2_gfdt_in gi;
+    struct wel2_gfdt_fb gfb;
+    uint64_t entry = g_guest_entry, image_size;
+    uint32_t size = 0;
+    unsigned n;
+
+    if (g_plat->m1_memory ? !g_guest_entry : !g_gfdt_build)
+        fatal_msg(g_plat->m1_memory ? "wel2.abi=fdt: wel2.guest=0x<entry> is required on the M1"
+                                    : "wel2.abi=fdt on the bench needs wel2.gfdt=build");
+    if (!entry)
+        entry = EDK2_ENTRY;                                  /* the bench's EDK2 convention: behind the carve-out */
+    if (!guest_ram_contains(entry) || (entry & 0xfff))
+        fatal_msg("wel2.guest: entry is not 4 KB aligned guest RAM");
+    hvc_clean_inv(entry, 0x40);                              /* the loader wrote it past our caches */
+    if (*(volatile uint32_t *)(uintptr_t)(entry + 0x38) != 0x644d5241)
+        fatal_msg("wel2.guest: no arm64 Image header at the guest entry");
+    image_size = *(volatile uint64_t *)(uintptr_t)(entry + 0x10);
+    n = guest_ranges(ranges);
+    {
+        static const char *const why[] = {
+            "ok", "wel2.guest: bad entry", "wel2.guest: bad image_size in the Image header (0 or above 32 MB)",
+            "wel2.guest: entry is not in guest RAM",
+            "wel2.guest: the image and the guest FDT do not end inside the RAM range the image starts in",
+            "wel2.guest: the first /memory range is below 128 MB, PrePi cannot work in it",
+            "wel2.guest: the image is within 64 MB of the top of its range (PrePi's UEFI region): load it lower",
+            "wel2.guest: too many RAM ranges",
+        };
+        int rc = wel2_gfdt_place(ranges, n, entry, image_size, WEL2_GFDT_MAX, &gp);
+
+        if (rc != WEL2_GFP_OK)
+            fatal_msg(why[(unsigned)rc < sizeof(why) / sizeof(why[0]) ? (unsigned)rc : 0]);
+    }
+    if (!gp.entry_2mb_aligned)
+        puts_("Watari EL2: WARNING: wel2.guest is not 2 MB aligned (the arm64 boot protocol asks for it) [hypothesis: PrePi copes]\n");
+
+    memset(&gi, 0, sizeof(gi));
+    gi.platform = g_plat->name;
+    gi.ranges = gp.ordered;
+    gi.nranges = gp.n;
+    gi.gicd_base = g_plat->vgic_gicd_base;
+    gi.gicr_base = g_plat->vgic_gicr_base;
+    gi.gicr_stride = 0x20000;
+    gi.ncores = g_ncpu < WEL2_GFDT_MAX_CORES ? g_ncpu : WEL2_GFDT_MAX_CORES;
+    for (unsigned i = 0; i < gi.ncores; i++)
+        gi.mpidr[i] = ((uint64_t)(g_pcpu[i].aff >> 24) << 32) | (g_pcpu[i].aff & 0xffffff);
+    gi.msi_frame_base = g_plat->m1_memory && g_v2m_on ? V2M_T8103_BASE : 0;
+    gi.fb_mode = "none";                                     /* wel2.fb=layer: the framebuffer stays the layer's */
+    if (g_fb.fmt && g_fb_plan.mode != WEL2_FBM_LAYER) {      /* E9: a simple-framebuffer node for the guest's part */
+        gfb.base = g_fb_plan.guest_base;
+        gfb.size = g_fb_plan.guest_bytes;
+        gfb.width = g_fb.width;
+        gfb.height = g_fb_plan.guest_rows;
+        gfb.stride = g_fb.stride;
+        gfb.format = g_fb.fmt == WEL2_FB_X2R10G10B10 ? "x2r10g10b10" : "x8r8g8b8";
+        gi.fb = &gfb;
+        gi.fb_mode = g_fb_plan.mode == WEL2_FBM_BAND ? "band" : "guest";
+    }
+    if (guest_fdt_build((void *)(uintptr_t)gp.fdt, WEL2_GFDT_MAX, &gi, &size))
+        fatal_msg("guest FDT: the builder refused the input or the result does not fit 32 KB");
+    if (g_test_badfbfmt && gi.fb) {
+        /* wel2.test=badfbfmt (E11 bench, negative test): the builder only accepts the two real formats, so the string of the
+         * built node is overwritten in place with one the firmware does not know ("r5g6b5", zero padded: the property keeps
+         * its length and stays NUL terminated). */
+        uint8_t *f = (uint8_t *)(uintptr_t)gp.fdt;
+        static const char f8[] = "x8r8g8b8", f10[] = "x2r10g10b10", bad[] = "r5g6b5";
+
+        for (uint32_t i = 0; i + sizeof(f8) <= size; i++) {
+            unsigned n = 0;
+
+            if (f[i] != 'x')
+                continue;
+            for (unsigned k = 0; k < sizeof(f8) && f[i + k] == (uint8_t)f8[k]; k++)
+                if (k == sizeof(f8) - 1)
+                    n = sizeof(f8);
+            for (unsigned k = 0; !n && i + k < size && k < sizeof(f10) && f[i + k] == (uint8_t)f10[k]; k++)
+                if (k == sizeof(f10) - 1)
+                    n = sizeof(f10);
+            if (n) {
+                memset(f + i, 0, n);
+                memcpy(f + i, bad, sizeof(bad) - 1);
+                break;
+            }
+        }
+    }
+    dcache_clean_range((const void *)(uintptr_t)gp.fdt, size);   /* EL2 wrote through its cacheable map; the guest reads with caches off */
+    for (unsigned i = 0; i < gp.n; i++) {
+        put_kv("Watari EL2: guest FDT /memory base = ", gp.ordered[i].base);
+        put_kv("Watari EL2:   size = ", gp.ordered[i].size);
+    }
+    put_kv("Watari EL2: guest image at ", gp.entry);
+    put_kv("Watari EL2:   image end = ", gp.image_end);
+    put_kv("Watari EL2: guest FDT at ", gp.fdt);
+    put_kn("Watari EL2:   built, ", size, " bytes\n");
+    layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
+    put_kv("Watari EL2: eret to the guest at EL1, entry = ", gp.entry);
+    fb_handover();
+    enter_el1(gp.entry, 0, SPSR_EL1H_MASKED, g_hcr, gp.fdt);
 }
 
 static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
@@ -772,6 +943,12 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
      * nothing and the first timer tick would be lost for good (F-21). The boot vCPU
      * (here) and each vCPU PSCI starts (el2_secondary_main) are handed over awake. */
     vgic_vcpu_wake(&g_vgic, this_cpu());
+    if (g_gfdt_build && !g_abi_fdt)
+        fatal_msg("wel2.gfdt=build needs wel2.abi=fdt");
+    if (!g_plat->m1_memory && g_nguest_ram && !g_abi_fdt)       /* the patched QEMU FDT would list the split holes as RAM */
+        fatal_msg("wel2.split needs wel2.abi=fdt (and wel2.gfdt=build)");
+    if (g_abi_fdt)
+        chain_fdt();
     if (g_plat->m1_memory)
         m1_enter_guest();
     put_kv("Watari EL2: FDT from QEMU at ", fdt);
@@ -817,8 +994,12 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
         put_kv("Watari EL2: guest info block at ", info);
         layer_checkpoint(WEL2_LCHK_ENTER_GUEST, "ENTER_GUEST");
         put_kv("Watari EL2: eret to the EL1 test guest, entry = ", entry);
+        fb_handover();
         enter_el1(entry, 0, SPSR_EL1H_MASKED, g_hcr, info);
     }
+    /* The plain EDK2 chain has no hand-over point (no info block, no built FDT): stage 2 was already built for wel2.fb. */
+    if (g_fb_plan.mode != WEL2_FBM_LAYER)
+        fatal_msg("wel2.fb=band|guest needs wel2.abi=fdt wel2.gfdt=build or the test guest (wel2.guest), not the plain EDK2 chain");
     uint32_t magic = *(volatile uint32_t *)(EDK2_ENTRY + 0x38);
     if (magic != 0x644d5241) {               /* "ARM\x64" */
         put_kv("Watari EL2: no arm64 Image header at EDK2 entry ", EDK2_ENTRY);
@@ -853,7 +1034,7 @@ static bool arg_is(const char *p, const char *key)
 
 static void parse_bootargs(uint64_t fdt)
 {
-    char args[160];
+    char args[256];
 
     if (!fdt || (fdt & 7) || fdt_check((void *)fdt) || fdt_get_bootargs((void *)fdt, args, sizeof(args)) < 0)
         return;
@@ -905,6 +1086,22 @@ static void parse_bootargs(uint64_t fdt)
         } else if (arg_is(p, "wel2.test=noeoi")) {
             g_cpuif_noeoi = true;
 #ifdef WEL2_CHAIN
+        } else if (arg_is(p, "wel2.test=badfbfmt")) {
+            g_test_badfbfmt = true;
+        } else if (arg_is(p, "wel2.abi=fdt")) {
+            g_abi_fdt = true;
+        } else if (arg_is(p, "wel2.abi=info")) {
+            g_abi_fdt = false;                       /* the default with wel2.guest: the test guest's info block */
+        } else if (arg_is(p, "wel2.gfdt=build")) {
+            g_gfdt_build = true;
+        } else if ((p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'a' &&
+                    p[6] == 'b' && p[7] == 'i' && p[8] == '=') ||
+                   (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'g' &&
+                    p[6] == 'f' && p[7] == 'd' && p[8] == 't' && p[9] == '=')) {
+            puts_("Watari EL2: WARNING: unknown boot argument value, ignored: ");
+            for (const char *q = p; *q && *q != ' '; q++)
+                putc_(*q);
+            puts_("\n");
         } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'g' &&
                    p[6] == 'u' && p[7] == 'e' && p[8] == 's' && p[9] == 't' && p[10] == '=') {
             uint64_t v = 0;
@@ -1006,6 +1203,15 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
         put_kn("Watari EL2:   stride = ", g_fb.stride, " bytes\n");
         puts_(g_fb.fmt == WEL2_FB_X2R10G10B10 ? "Watari EL2:   format = x2r10g10b10\n"
                                                : "Watari EL2:   format = x8r8g8b8\n");
+        if (g_fb_fake)
+            puts_("Watari EL2:   bench panel: a block of RAM (wel2.fakefb), not in the guest's memory map\n");
+        puts_(g_fb_plan.mode == WEL2_FBM_BAND ? "Watari EL2:   wel2.fb = band\n" :
+              g_fb_plan.mode == WEL2_FBM_GUEST ? "Watari EL2:   wel2.fb = guest\n" : "Watari EL2:   wel2.fb = layer\n");
+        if (g_fb_plan.mode != WEL2_FBM_LAYER) {
+            put_kn("Watari EL2:   band rows = ", g_fb_plan.band_rows, " (the layer's, unmapped for the guest)\n");
+            put_kv("Watari EL2:   guest part at ", g_fb_plan.guest_base);
+            put_kn("Watari EL2:   guest rows = ", g_fb_plan.guest_rows, "\n");
+        }
     }
     stage1_report();
     put_kv("Watari EL2: CurrentEL = ", el >> 2);
@@ -1033,6 +1239,9 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
      * routed to EL2, as designed). E2H as stage1.c left it on this core (1 on the M1; the guest then runs
      * with TGE=0 at EL1, its exceptions and the HVC/SMC/IRQ paths are the same); VM=1 since M1-1 (stage-2
      * with the GIC windows unmapped). M1-4 chain build: TSC=1 (EL1 SMC trapped). */
+    /* E9: wel2_s2_map_fb uses stage-2 MemAttr 0b0101 (Normal NC), which is the encoding only while HCR_EL2.FWB (bit 46) is 0:
+     * with FWB = 1 the field means something else. g_hcr never sets it; the assert keeps it so. */
+    _Static_assert(!((HCR_RW | HCR_IMO | HCR_FMO | HCR_AMO | HCR_VM | HCR_E2H) & (1ULL << 46)), "HCR_EL2.FWB must stay 0 (stage-2 MemAttr encoding)");
     g_hcr = HCR_RW | HCR_IMO | HCR_FMO | HCR_AMO | HCR_VM | (g_e2h ? HCR_E2H : 0);
 #ifdef WEL2_CHAIN
     g_hcr |= HCR_TSC;

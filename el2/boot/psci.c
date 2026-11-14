@@ -50,6 +50,15 @@
  * itself; Windows is [hypothesis]). QEMU keeps the strict spec behaviour: only platforms without firmware PSCI strip. */
 #define PSCI_MPIDR_RES_BITS ((1ULL << 31) | (1ULL << 30) | (1ULL << 24))
 
+/* T17: the final statistics (about 25 lines on the M1) must not scroll the guest's summary off the panel: after a
+ * SUMMARY block they go to the UART only. The reset / HOLD lines that follow still go to the panel. */
+static void final_stats(void)
+{
+    g_fb_mute = g_summary_on_panel;
+    cpuif_stats();
+    g_fb_mute = false;
+}
+
 static void __attribute__((noreturn)) psci_system_off(void)
 {
     g_plat->system_off();
@@ -239,12 +248,12 @@ bool psci_handle(struct frame *f, uint32_t fid)
         ret = features((uint32_t)f->x[1]);
         break;
     case PSCI_SYSTEM_OFF:
-        cpuif_stats();
+        final_stats();
         puts_(g_plat->native_psci ? "Watari EL2: PSCI SYSTEM_OFF -> halt (no firmware)\n"
                                   : "Watari EL2: PSCI SYSTEM_OFF -> forwarding to QEMU firmware (SMC)\n");
         psci_system_off();
     case PSCI_SYSTEM_RESET:                /* 5.11: EDK2 ResetSystem(); M1-4 */
-        cpuif_stats();
+        final_stats();
         puts_(g_plat->native_psci ? "Watari EL2: PSCI SYSTEM_RESET -> watchdog (no firmware)\n"
                                   : "Watari EL2: PSCI SYSTEM_RESET -> forwarding to QEMU firmware (SMC)\n");
         layer_reset(true);                 /* big lock held; wel2.hold=1 holds on the screen instead */

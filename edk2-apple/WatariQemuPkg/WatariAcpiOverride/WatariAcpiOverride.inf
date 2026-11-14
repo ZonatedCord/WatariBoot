@@ -22,6 +22,7 @@
   ../../../tools/acpigen/src/gtdt.c
   ../../../tools/acpigen/src/fadt.c
   ../../../tools/acpigen/src/t8103_model.c
+  ../../../tools/acpigen/src/j293_model.c
   ../../../tools/acpigen/src/qemu_virt_model.c
 
 [Packages]

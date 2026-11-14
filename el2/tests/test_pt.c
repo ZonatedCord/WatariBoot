@@ -732,6 +732,44 @@ static void m1_check_maps(const struct opt *o, unsigned gshift, bool e2h, uint64
 	CHECK(!wel2_pt_walk(&s2, 0xF10000000ULL, NULL, NULL, NULL));
 	CHECK(wel2_pt_walk(&s2, in.guest[0].base, NULL, &at, NULL));  CHECK_EQ((at >> 2) & 15, 0xf);      /* Normal WB */
 	CHECK(!wel2_pt_walk(&s2, in.guest[0].base - g, NULL, NULL, NULL));
+
+	/* E9: the framebuffer hand-over on the j293 panel (2560 x 1600, stride 10240): the guest's part is mapped Normal
+	 * non-cacheable (MemAttr 0b0101), read/write, XN, accessed; the band (and everything outside the panel) is not. */
+	for (unsigned mode = WEL2_FBM_BAND; mode <= WEL2_FBM_GUEST; mode++) {
+		struct wel2_fb_plan pl;
+		uint64_t a2, end = in.p.fb.base + wel2_fb_bytes(&in.p.fb);
+
+		CHECK_EQ(wel2_fb_plan(&in.p.fb, mode, gshift, &pl), 0);
+		CHECK_EQ(pl.band_bytes + pl.guest_bytes, wel2_fb_bytes(&in.p.fb));
+		CHECK_EQ(pl.guest_base, in.p.fb.base + pl.band_bytes);
+		CHECK_EQ(pl.band_bytes & (g - 1), 0);
+		CHECK_EQ(pl.guest_base & (g - 1), 0);
+		if (mode == WEL2_FBM_BAND)
+			CHECK(pl.band_rows >= wel2_fb_band_min_rows(&in.p.fb) && pl.band_rows < 1600);
+		else
+			CHECK_EQ(pl.band_rows, 0);
+		CHECK_EQ(wel2_pt_init(&s2, pool_s2, sizeof(pool_s2), gshift, plat_m1_ipa), 0);
+		CHECK_EQ(wel2_s2_build_ram(&s2, in.guest, in.nguest), 0);
+		CHECK_EQ(wel2_s2_map_fb(&s2, pl.guest_base, pl.guest_bytes), 0);
+		printf("    %s fb mode %u gran %uk: band %u rows, guest part %u rows, stage 2 uses %u tables\n", tag, mode,
+		       1u << (gshift - 10), pl.band_rows, pl.guest_rows, s2.used);
+		for (a2 = in.p.fb.base; a2 < end; a2 += g) {                   /* every page: band unmapped, the rest NC XN RW */
+			bool guest_page = a2 >= pl.guest_base;
+			bool mapped = wel2_pt_walk(&s2, a2, NULL, &at, NULL);
+
+			CHECK_EQ(mapped, guest_page);
+			if (mapped) {
+				CHECK_EQ((at >> 2) & 15, 0x5);                  /* Normal Inner+Outer Non-cacheable */
+				CHECK_EQ((at >> 6) & 3, 3);                     /* S2AP read/write */
+				CHECK(at & (1ULL << 10));                       /* AF */
+				CHECK(at & (1ULL << 54));                       /* XN */
+			}
+		}
+		CHECK(!wel2_pt_walk(&s2, in.p.fb.base - g, NULL, NULL, NULL));
+		CHECK(!wel2_pt_walk(&s2, end, NULL, NULL, NULL));
+		CHECK(wel2_pt_walk(&s2, in.guest[0].base, NULL, &at, NULL));    /* the RAM map is untouched */
+		CHECK_EQ((at >> 2) & 15, 0xf);
+	}
 }
 
 static void t_m1_maps(void)

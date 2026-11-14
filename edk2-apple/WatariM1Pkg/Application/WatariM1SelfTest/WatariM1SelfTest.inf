@@ -1,0 +1,38 @@
+## @file
+#  Watari Boot (E12, DESIGN 10.3): the built-in self-test. The boot manager library starts it when
+#  nothing else is bootable; it proves GOP drawing, timer interrupt delivery and the PSCI reset
+#  path by itself, without a keyboard.
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = WatariM1SelfTest
+  FILE_GUID                      = 7c4e1a96-d035-4b8f-82a1-5e6f09b3d4c2
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariM1SelfTestMain
+
+[Sources]
+  WatariM1SelfTest.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  MemoryAllocationLib
+  PrintLib
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  UefiRuntimeServicesTableLib
+
+[Protocols]
+  gEfiGraphicsOutputProtocolGuid                ## CONSUMES

@@ -18,6 +18,7 @@
 #ifndef WEL2_GUEST_PLACE_H
 #define WEL2_GUEST_PLACE_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "wel2_maps.h"
 
@@ -41,5 +42,9 @@ struct wel2_guest_place {
 
 int wel2_guest_place(const struct wel2_range *ranges, unsigned n, uint64_t entry, uint64_t image_size,
 		     uint64_t info_size, struct wel2_guest_place *out);
+
+/* [pa, pa + len) lies wholly inside ONE of the ranges (not just its two ends in RAM, possibly in different ranges across a
+ * hole). len 0 is false. Overflow safe. */
+bool wel2_ranges_cover(const struct wel2_range *ranges, unsigned n, uint64_t pa, uint64_t len);
 
 #endif

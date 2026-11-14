@@ -12,15 +12,19 @@ Claims are marked **[verified: source]** or **[hypothesis]**; everything not yet
 |---|---|
 | `wel2-m1.bin` | the layer, M1 build with the built-in EL1 payload (rungs L1, L2) |
 | `wel2-chain.bin` | the layer, chain build: enters the guest named by `wel2.guest` at EL1 (rungs L3-L5) |
-| `m1guest.bin` | EL1 test guest, checks G1-G11 (rungs L3-L5) |
+| `m1guest.bin` | EL1 test guest, checks G1-G12 (rungs L3-L5) |
 | `j293-minimal.dts/.dtb` | minimal j293 device tree that m1n1's `kboot_prepare_dt` fills (DESIGN 4.2) |
 | `watari-load.py` | the host loader |
+| `ehw2.py` | optional read-only inventory of the state inherited from iBoot/m1n1 (`docs/procedures/m3a-ehw2-rung.md`) |
+| `WATARI_M1_EFI.fd` | EDK2 for the M1 (`tools/build-edk2-m1.sh`, copied from `$WATARI_DATA/build-m1/`), the guest of rungs D0 and D2 (day 3) |
 | `fdt_m1_dump` | prebuilt arm64 host tool (the layer's FDT parser), covered by `SHA256SUMS`; no compiler needed on the host |
-| `fdt-dump-src/` | its source plus `build.sh`; the loader builds from it only if `xcode-select -p` succeeds, never otherwise (the `cc` shim can open the Command Line Tools installer) |
+| `gfdt_dump` | prebuilt arm64 host tool (day 3): the layer's own guest-FDT builder (`el2/vgic/fdt_build.c`, E5) compiled for the host; from m1n1's prepared FDT it prints the guest FDT the layer would build (see "Day 3" below) |
+| `fdt-dump-src/` | the sources of both tools plus `build.sh`; the loader builds from it only if `xcode-select -p` succeeds, never otherwise (the `cc` shim can open the Command Line Tools installer) |
 | `SHA256SUMS` | the loader refuses to run if any file differs |
 
 Built on Marco's Mac by `tools/m3a/build-m1-payload.sh [DIR]` (default `$WATARI_DATA/m3a-payload`, never inside the
-repository, no network).
+repository, no network, nothing downloaded: Homebrew LLVM, `dtc` and the host `cc` already on the Mac). `WATARI_M1_EFI=<file>`
+picks another EDK2 image, `WATARI_NO_EDK2=1` builds a day-2 bundle without one. **BGR8 variant (H7, optional):** `tools/build-edk2-m1.sh --bgr8` builds `WATARI_M1_EFI-bgr8.fd`; it is not in the default bundle: build a second bundle with `WATARI_M1_EFI=<that file> build-m1-payload.sh <other DIR>` (the bundle lands in `<DIR>/bundle/`).
 
 ## On the host Mac (zero footprint)
 
@@ -52,6 +56,27 @@ Rungs L1-L5 jump and therefore need `--go`. A reboot back into m1n1 tethered mod
 | L4 | `--rung L4 --go` | L3 plus timers G7-G8 | as L3 |
 | L5 | `--rung L5 --go` | L4 plus the secondaries started by the host (`smp_start_secondaries`), G9-G10 | as L4 |
 
+### Day 3: EDK2 on the layer (PLAN T13 H2-H8)
+
+New loader options: `--edk2 <file of the bundle>` (rungs D0 and D2; the file must be in `SHA256SUMS`, so it is verified before any
+proxy call), `--fb layer|band|guest` (default `layer`, passed through as `wel2.fb=<mode>`; the loader does not know which
+modes the layer implements, an unknown one is the layer's to refuse), `--gfdt-dump <tool>`, `--smp` (D4: the host starts the other cores).
+
+| Rung | Command | What it does | Expect |
+|---|---|---|---|
+| D0 | `--rung D0 --edk2 WATARI_M1_EFI.fd --fb band` | like L0 (secondaries, `kboot_prepare_dt`, read-back, `fdt_m1_dump`) with **three** unwritten 32 MB blocks (layer, test-guest spacer, EDK2): `BLOCK CHECK` over all three; then `gfdt_dump --layer <layer block> --entry <EDK2 block> --image-size <EDK2 header> --fb <mode>`: prints the guest FDT, `dtc`'s view of it when `dtc` is installed, and `GUEST FDT CHECK: PASS` (the layer's own placement rule: the first `/memory` range holds the image, the FDT and PrePi's 64 MB region and is at least 128 MB). **No jump; none of our code runs on the target** (m1n1 still does its own prepare steps, and D0 starts the secondaries like L0, which is volatile). **D0 starts the secondaries, D2 does not**: the FDT D0 previews then has 8 cpus, the one D2 prepares has 1 unless `--smp`. Run D0 with `--no-smp` unless D4 (`--smp`) is planned, so that it previews what D2 will see | the `/memory` nodes (first one contains the EDK2 block), GIC at `0xF00000000`/`0xF10000000`, framebuffer geometry and whether stride = 4 x width (`// framebuffer of the prepared FDT:` line), no Apple node or identifying property. Exit 4 = block check or placement refused: do not run D2 |
+| D2 | `--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go [--cpuif trap-notc] [--smp]` | the chain layer plus EDK2 in its own block, arguments `wel2.cpuif=<..> wel2.guest=0x<EDK2 entry> wel2.abi=fdt wel2.gfdt=build wel2.fb=<mode>` (no `wel2.step`), the same read-back and checks as D0 on the real addresses (a stop on a refusal; if the FDT address cannot be captured or the header is wrong it does **not** jump: exit 3, rerun with `--fdt-addr 0x<address of the m1n1 console line 'FDT prepared at ...'>`; exit 1 if `gfdt_dump` or `fdt_m1_dump` fails for any reason other than a placement refusal (exit 1 of `gfdt_dump`, mapped to exit 4)), then the jump | H4-H7 of the PLAN; D3 is the same run continuing, D4 adds `--cpuif`/`--smp`, D5 is `--fb guest` |
+
+D1 (test guest with check G12 and `wel2.fb=band`) is `--rung L5 --fb band` (the test guest, `wel2.fb` is appended when it is not `layer`) **[check:
+that L5's check mask includes G12]**. D2 allocates the same three blocks as D0 (the second is an unwritten spacer), so the addresses D0 checked are
+the ones D2 uses **[hypothesis: m1n1's heap allocates the same way twice; the read-back of D2 checks it again]**.
+
+`gfdt_dump prepared.dtb [--layer A] [--entry E] [--image-size N] [--fb layer|band|guest] [--gran 4k|16k] [-o guest.dtb]` runs the layer's own M1 parser
+(`fdt_m1_parse`) and the guest-FDT builder on the prepared FDT, so only RAM, reservations, cpu `reg` values and framebuffer geometry reach
+the output; the builder refuses the identifying property names, and the tool's own scan exits 3 on any node, property or string with
+`apple` in it. It also prints on stderr what it cannot know (`NOTE:` lines): without `--layer` the layer's block is not cut out of the RAM; without `--entry` the placement rules are not checked; the MSI frame is listed when `0xFFFFF000` is not guest RAM (the layer's `g_v2m_on` **[hypothesis: same rule]**). The framebuffer node is what the layer builds: `wel2_fb_plan` of `el2/vgic/fb.c` with the 16 KB granule (`--gran 4k` for `wel2.gran=4k`): for `band` the node starts below the band (`// framebuffer plan:` line with band rows, guest rows, guest base; 360 and 1240 rows for 2560 x 1600, stride 10240 **[verified: test_gfdt_dump.py, same function as the layer]**), and when the plan fails (no framebuffer, not whole pages, no room) the output says so and has no node, as the layer then keeps the panel. The self-check also scans the raw bytes of every property value for `apple`, any case. Tests: `python3 -I tools/m3a/test_gfdt_dump.py` (j293 fixture of T6b, which carries a serial number and a
+MAC address on purpose).
+
 L1-L4 start no secondaries: m1n1 then removes the 7 other cpu nodes, so their FDT has 1 cpu and the layer accepts it (it runs on the boot core only). Only L0 and L5 show/use all 8.
 
 Layer and guest are each placed at the start of their own 32 MB-aligned, 32 MB block from m1n1's heap (D-2). The hand-over
@@ -61,7 +86,7 @@ the guest on the first try; the layer says so itself with a FATAL line if the in
 `--dry-run` works for every rung and opens no device. `--args "wel2.xxx=..."` appends boot arguments. `--no-smp` / `--smp`
 override the secondary start. `--boot-timeout` (default 40 s, as `linux.py`) is how long the loader waits for a reply that may never come.
 
-### Call order (asserted by `test_watari_load.py`)
+### Call order (asserted by `test_watari_load.py`; D2: DTB, then the layer block, the spacer and the EDK2 block, with `wel2.guest` = the EDK2 block; D0/D2 add the read-back and `gfdt_dump` after `kboot_prepare_dt`)
 
 verify sums -> `malloc` DTB + write -> `memalign` 32 MB (layer, then guest) + write -> `dc_cvau`/`dc_cvac`/`ic_ivau` over each image (the real guarantee is m1n1's set/way flush in `mmu_shutdown`)
 -> **then** `kboot_set_chosen("bootargs", ...)` (the arguments contain the guest address, DESIGN L-2) -> `cpufreq_init` + `smp_start_secondaries`
@@ -97,5 +122,7 @@ installation's ESP **[check: where the installer stores it]**. The loader prints
 
 The prepared FDT contains the board serial number, SMBIOS data, MAC addresses and RNG seeds (added by m1n1). It is saved only
 as `out/prepared-fdt.dtb` in the bundle folder, together with `out/m1n1-console.log` (the m1n1 console text captured while
-waiting for replies). Neither is committed or pasted into chat; `fdt_m1_dump` prints only what the layer uses. The loader
+waiting for replies). Neither is committed or pasted into chat; `fdt_m1_dump` prints only what the layer uses. The guest FDT that
+`gfdt_dump` prints (and saves as `out/guest-fdt.dtb`) holds no identifier by construction (see above), so its text may be pasted
+into the session notes; the prepared FDT it was built from may not. The loader
 echoes only m1n1 console lines about the FDT address and failures. The folder is deleted at the end of the day.

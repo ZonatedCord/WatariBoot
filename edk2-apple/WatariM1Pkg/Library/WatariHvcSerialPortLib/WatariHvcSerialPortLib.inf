@@ -1,0 +1,26 @@
+## @file
+#  SerialPortLib over the Watari EL2 hypercall WEL2_CONSOLE_WRITE (0xC6000004): the console of a
+#  firmware that has no UART (docs/design/watari-edk2-m1/DESIGN.md section 7, PLAN E8).
+#
+#  No device, no PCD, no memory service and no library state beyond one word, so it runs from the
+#  first instruction of PrePi (MMU off, before any memory service) as well as in DXE. Writes only:
+#  reads report "no data". A guarded probe (once) keeps the library silent when the layer is not
+#  there.
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WatariHvcSerialPortLib
+  FILE_GUID                      = 3f1b7d52-c8a4-4e96-9d03-6a2e5b8c71f4
+  MODULE_TYPE                    = BASE
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = SerialPortLib
+
+[Sources]
+  WatariHvcSerialPortLib.c
+
+[Packages]
+  MdePkg/MdePkg.dec

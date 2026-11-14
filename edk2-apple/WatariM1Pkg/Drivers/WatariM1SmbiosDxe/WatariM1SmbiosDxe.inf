@@ -1,0 +1,36 @@
+## @file
+#  Watari Boot (E12): the minimal SMBIOS tables of the M1 platform, fixed strings, no serial
+#  number (types 0, 1, 2 and 3 on top of MdeModulePkg's SmbiosDxe).
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = WatariM1SmbiosDxe
+  FILE_GUID                      = b3d71f48-0c92-4e5a-a86d-17f9c24e0b35
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariM1SmbiosEntry
+
+[Sources]
+  WatariM1SmbiosDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  MemoryAllocationLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gEfiSmbiosProtocolGuid                        ## CONSUMES
+
+[Depex]
+  gEfiSmbiosProtocolGuid

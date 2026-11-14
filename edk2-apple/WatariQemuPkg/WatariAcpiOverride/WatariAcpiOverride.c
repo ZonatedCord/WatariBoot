@@ -26,6 +26,16 @@
 
 #include "acpigen.h"
 
+#ifdef WATARI_E13
+// E13 (DESIGN 9.2 / 7): reduced-ACPI experiments on the QEMU bench. WATARI_E13=1: remove DBG2 and SPCR;
+// WATARI_E13=2: replace QEMU's DSDT with qemu-virt-min (tools/acpigen/dsdt/qemu-virt-min.asl, compiled by
+// tools/build-edk2-watari.sh --variant e13b into qemu_virt_min_aml_code[] by iasl -tc); WATARI_E13=3: both.
+// In all cases the rest of QEMU's tables is left alone (no acpigen MADT/GTDT).
+#if WATARI_E13 >= 2
+#include "qemu_virt_min.hex"
+#endif
+#endif
+
 #define WATARI_BUF_SIZE 1024
 
 STATIC EFI_EVENT mReadyToBootEvent;
@@ -123,6 +133,33 @@ OnReadyToBoot (
     DEBUG ((DEBUG_WARN, "WatariAcpiOverride: protocolli ACPI non disponibili (%r): niente da fare\n", Status));
     return;
   }
+
+#ifdef WATARI_E13
+#if WATARI_E13 == 1 || WATARI_E13 == 3
+  {
+    UINTN   Key;
+    UINT32  Len32;
+
+    if (FindTable (Sdt, SIGNATURE_32 ('D', 'B', 'G', '2'), &Key, &Len32)) {
+      Status = AcpiTable->UninstallAcpiTable (AcpiTable, Key);
+      DEBUG ((DEBUG_INFO, "WatariAcpiOverride: E13 DBG2 (%u byte) removed: %r\n", Len32, Status));
+    } else {
+      DEBUG ((DEBUG_WARN, "WatariAcpiOverride: E13 DBG2 not present\n"));
+    }
+    if (FindTable (Sdt, SIGNATURE_32 ('S', 'P', 'C', 'R'), &Key, &Len32)) {
+      Status = AcpiTable->UninstallAcpiTable (AcpiTable, Key);
+      DEBUG ((DEBUG_INFO, "WatariAcpiOverride: E13 SPCR (%u byte) removed: %r\n", Len32, Status));
+    } else {
+      DEBUG ((DEBUG_WARN, "WatariAcpiOverride: E13 SPCR not present\n"));
+    }
+  }
+#endif
+#if WATARI_E13 >= 2
+  Status = ReplaceTable (AcpiTable, Sdt, "DSDT", SIGNATURE_32 ('D', 'S', 'D', 'T'), qemu_virt_min_aml_code, sizeof (qemu_virt_min_aml_code));
+  DEBUG ((DEBUG_INFO, "WatariAcpiOverride: E13b DSDT qemu-virt-min (%lu byte): %r\n", (UINT64)sizeof (qemu_virt_min_aml_code), Status));
+#endif
+  return;
+#endif
 
 #ifdef WATARI_NOGICD
   // V2 (G2): MADT senza GICD (build --nogicd)

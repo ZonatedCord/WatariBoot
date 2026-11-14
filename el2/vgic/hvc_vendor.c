@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Watari EL2: vendor hypercalls (WEL2_VERSION / STATS / LOG / CHECKPOINT), see include/wel2_hvc.h.
+// Watari EL2: vendor hypercalls (WEL2_VERSION / STATS / LOG / CHECKPOINT / CONSOLE_WRITE), see include/wel2_hvc.h.
 // Logic only; the memory accessors and the sinks are callbacks (include/wel2_hvc_vendor.h).
 
 #include "wel2_hvc_vendor.h"
@@ -66,6 +66,27 @@ static int64_t do_log(const struct wel2_hvc_ops *ops, uint64_t pa, uint64_t len)
     return WEL2_HVC_SUCCESS;
 }
 
+static int64_t do_console(const struct wel2_hvc_ops *ops, uint64_t pa, uint64_t len)
+{
+    uint8_t buf[WEL2_CONSOLE_MAX];
+
+    if (!ops->read_guest || !ops->console_write || !ops->range_ok)
+        return WEL2_HVC_NOT_SUPPORTED;
+    if (len > WEL2_CONSOLE_MAX)
+        return WEL2_HVC_INVALID_PARAMETERS;
+    if (len == 0)
+        return WEL2_HVC_SUCCESS;
+    if (pa + len < pa || !ops->range_ok(ops->ctx, pa, len))
+        return WEL2_HVC_INVALID_PARAMETERS;
+    ops->read_guest(ops->ctx, pa, buf, len);
+    ops->console_write(ops->ctx, buf, (unsigned)len);
+    if (ops->counters) {
+        ops->counters->console_calls++;
+        ops->counters->console_bytes += len;
+    }
+    return WEL2_HVC_SUCCESS;
+}
+
 static int64_t do_checkpoint(const struct wel2_hvc_ops *ops, uint64_t n, uint64_t state)
 {
     char line[WEL2_LOG_MAX];
@@ -88,16 +109,21 @@ static int64_t do_checkpoint(const struct wel2_hvc_ops *ops, uint64_t n, uint64_
 static int64_t do_stats(const struct wel2_hvc_ops *ops, uint64_t pa, uint64_t len)
 {
     struct wel2_stats st;
+    uint64_t n = len < sizeof(st) ? len : sizeof(st);       /* an older guest's shorter buffer gets the part it knows */
 
     if (!ops->stats_fill || !ops->write_guest || !ops->range_ok)
         return WEL2_HVC_NOT_SUPPORTED;
-    if (len < sizeof(st) || (pa & 7) || pa + sizeof(st) < pa || !ops->range_ok(ops->ctx, pa, sizeof(st)))
+    if (len < WEL2_STATS_V1_SIZE || (pa & 7) || pa + n < pa || !ops->range_ok(ops->ctx, pa, n))
         return WEL2_HVC_INVALID_PARAMETERS;
     for (unsigned i = 0; i < sizeof(st); i++)
         ((volatile char *)&st)[i] = 0;
     st.version = WEL2_HVC_ABI_VERSION;
     ops->stats_fill(ops->ctx, &st);
-    ops->write_guest(ops->ctx, pa, &st, sizeof(st));
+    if (ops->counters) {
+        st.console_calls = ops->counters->console_calls;
+        st.console_bytes = ops->counters->console_bytes;
+    }
+    ops->write_guest(ops->ctx, pa, &st, n);
     return WEL2_HVC_SUCCESS;
 }
 
@@ -119,6 +145,9 @@ bool wel2_hvc_vendor(const struct wel2_hvc_ops *ops, uint64_t x[4])
         break;
     case WEL2_CHECKPOINT:
         ret = do_checkpoint(ops, x[1], x[2]);
+        break;
+    case WEL2_CONSOLE_WRITE:
+        ret = do_console(ops, x[1], x[2]);
         break;
     default:
         ret = WEL2_HVC_NOT_SUPPORTED;

@@ -1,0 +1,36 @@
+## @file
+#  Watari Boot (T16a), BENCH ONLY: the stand-in for Windows' boot manager in the bench. It is
+#  copied to \EFI\BOOT\BOOTAA64.EFI or \EFI\Microsoft\Boot\bootmgfw.efi of a test disk image; it
+#  prints a marker with the path it was started from and resets the system.
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = WatariM1BenchBootTest
+  FILE_GUID                      = a9d3e5f1-47b2-4c86-90ea-3b7d1f6c28a5
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariM1BenchBootTestMain
+
+[Sources]
+  WatariM1BenchBootTest.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  BaseLib
+  DebugLib
+  DevicePathLib
+  MemoryAllocationLib
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+  UefiRuntimeServicesTableLib
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid                   ## CONSUMES

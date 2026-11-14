@@ -4,10 +4,12 @@
  * synthetic FDTs, and the Normal non-cacheable stage-1 mapping (wel2_s1_map_fb). The drawing runs on a host buffer
  * surrounded by canary words: a store outside [base, base + height * stride) or into the line padding fails. */
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "test.h"
 #include "wel2_fb.h"
+#include "wel2_hvc.h"
 #include "wel2_maps.h"
 #include "fdt.h"
 #include "fdt_build.h"
@@ -503,7 +505,7 @@ static void t_band_2560(void)
 		/* the rule, and the legend at the top of the text area (white on black) */
 		CHECK_EQ(at(&s, 0, s.fb.text_y - 4), wel2_fb_pixel(&s.fb, C_RULE));
 		CHECK_EQ(at(&s, 2559, s.fb.text_y - 1), wel2_fb_pixel(&s.fb, C_RULE));
-		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G12", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
 		CHECK(line_is(&s, s.fb.text_y + 54, "GREEN = OK  AMBER = RUNNING  RED = FAIL  GREY = SKIP", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
 		CHECK_EQ(s.fb.cy, 2);
 
@@ -562,7 +564,7 @@ static void t_band_2560(void)
 		CHECK(line_is(&s, E0(&s), l0, C_ERR, WEL2_RGB_BLACK));
 		CHECK(line_is(&s, E1(&s), l1, C_ERR, WEL2_RGB_BLACK));
 		CHECK_EQ(s.fb.err_kind, 2);
-		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G12", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
 		/* clear the explicit error: back to NONE */
 		wel2_fb_set_error(&s.fb, "");
 		CHECK(line_is(&s, E0(&s), "LAST ERROR: NONE", C_NOERR, WEL2_RGB_BLACK));
@@ -598,6 +600,94 @@ static void t_error_persists_across_scrolls(void)
 	}
 }
 
+/* T17: the guest's per-check summary block (header, 13 check lines (G1-G12, E9), 2 MPIDR lines, then 2 more lines of the layer)
+ * is reserved with wel2_fb_reserve: whatever the log position before it, all lines are on the panel afterwards,
+ * one under the other, below the legend, inside the text area, with the band and the error line untouched. */
+static void t_summary_block(void)
+{
+	static const char *const L[16] = {
+		"WATARI EL1: SUMMARY G1-G12 PASS 12 FAIL 0",
+		"WATARI EL1: G1 PASS MPIDR 0X0",
+		"WATARI EL1: G2 PASS VERSION 0X10001 FEATURES CPU_ON=0 RESE",
+		"WATARI EL1: G3 PASS GIC FIELD 1 PAUTH SIGN+AUTH OK TAMPER",
+		"WATARI EL1: G4 PASS GICD_TYPER 0X17A001D IIDR 0X43B REDIST",
+		"WATARI EL1: G5A PASS SRE 0X7 IGRPEN1 1 BPR1 7 TALL1-TRAPS",
+		"WATARI EL1: G5B PASS PMR 0XF0 CTLR 0X8C00 FLIPPED 0X8C02 R",
+		"WATARI EL1: G6 PASS IDLE IAR 1023 SGI 1 TAKEN, ACK INTID 1",
+		"WATARI EL1: G7 PASS INTID 27 TICKS 5",
+		"WATARI EL1: G8 PASS INTID 30 TICKS 5",
+		"WATARI EL1: G9 PASS UP 7 SGI2 7",
+		"WATARI EL1: G10 PASS CPU 1 AFFINITY_INFO=1 CPU_ON AGAIN=0",
+		"WATARI EL1: G11 PASS SUMMARY PASS 11 FAIL 0 EXCEPTIONS 0 R",
+		"WATARI EL1: G12 PASS X2R10G10B10 2560X1240 BAND 360 BARS RG",
+		"WATARI EL1: MPIDR 0X0 0X1 0X2 0X3",
+		"WATARI EL1: MPIDR 0X100 0X101 0X102 0X103",
+	};
+	char buf[100];
+
+	for (unsigned pre = 0; pre < 45; pre++) {        /* every cursor position, several wraps of the log area */
+		struct screen s;
+		uint32_t row0;
+
+		scr_new(&s, WEL2_FB_X2R10G10B10, 2560, 1600, 0);
+		CHECK_EQ(s.fb.rows, 23);
+		CHECK(WEL2_SUMMARY_LINES >= 16 + 2 && WEL2_SUMMARY_LINES + 2 <= s.fb.rows);
+		wel2_fb_set_rung(&s.fb, 3, 0);
+		for (unsigned i = 0; i < pre; i++)
+			wel2_fb_puts(&s.fb, "FILLER LINE\n");
+		wel2_fb_reserve(&s.fb, WEL2_SUMMARY_LINES);
+		CHECK(s.fb.cy + WEL2_SUMMARY_LINES <= s.fb.rows);
+		row0 = s.fb.cy;
+		for (unsigned i = 0; i < 16; i++) {
+			snprintf(buf, sizeof(buf), "%s\n", L[i]);
+			wel2_fb_puts(&s.fb, buf);
+		}
+		/* The real tail (psci.c final_stats, util.c g_fb_mute): about 25 statistics lines go to the UART only, so
+		 * the panel sees none of them; then the reset line and the HOLD line. */
+		wel2_fb_puts(&s.fb, "WATARI EL2: PSCI SYSTEM_RESET -> WATCHDOG (NO FIRMWARE)\nWATARI EL2: HOLD: TAKE THE PHOTO\n");
+		CHECK_EQ(s.fb.cy, row0 + 18);               /* no scroll in the middle of the block */
+		for (unsigned i = 0; i < 16; i++)
+			CHECK(line_is(&s, s.fb.text_y + (row0 + i) * 54, L[i], WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G12", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y + (row0 + 17) * 54, "WATARI EL2: HOLD: TAKE THE PHOTO", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y + (row0 + 16) * 54, "WATARI EL2: PSCI SYSTEM_RESET -> WATCHDOG (NO FIRMWARE)", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(row0 >= 2 && s.fb.text_y + (row0 + 18) * 54 <= s.h);   /* below the legend, inside the panel */
+		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG L3 STEP 0", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, E0(&s), "LAST ERROR: NONE", C_NOERR, WEL2_RGB_BLACK));
+		if (pre == 0) {                 /* control: the same 25 lines sent to the panel DO wipe the block's start */
+			for (unsigned i = 0; i < 25; i++)
+				wel2_fb_puts(&s.fb, "WATARI EL2: STATS: LR INJECTIONS = 0X000000000000000A\n");
+			CHECK(!line_is(&s, s.fb.text_y + row0 * 54, L[0], WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		}
+		if (pre == 44 && getenv("WEL2_FB_PPM_SUMMARY"))
+			write_ppm(&s, getenv("WEL2_FB_PPM_SUMMARY"));
+		CHECK(scr_canaries_ok(&s));
+		scr_free(&s);
+	}
+	/* a reserve in the middle of a line starts on a new row */
+	{
+		struct screen s;
+
+		scr_new(&s, WEL2_FB_X8R8G8B8, 2560, 1600, 0);
+		wel2_fb_puts(&s.fb, "PARTIAL");
+		wel2_fb_reserve(&s.fb, WEL2_SUMMARY_LINES);
+		CHECK_EQ(s.fb.cx, 0);
+		CHECK(scr_canaries_ok(&s));
+		scr_free(&s);
+	}
+	/* a screen too small for the block: no reserve (no clear loop), text still works */
+	{
+		struct screen s;
+
+		scr_new(&s, WEL2_FB_X8R8G8B8, 800, 200, 0);
+		wel2_fb_puts(&s.fb, "A\n");
+		wel2_fb_reserve(&s.fb, WEL2_SUMMARY_LINES);
+		CHECK(s.fb.cy < s.fb.rows);
+		CHECK(scr_canaries_ok(&s));
+		scr_free(&s);
+	}
+}
+
 /* QEMU-like 800 x 600: scale 2, 65 columns, 26 rows; the same layout, nothing clipped. */
 static void t_band_800x600(void)
 {
@@ -611,7 +701,7 @@ static void t_band_800x600(void)
 		wel2_fb_puts(&s.fb, "HELLO\n");
 		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG L1 STEP 1", WEL2_RGB_WHITE, C_BAND));
 		CHECK(line_is(&s, L1(&s), "CHECKPOINT 2 OK", C_OK, C_BAND));
-		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G11", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
+		CHECK(line_is(&s, s.fb.text_y, "SQUARES 0-15: LAYER STEPS, 16+: GUEST G1-G12", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
 		CHECK(line_is(&s, s.fb.text_y + 2 * 18, "HELLO", WEL2_RGB_WHITE, WEL2_RGB_BLACK));
 		CHECK(scr_canaries_ok(&s));
 		scr_free(&s);
@@ -907,6 +997,144 @@ static void t_s1_map_fb_both_granules(void)
 	}
 }
 
+/* ---- E9: the hand-over plan and the band / guest modes ------------------------------------------------------------- */
+static struct wel2_fb fb_geo(uint64_t base, uint32_t w, uint32_t h, uint32_t stride)
+{
+	struct wel2_fb fb;
+
+	CHECK_EQ(wel2_fb_setup(&fb, base, w, h, stride, "x2r10g10b10", 12), 0);
+	return fb;
+}
+
+static void t_plan_rounding(void)
+{
+	struct wel2_fb_plan p;
+	struct wel2_fb fb = fb_geo(0x9e2570000ull, 2560, 1600, 10240);       /* the j293: stride 10240, scale 6 */
+
+	CHECK_EQ(wel2_fb_band_min_rows(&fb), 306 + 54);                      /* text_y + one text line */
+	for (unsigned g = 12; g <= 14; g += 2) {
+		CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, g, &p), 0);
+		CHECK_EQ(p.band_rows, 360);                                  /* already a multiple of 8 (16 KB) and 2 (4 KB) */
+		CHECK_EQ(p.band_bytes, 360ull * 10240);
+		CHECK_EQ(p.band_bytes % (1ull << g), 0);
+		CHECK_EQ(p.guest_rows, 1240);
+		CHECK_EQ(p.guest_base, 0x9e2570000ull + 360ull * 10240);
+		CHECK_EQ(p.guest_bytes, 1240ull * 10240);
+		CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_GUEST, g, &p), 0);
+		CHECK_EQ(p.band_rows, 0);
+		CHECK_EQ(p.guest_base, 0x9e2570000ull);
+		CHECK_EQ(p.guest_bytes, 16384000ull);
+		CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_LAYER, g, &p), 0);
+		CHECK_EQ(p.guest_bytes, 0);
+	}
+	/* 10240-byte rows: the step is 8 rows for 16 KB pages and 2 rows for 4 KB: a minimum of 361 rounds up to 368 / 362 */
+	{
+		struct wel2_fb odd = fb;
+
+		odd.text_y = 307;
+		CHECK_EQ(wel2_fb_plan(&odd, WEL2_FBM_BAND, 14, &p), 0);
+		CHECK_EQ(p.band_rows, 368);
+		CHECK_EQ(wel2_fb_plan(&odd, WEL2_FBM_BAND, 12, &p), 0);
+		CHECK_EQ(p.band_rows, 362);
+	}
+	/* a stride that is not a multiple of the page's nice divisors: 1000 px = 4000 bytes (scale 2, minimum 144 rows):
+	 * 16 KB needs a multiple of 512 rows, 4 KB of 128 */
+	fb = fb_geo(0x80000000ull, 1000, 2048, 4000);
+	CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, 14, &p), 0);
+	CHECK_EQ(p.band_rows, 512);
+	CHECK_EQ(p.band_bytes % 16384, 0);
+	CHECK_EQ(p.guest_rows, 1536);
+	CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, 12, &p), 0);
+	CHECK_EQ(p.band_rows, 256);
+	CHECK_EQ(p.band_bytes % 4096, 0);
+}
+
+static void t_plan_refusals(void)
+{
+	struct wel2_fb_plan p;
+	struct wel2_fb fb = fb_geo(0x9e2570000ull, 2560, 1600, 10240), none = { 0 };
+
+	CHECK(wel2_fb_plan(&none, WEL2_FBM_BAND, 14, &p) != 0);               /* no framebuffer */
+	CHECK(wel2_fb_plan(&none, WEL2_FBM_GUEST, 14, &p) != 0);
+	CHECK_EQ(wel2_fb_plan(&none, WEL2_FBM_LAYER, 14, &p), 0);
+	CHECK(wel2_fb_plan(&fb, 7, 14, &p) != 0);                            /* unknown mode */
+	fb.base += 0x1000;                                                   /* not 16 KB aligned (fine for 4 KB) */
+	CHECK(wel2_fb_plan(&fb, WEL2_FBM_GUEST, 14, &p) != 0);
+	CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_GUEST, 12, &p), 0);
+	fb = fb_geo(0x1000000ull, 1366, 768, 4 * 1366);                       /* 5464-byte rows: 2048 rows needed for 16 KB */
+	CHECK(wel2_fb_plan(&fb, WEL2_FBM_BAND, 14, &p) != 0);
+	CHECK(wel2_fb_plan(&fb, WEL2_FBM_GUEST, 14, &p) != 0);               /* 768 x 5464 is not a whole number of pages */
+	fb = fb_geo(0x1000000ull, 640, 96, 2560);                            /* band would be 96 rows: no row left for the guest */
+	CHECK(wel2_fb_plan(&fb, WEL2_FBM_BAND, 14, &p) != 0);
+	fb = fb_geo(0x1000000ull, 640, 128, 2560);
+	CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, 14, &p), 0);
+	CHECK_EQ(p.band_rows, 96);
+	CHECK_EQ(p.guest_rows, 32);
+}
+
+/* Band hand-over: stores stay in the band rows, the text goes to a one-line ticker, take-back repaints. Guest hand-over: no
+ * store at all. Run on a host buffer with canaries; the guest part is filled with a sentinel that must survive. */
+static void t_handover_band_and_guest(void)
+{
+	for (unsigned mode = WEL2_FBM_BAND; mode <= WEL2_FBM_GUEST; mode++) {
+		struct screen s;
+		struct wel2_fb_plan p;
+		const uint32_t SENT = 0x00123456u;
+		size_t bytes;
+		uint32_t *copy;
+
+		scr_new(&s, WEL2_FB_X8R8G8B8, 640, 480, 0);
+		{
+			struct wel2_fb tmp = s.fb;
+
+			tmp.base = 0x40000000ull;                            /* the plan needs a page-aligned base, the host buffer has none */
+			CHECK_EQ(wel2_fb_plan(&tmp, mode, 14, &p), 0);
+		}
+		bytes = (size_t)s.stride_words * s.h * 4;
+		wel2_fb_checkpoint(&s.fb, 0, WEL2_RGB_GREEN);
+		wel2_fb_puts(&s.fb, "BEFORE THE HAND-OVER\nSECOND LINE\n");
+		wel2_fb_handover(&s.fb, mode, p.band_rows);
+		for (uint32_t y = p.band_rows; y < s.h; y++)                 /* the guest's part */
+			for (uint32_t x = 0; x < s.w; x++)
+				s.pix[(size_t)y * s.stride_words + x] = SENT;
+		copy = malloc(bytes);
+		memcpy(copy, s.pix, bytes);
+		wel2_fb_puts(&s.fb, "AFTER: GUEST LOG LINE\nNEXT TICKER LINE\n");
+		wel2_fb_checkpoint(&s.fb, 16 + 1, WEL2_RGB_GREEN);
+		wel2_fb_checkpoint_text(&s.fb, "SOME LABEL");
+		wel2_fb_set_error(&s.fb, "AN ERROR");
+		wel2_fb_reserve(&s.fb, 18);
+		for (uint32_t y = p.band_rows; y < s.h; y++)                 /* nothing below the band moved, either mode */
+			for (uint32_t x = 0; x < s.w; x++)
+				CHECK_EQ(s.pix[(size_t)y * s.stride_words + x], SENT);
+		CHECK(scr_canaries_ok(&s));
+		if (mode == WEL2_FBM_GUEST) {                                /* not one pixel changed in the whole panel */
+			CHECK(memcmp(copy, s.pix, bytes) == 0);
+		} else {                                                     /* the band did change: ticker, square, label */
+			CHECK(memcmp(copy, s.pix, (size_t)s.stride_words * p.band_rows * 4) != 0);
+			CHECK_EQ(s.fb.cp, 17);
+		}
+		free(copy);
+		/* fatal(): the checkpoint-fail path gives the whole panel back and prints below the band again */
+		wel2_fb_checkpoint_fail(&s.fb);
+		CHECK_EQ(s.fb.hand, WEL2_FBH_NONE);
+		wel2_fb_puts(&s.fb, "DUMP");
+		{
+			bool changed = false;
+
+			for (uint32_t y = p.band_rows; y < s.h && !changed; y++)
+				for (uint32_t x = 0; x < s.w; x++)
+					if (s.pix[(size_t)y * s.stride_words + x] != SENT) {
+						changed = true;
+						break;
+					}
+			CHECK(changed);                                          /* the layer printed over the guest's picture */
+		}
+		CHECK(scr_canaries_ok(&s));
+		scr_free(&s);
+	}
+}
+
 int main(void)
 {
 	RUN(t_pixel_formats);
@@ -926,6 +1154,7 @@ int main(void)
 	RUN(t_band_2560);
 	RUN(t_error_persists_across_scrolls);
 	RUN(t_band_800x600);
+	RUN(t_summary_block);
 	RUN(t_band_small_screens);
 	RUN(t_fatal_error_text);
 	RUN(t_fdt_present);
@@ -934,5 +1163,8 @@ int main(void)
 	RUN(t_fdt_malformed);
 	RUN(t_s1_map_fb_j293);
 	RUN(t_s1_map_fb_both_granules);
+	RUN(t_plan_rounding);
+	RUN(t_plan_refusals);
+	RUN(t_handover_band_and_guest);
 	TESTS_DONE();
 }

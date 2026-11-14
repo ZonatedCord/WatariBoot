@@ -23,6 +23,8 @@
 #define S2_XN        (1ULL << 54)
 #define S2_ATTR_DEV    (0x0ULL << 2)   /* MemAttr 0b0000: Device-nGnRnE */
 #define S2_ATTR_NORMAL (0xfULL << 2)   /* MemAttr 0b1111: Normal, Inner+Outer WB */
+#define S2_SH_OSH      (2ULL << 8)
+#define S2_ATTR_NC     (0x5ULL << 2)   /* MemAttr 0b0101: Normal, Inner+Outer Non-cacheable (FEAT_S2FWB off) */
 
 unsigned wel2_s1_va_bits(unsigned gshift)
 {
@@ -306,4 +308,25 @@ int wel2_s2_build_ram(struct wel2_pt *pt, const struct wel2_range *ranges, unsig
 				S2_AF | S2_S2AP_RW | S2_ATTR_NORMAL | S2_SH_ISH))
 			return -1;
 	return 0;
+}
+
+/* E9: the guest's part of the panel. Normal Inner/Outer Non-cacheable [hypothesis: Arm ARM D8.5.5 stage 2 MemAttr[3:0] =
+ * 0b0101 with FEAT_S2FWB = 0; the stage-1 analogue MAIR 0x44 is verified in wel2_maps.h]: when the guest's own stage 1
+ * says Normal write-combining (EDK2 sets it for the GCD attribute EFI_MEMORY_WC) or Device, the combination can only
+ * be as weak as this, never cacheable, so stores reach the panel without cache maintenance; a stage-2 Device attribute
+ * would instead turn a guest's Normal mapping into Device and fault on its unaligned or merged stores. Shareability is
+ * ignored for Non-cacheable memory (Outer Shareable set for clarity), never executable, read/write. */
+int wel2_s2_map_fb(struct wel2_pt *pt, uint64_t base, uint64_t size)
+{
+	uint64_t g = 1ULL << pt->gshift, lo, hi;
+
+	if (!size || base + size < base || base + size > ~(g - 1))
+		return -1;
+	lo = base & ~(g - 1);
+	hi = (base + size + g - 1) & ~(g - 1);
+	if (hi > (1ULL << pt->va_bits))
+		return -1;
+	if (wel2_pt_unmap(pt, lo, hi - lo))     /* the bench's fake panel lies inside the RAM map: replace it */
+		return -1;
+	return wel2_pt_map(pt, lo, lo, hi - lo, S2_AF | S2_SH_OSH | S2_S2AP_RW | S2_ATTR_NC | S2_XN);
 }

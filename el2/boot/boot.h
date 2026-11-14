@@ -79,14 +79,22 @@ void con_select_s5l(uint64_t base);
 void con_select_none(void);                  /* util.c: null console (the M1 without a UART node) */
 extern uint64_t g_con_s5l_base, g_con_s5l_size;   /* stage1.c: S5L UART window from the FDT, 0 = none */  /* switch the console to the Apple S5L UART at base (MMU may be off) */
 void puts_(const char *s);
+void console_bytes(const uint8_t *b, unsigned n);   /* util.c: WEL2_CONSOLE_WRITE sink: raw to the UART, printable to the framebuffer */
 /* Framebuffer output (T5b, util.c): g_fb is set by stage1_build from the FDT (fmt NONE = no framebuffer, every call
  * a no-op). putc_/puts_ mirror to it. checkpoint(n) paints square n green (reached), checkpoint_state(n, s) with
  * s = 0 running / 1 pass / 2 fail, checkpoint_fail() repaints the current one red. All use aligned 32-bit stores
  * only and need no stack-heavy or lock-taking code, so they run with the MMU off. */
 extern struct wel2_fb g_fb;
+extern bool g_fb_mute;                       /* util.c: text to the UART only, not to the panel */
+extern bool g_summary_on_panel;              /* util.c: the guest's SUMMARY block is on the panel (main.c sets it) */
 void checkpoint(unsigned n);
 void checkpoint_state(unsigned n, unsigned state);
 void checkpoint_fail(void);
+extern struct wel2_fb_plan g_fb_plan;        /* stage1.c: E9, what the guest gets of the panel (mode layer = nothing) */
+extern uint64_t g_fake_fb_lo;                /* stage1.c: bench fake panel [lo, RAM end), 0 = none */
+extern bool g_fb_fake;
+uint64_t guest_ram_span_end(void);          /* stage1.c: end of the QEMU guest RAM span (below the fake panel when there is one) */
+void fb_handover(void);                      /* stage1.c: E9, the switch at the eret (no-op for wel2.fb=layer) */
 extern bool g_hold;                           /* main.c: wel2.hold=1, stop on the screen instead of resetting */
 void layer_reset(bool locked) __attribute__((noreturn));   /* main.c: the guest's / the ladder's reset, or the hold with wel2.hold=1 */
 void layer_checkpoint(unsigned n, const char *name);   /* main.c: paint square n and log one line (MMU on) */
@@ -128,6 +136,7 @@ _Static_assert(WEL2_MAX_GUEST_RANGES == M1_MAX_USABLE + 2, "one cut can split on
 extern struct m1_platform g_m1;
 extern struct wel2_range g_guest_ram[WEL2_MAX_GUEST_RANGES];
 extern unsigned g_nguest_ram;
+unsigned guest_ranges(struct wel2_range *out);   /* stage1.c: the ranges the guest FDT lists, out[WEL2_MAX_GUEST_RANGES] */
 bool guest_ram_contains(uint64_t pa);        /* pa is guest RAM (M1: inside one of g_guest_ram[]) */
 struct fdt_aic_info;
 extern struct fdt_aic_info g_aic_info;       /* main.c: the QEMU hybrid machine's Watari AIC node (#42) */
