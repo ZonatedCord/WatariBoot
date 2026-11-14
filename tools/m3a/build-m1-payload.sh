@@ -86,7 +86,7 @@ if [ "${WATARI_NO_EDK2:-0}" != 1 ]; then
             *-bench*|*-ramdisk*|*-t[0-9]*|*-vb*|*-e4*|*-qb*|*-qv*|*-nf*)
                 die "$EFI_BASE looks like a bench/tagged firmware (name has -bench, -ramdisk, -t<NN>, -vb, -e4, ...): the hardware bundle takes only the plain 'tools/build-edk2-m1.sh [--bgr8]' output (WATARI_M1_EFI_ALLOW_BENCH=1 overrides, bench bundles only)" ;;
         esac
-        [ -f "$MANIFEST" ] || die "no build manifest $MANIFEST: rebuild with tools/build-edk2-m1.sh [--bgr8] (it writes one), or WATARI_M1_EFI_ALLOW_BENCH=1 for a bench bundle"
+        [ -f "$MANIFEST" ] || die "no build manifest $MANIFEST: this firmware predates the manifest (T16e): rebuild it with tools/build-edk2-m1.sh [--bgr8] as in docs/procedures/m3a-day3-hardware.md G-5 / m3a-day4-windows-ramdisk.md (it writes one), or WATARI_M1_EFI_ALLOW_BENCH=1 for a bench bundle"
         mval() { sed -n "s/^$1=//p" "$MANIFEST" | head -1; }
         [ "$(mval model)" = j293 ] || die "firmware model is '$(mval model)', not j293 ($MANIFEST)"
         [ "$(mval bench)" = 0 ] || die "firmware is a --bench build ($MANIFEST)"
