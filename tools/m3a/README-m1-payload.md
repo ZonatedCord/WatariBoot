@@ -20,11 +20,12 @@ Claims are marked **[verified: source]** or **[hypothesis]**; everything not yet
 | `fdt_m1_dump` | prebuilt arm64 host tool (the layer's FDT parser), covered by `SHA256SUMS`; no compiler needed on the host |
 | `gfdt_dump` | prebuilt arm64 host tool (day 3): the layer's own guest-FDT builder (`el2/vgic/fdt_build.c`, E5) compiled for the host; from m1n1's prepared FDT it prints the guest FDT the layer would build (see "Day 3" below) |
 | `fdt-dump-src/` | the sources of both tools plus `build.sh`; the loader builds from it only if `xcode-select -p` succeeds, never otherwise (the `cc` shim can open the Command Line Tools installer) |
-| `SHA256SUMS` | the loader refuses to run if any file differs |
+| `winram/<image>`, `.sha256`, `.manifest.txt` | **only if built with `--winram`** (day 4, rung W1): the Windows RAM-disk image of `tools/m3a/build-winram-image.sh` and its sidecar. **Not in `SHA256SUMS`** (about 700 MiB): the loader hashes the image itself and compares it with the sidecar before any proxy call. May also be copied to the host separately (any path works for `--ramdisk`) |
+| `SHA256SUMS` | the loader refuses to run if any file differs (the `winram/` folder is outside it) |
 
 Built on Marco's Mac by `tools/m3a/build-m1-payload.sh [DIR]` (default `$WATARI_DATA/m3a-payload`, never inside the
 repository, no network, nothing downloaded: Homebrew LLVM, `dtc` and the host `cc` already on the Mac). `WATARI_M1_EFI=<file>`
-picks another EDK2 image, `WATARI_NO_EDK2=1` builds a day-2 bundle without one. **BGR8 variant (H7, optional):** `tools/build-edk2-m1.sh --bgr8` builds `WATARI_M1_EFI-bgr8.fd`; it is not in the default bundle: build a second bundle with `WATARI_M1_EFI=<that file> build-m1-payload.sh <other DIR>` (the bundle lands in `<DIR>/bundle/`).
+picks another EDK2 image, `WATARI_NO_EDK2=1` builds a day-2 bundle without one. **BGR8 variant (H7, optional):** `tools/build-edk2-m1.sh --bgr8` builds `WATARI_M1_EFI-bgr8.fd`; it is not in the default bundle: build a second bundle with `WATARI_M1_EFI=<that file> build-m1-payload.sh <other DIR>` (the bundle lands in `<DIR>/bundle/`). **Windows image (T23b):** `build-m1-payload.sh --winram default <DIR>` (or `--winram <file>`; `default` = `$WATARI_DATA/winram/winram.img`) also copies the image and its sidecar into `<DIR>/bundle/winram/` and re-checks the copy against the sidecar; an image from inside the repository is refused.
 
 ## On the host Mac (zero footprint)
 
@@ -76,6 +77,35 @@ the ones D2 uses **[hypothesis: m1n1's heap allocates the same way twice; the re
 the output; the builder refuses the identifying property names, and the tool's own scan exits 3 on any node, property or string with
 `apple` in it. It also prints on stderr what it cannot know (`NOTE:` lines): without `--layer` the layer's block is not cut out of the RAM; without `--entry` the placement rules are not checked; the MSI frame is listed when `0xFFFFF000` is not guest RAM (the layer's `g_v2m_on` **[hypothesis: same rule]**). The framebuffer node is what the layer builds: `wel2_fb_plan` of `el2/vgic/fb.c` with the 16 KB granule (`--gran 4k` for `wel2.gran=4k`; the loader adds it by itself when `wel2.gran=4k` or `wel2.gran=16k` is in `--args`, 16k winning as in the layer's `stage1.c`): for `band` the node starts below the band (`// framebuffer plan:` line with band rows, guest rows, guest base; 360 and 1240 rows for 2560 x 1600, stride 10240 **[verified: test_gfdt_dump.py, same function as the layer]**), and when the plan fails (no framebuffer, not whole pages, no room) the output says so and has no node, as the layer then keeps the panel. The self-check also scans the raw bytes of every property value for `apple`, any case. Tests: `python3 -I tools/m3a/test_gfdt_dump.py` (j293 fixture of T6b, which carries a serial number and a
 MAC address on purpose).
+
+### Windows rung W1: the RAM-disk image (watari-winram DESIGN 2, PLAN T23)
+
+Needs the day-3 gate first (D3/D4 pass) and Marco's backup confirmation (`docs/design/watari-winram/PLAN.md`, T24). The image is
+a raw GPT/FAT32 disk made by `tools/m3a/build-winram-image.sh` on Marco's Mac (`<image>` + `<image>.sha256`); it holds Microsoft files, so
+it lives only under `$WATARI_DATA/winram/` and in the bundle folder, never in the repository.
+
+| Option | Meaning |
+|---|---|
+| `--ramdisk <image>` | with `--edk2` on D0 or D2 (other rungs: refused, exit 2). A path, or a name relative to the bundle folder (`winram/winram.img`). A **fourth block** |
+| `--ramdisk-test <MiB>` | the **rate test**, no `--rung`: one 32 MB aligned block, `<MiB>` of a test pattern written in slices, read back and compared, MB/s each way, an estimate for a 704 MiB image. No DTB, no layer, no boot arguments, no jump, no write outside its block |
+| `--ramdisk-slice <MiB>` | slice size (default 16) |
+| `--ramdisk-verify sample\|full\|none` | read-back per slice: first and last 4 KiB (default), the whole slice, or none |
+| `--no-data-csums` | try m1n1's `Feature.DISABLE_DATA_CSUMS` for the transfer **[hypothesis: the proxyclient API was not read; the loader refuses (exit 2) if the interface lacks it]** |
+
+What `--ramdisk` does, in order (asserted by `test_watari_load.py`):
+1. **Before any proxy call:** the image is hashed (SHA-256, CRC-32) and compared with `<image>.sha256` (missing sidecar or a difference: exit 2); the size limit is checked: the block (image + 4 KiB trailer, rounded to 1 MiB) must be at most **896 MiB**, so that the 32 MiB alignment skip, the image block rounded to 32 MiB and the three other 32 MiB blocks stay within the proxy heap's 1 GiB (exit 2). The **plan** is printed: size, hashes, block size, slices, heap need, and the transfer time at 1 / 3 / 10 MB/s **[hypothesis: unmeasured; run `--ramdisk-test` first]**.
+2. DTB written, then the image block is allocated **first** (`memalign(32 MB, size)`, first-fit from the low end of the heap, so the range above stays one large `/memory` piece for EDK2), then written in 16 MiB slices: one `writemem` each (its own m1n1 checksum), a checksum error retries that slice once and then aborts, read-back per `--ramdisk-verify`, one progress line per slice (MiB, MB/s, ETA). Then the **4 KiB trailer, last, at the END of the range** (`base + size - 4096`): `WRAMDSK1`, `image_bytes` u64, CRC-32 u32 (`zlib.crc32`, **[hypothesis: the polynomial of UEFI `CalculateCrc32`; settled by T21b's test]**), SHA-256 (32 bytes), zero padding.
+3. Layer, spacer and EDK2 blocks as before; cache maintenance (`dc_cvau`/`dc_cvac`/`ic_ivau`) over the whole ramdisk range and the other images; **then** the boot arguments, with `wel2.ramdisk=0x<base>,0x<size>` right after `wel2.guest=` (`size` includes the trailer). The layer needs `wel2.abi=fdt` for it (set with `--edk2`).
+4. D0/D2 read the prepared FDT back; **`BLOCK CHECK`** covers the **whole** ramdisk range (not just 32 MB): inside one usable range, 16 KB aligned, no overlap with the layer, spacer, EDK2 blocks, the prepared FDT or the framebuffer (exit 4 on FAIL). Then `gfdt_dump ... --ramdisk 0x<base>,0x<size>` previews the carve (the loader looks for the option string in the tool; if this `gfdt_dump` has no `--ramdisk` yet (T21a adds it) it says so and skips that part: the layer's own FATAL line is then the backstop).
+5. **D0 writes the image too** (it is RAM, and the preview reads samples back); D2 writes it again after a new m1n1 session. Use `--ramdisk-test` for the rate, D0 for the placement, D2 for the jump.
+
+```
+python3 watari-load.py --ramdisk-test 64 --m1n1 ...                                   # the rate test (also --dry-run)
+python3 watari-load.py --rung D0 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --no-smp --m1n1 ...
+python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --m1n1 ...
+```
+
+Dry run on the real image (`winram.img`, 747 634 688 bytes = 713.0 MiB): block 714 MiB, 45 slices, heap need 864 MiB of 1024; the dry run keeps nothing in host memory and does not compare read-backs.
 
 L1-L4 start no secondaries: m1n1 then removes the 7 other cpu nodes, so their FDT has 1 cpu and the layer accepts it (it runs on the boot core only). Only L0 and L5 show/use all 8.
 

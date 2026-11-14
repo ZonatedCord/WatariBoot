@@ -4,7 +4,11 @@
 # the Homebrew LLVM and the dtc that are already on this Mac. Nothing is written into the repository: sources are
 # compiled out of tree (OUT=...) into <dir>/work, the result goes to <dir>/bundle.
 #
-#   tools/m3a/build-m1-payload.sh [DIR]      DIR defaults to $WATARI_DATA/m3a-payload
+#   tools/m3a/build-m1-payload.sh [--winram FILE|default] [DIR]      DIR defaults to $WATARI_DATA/m3a-payload
+#   --winram FILE   (rung W1, PLAN T23b) also copies the Windows RAM-disk image and its .sha256 sidecar into <bundle>/winram/
+#                   (never into the repository). The image is NOT in SHA256SUMS (about 700 MiB; the loader checks the sidecar
+#                   itself, `--ramdisk winram/<name>`). `default` = $WATARI_DATA/winram/winram.img (tools/m3a/build-winram-image.sh).
+#                   The copy is verified against the sidecar after copying.
 #
 # The bundle (everything the host Mac needs, nothing else):
 #   wel2-m1.bin          layer, M1 build with the built-in EL1 payload   (rungs L1, L2)
@@ -20,6 +24,7 @@
 # BGR8 variant: tools/build-edk2-m1.sh --bgr8 builds WATARI_M1_EFI-bgr8.fd; for a second bundle run this script with
 # WATARI_M1_EFI=<that file> and another DIR (it is copied under the name WATARI_M1_EFI.fd; the bundle lands in DIR/bundle).
 # Environment: WATARI_M1_EFI=<file> picks another EDK2 image; WATARI_NO_EDK2=1 builds a day-2 bundle without one.
+#   winram/<image>, .sha256   only with --winram: the Windows RAM-disk image (outside SHA256SUMS; the loader checks the sidecar)
 #   README-m1-payload.md the rung guide
 #   SHA256SUMS           the loader refuses to run if these do not match
 set -euo pipefail
@@ -31,7 +36,27 @@ BLOCK=$((32 * 1024 * 1024))
 
 die() { echo "build-m1-payload: $*" >&2; exit 1; }
 
-DIR="${1:-}"
+DIR=""
+WINRAM=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --winram)
+            [ $# -ge 2 ] || die "--winram needs a file (or 'default')"
+            WINRAM="$2"; shift 2 ;;
+        -*) die "unknown option $1" ;;
+        *) [ -z "$DIR" ] || die "more than one DIR"; DIR="$1"; shift ;;
+    esac
+done
+if [ "$WINRAM" = default ]; then
+    [ -n "${WATARI_DATA:-}" ] || die "--winram default needs WATARI_DATA ('source tools/env.sh')"
+    WINRAM="$WATARI_DATA/winram/winram.img"
+fi
+if [ -n "$WINRAM" ]; then
+    [ -f "$WINRAM" ] || die "--winram: $WINRAM is not a file"
+    [ -f "$WINRAM.sha256" ] || die "--winram: no sidecar $WINRAM.sha256 (tools/m3a/build-winram-image.sh writes it)"
+    WINRAM="$(cd "$(dirname "$WINRAM")" && pwd)/$(basename "$WINRAM")"
+    case "$WINRAM" in "$REPO"/*) die "refusing a ramdisk image from inside the repository ($WINRAM)" ;; esac
+fi
 if [ -z "$DIR" ]; then
     [ -n "${WATARI_DATA:-}" ] || die "no output directory: pass one, or 'source tools/env.sh' to set WATARI_DATA"
     DIR="$WATARI_DATA/m3a-payload"
@@ -163,8 +188,18 @@ cp "$HERE/watari-load.py" "$OUT/"
 cp "$HERE/ehw2.py" "$OUT/"
 cp "$HERE/README-m1-payload.md" "$OUT/"
 
+if [ -n "$WINRAM" ]; then
+    echo "== Windows RAM-disk image: $WINRAM (copied into the bundle folder only, outside SHA256SUMS) =="
+    mkdir -p "$OUT/winram"
+    WNAME="$(basename "$WINRAM")"
+    cp "$WINRAM" "$OUT/winram/$WNAME"
+    cp "$WINRAM.sha256" "$OUT/winram/$WNAME.sha256"
+    ( cd "$OUT/winram" && SHA -c "$WNAME.sha256" ) || die "the copied image does not match its sidecar"
+    [ -f "$WINRAM.manifest.txt" ] && cp "$WINRAM.manifest.txt" "$OUT/winram/$WNAME.manifest.txt"
+fi
+
 echo "== SHA256SUMS =="
-( cd "$OUT" && find . -type f ! -name SHA256SUMS | sed 's|^\./||' | LC_ALL=C sort | while read -r f; do SHA "$f"; done > SHA256SUMS )
+( cd "$OUT" && find . -type f ! -name SHA256SUMS ! -path './winram/*' | sed 's|^\./||' | LC_ALL=C sort | while read -r f; do SHA "$f"; done > SHA256SUMS )
 cat "$OUT/SHA256SUMS"
 
 cat <<EOF
@@ -177,5 +212,7 @@ Manual steps for the hardware day (docs/procedures/m3a-day2-hardware.md, README-
   4. python3 watari-load.py --rung L0 --dry-run first; then L1 ... L5, one rung at a time.
      Day 3 (EDK2): --rung D0 --edk2 WATARI_M1_EFI.fd (prepares, previews the guest FDT with gfdt_dump, no jump), then
      --rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go (docs/design/watari-edk2-m1/PLAN.md T13 H2-H8).
+     Windows rung (W1, only if built with --winram): --rung D0 --edk2 WATARI_M1_EFI.fd --ramdisk winram/<image> (preview), the rate
+     test first: --ramdisk-test 64 (docs/design/watari-winram/PLAN.md T23, README-m1-payload.md "Windows rung").
   5. Afterwards remove the bundle folder.
 EOF
