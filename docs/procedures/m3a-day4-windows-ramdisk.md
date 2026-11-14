@@ -217,7 +217,7 @@ Then BDS: with a disk that has `\EFI\BOOT\BOOTAA64.EFI`, the boot manager starts
 | S5 | **Windows Setup's first screen**: a wait screen with the word "Attendere" (the ISO is Italian), then the text "Installa il driver per visualizzare l'hardware" (the driver prompt); it then **waits for input** (there is no keyboard driver) [verified: r14 `shot-0004.png`, `shot-0009.png`; the reference run on plain QEMU shows the same] | same screens expected; reaching one of them **is** the W3 success criterion |
 | Time | boot logo and spinner, then Setup, in about **250-340 s of host time** under TCG with 4 vCPUs [verified: r14 about 340 s, r15 about 250 s] | the M1 runs the guest natively, so the stages should be faster, and the transfer of the image (W1) dominates the day **[hypothesis]** |
 
-What the bench did **not** cover (so the hardware day is the first look at it): the j293 ACPI model, SMP 8 and the M1's real GIC/AIC path, the truthful 10-bit GOP, `trap-notc`, input of any kind, `install.wim`, heat.
+What the bench did **not** cover (so the hardware day is the first look at it): the j293 ACPI model, SMP 8 (the bench MADT lists 4 CPUs: T16c m2 ran an 8-vCPU layer with a 4-CPU Windows) and the M1's real GIC/AIC path, input of any kind, `install.wim`, heat. **T16c matrix (`re/m3b-winram-bench.md`, "T16c matrix"):** `trap-notc` reaches Setup on the bench (no change to W2); MEM=2G with the layer's MSI frame reaches Setup; the **truthful 10-bit GOP does not** (black panel, all cores frozen, no logo): **the BGR8 firmware is mandatory, there is no truthful-mask fallback**; if the BGR8 build ever fails on the hardware, the next step is a bench reproduction, not the 10-bit build.
 
 ---
 

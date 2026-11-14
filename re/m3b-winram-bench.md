@@ -67,7 +67,26 @@ the kernel stopped at one fixed place, silently (F-35 a); (2) the RAM disk claim
   frame is emulated (the t8103 has nothing at that page). Setup was reached with `MEM=3G RDBASE=0x80000000` (r14, r15); 4G + type 0 was not run.
 - The "Setup first screen" is the "Installa il driver per visualizzare l'hardware" page, the same as the reference run: the booted WinPE sees no install medium/driver; that is the S5 criterion, not an install.
 - NFIT publication with type 0 is confirmed in the serial log (`RamDiskPublishNfit: ... will publish to NFIT` / `will create one`, r14, r15); the SSDT install has no log line of its own [not directly verified].
-- Not done: input (no keyboard; Setup waits), install.wim, the 10-bit truthful GOP variant (R2), `trap-notc`, SMP 8 (R5), R6/R7 variants.
+- Not done here (T16c later covers the rest, see its section): input (no keyboard; Setup waits), install.wim, R6/R7 variants. T16c: the 10-bit truthful GOP fails, `trap-notc` and MEM=2G work, SMP 8 is not testable on the bench.
+
+## T16c matrix (2026-11-14, night 5): day-4 configurations on the bench
+
+Common: `el2/boot/run-winram.sh`, firmware built from the branch (`tools/build-edk2-m1.sh --model qemu-virt-bench`, with `--bgr8` = tag `vb`, without = tag `vb10`), image `winram.img`, `RDBASE=0x80000000`, layer args as the script builds them. Evidence: `$WATARI_DATA/logs/winram/t16c-<run>/` (serial.log, pc.log, shot-NNNN.png). Times are host wall-clock of this run (a faster host than r14), shots every 60 s.
+
+| Run | Config | Furthest stage | Time to Setup | `CPU_ON` | Evidence |
+|---|---|---|---|---|---|
+| m1 | `trap-notc`, SMP 4, 3G, BGR8 (8-bit fake panel) | **S5**: Setup "Attendere" GUI | about 2 min (shot 3) | 3 (cpu 1-3) | `t16c-m1/shot-0003.png`, `shot-0004.png` (stopped by me at 3 min) |
+| m2 | `trap`, SMP 8, 3G, BGR8 | **S5**: Setup driver page "Installa il driver per visualizzare l'hardware" | "Attendere" at about 2 min, driver page by about 5 min | **3**: Windows used 4 CPUs only (see below) | `t16c-m2/shot-0003.png`, `shot-0007.png` |
+| m3 | `trap`, SMP 4, 3G, **truthful 10-bit GOP** (vb10 firmware, PixelBitMask R3FF00000 G000FFC00 B000003FF, 10-bit fake panel) | **S4 only**: kernel and 3 secondaries up, then **no picture at all** (panel black under the layer band, no logo, no Setup, over 8 shots / 7.5 min); all 4 cores sit at one and the same kernel PC (`fffff8022bc7fe4c`, EL1t, DAIF masked) from about 200 s on | never | 3 | `t16c-m3/shot-0002..0008.png` (+ `-as8.png`), `pc.log` |
+| m4 | `trap`, SMP 4, **MEM=2G** (layer emulates the MSI frame), BGR8 | **S5**: Setup "Attendere" GUI | about 3 min (shot 4) | 3 | `t16c-m4/shot-0004.png` |
+
+Conclusions:
+
+- **`trap-notc` works with Windows** (m1) [verified: run]: day 4's W2 flag `--cpuif trap-notc` does not change what the bench reaches. What it does not prove: the bench's QEMU GIC has a working CPU-interface trap path for both modes; the M1's own behaviour is the hardware's [hypothesis].
+- **SMP 8 cannot be exercised on this bench** [verified: run]: the layer had 8 vCPUs (`cores (redistributors) = 8`, QEMU shows cpu0-7), but the `qemu-virt-bench` MADT lists only 4 GICCs (`QEMU_VIRT_NCPUS 4`, `tools/acpigen/include/acpigen.h`), so Windows started 3 secondaries and the other 4 vCPUs stayed parked. m2 therefore proves only that an 8-vCPU layer (vGIC with 8 redistributors, 4 unused) does not disturb a 4-CPU Windows. The 8-CPU MADT of the j293 model is the hardware day's first look [open]. A bench model with an 8-GICC MADT would close it.
+- **The truthful 10-bit GOP (PixelBitMask) does NOT work with this Windows build on the bench** (m3) [verified: run]: firmware and layer are identical to m1 apart from the GOP format, and the result moves from Setup to a permanent black panel with every core frozen at the same kernel address. Same signature as the early r1-r5 freeze (kernel up, IRQ/FIQ masked, EL1t) but at another address, i.e. it looks like a bugcheck whose screen cannot be drawn; the cause being the PixelBitMask GOP (BasicDisplay refusing the format) is [hypothesis]: no stop code is visible. This answers Q-E1: **BGR8 firmware is mandatory for the day 4 Windows rungs; a truthful mask is not an option.** It also agrees with the Microsoft requirement quoted in DESIGN 5 (PixelFormat must be BGR8).
+- **MEM=2G (MSI frame emulated by the layer) works** (m4) [verified: run]: no "MSI frame page 0xFFFFC000 is guest RAM here: not emulated" line (so the frame hole was in stage 2), RDBASE 0x80000000 + 0x2ca00000 fits below 3 GiB, Setup reached. This closes the "[open]" of the Conclusions above: the frame path does not break Windows on the bench. Whether Windows touched the frame is not logged [not verified]. The doorbell is not used by any device on the bench.
+- All four runs saw `PSCI CPU_ON` for cpu 1, 2, 3 only [verified: serial.log].
 
 ## Next step
 
