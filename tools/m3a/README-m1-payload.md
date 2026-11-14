@@ -12,7 +12,7 @@ Claims are marked **[verified: source]** or **[hypothesis]**; everything not yet
 |---|---|
 | `wel2-m1.bin` | the layer, M1 build with the built-in EL1 payload (rungs L1, L2) |
 | `wel2-chain.bin` | the layer, chain build: enters the guest named by `wel2.guest` at EL1 (rungs L3-L5) |
-| `m1guest.bin` | EL1 test guest, checks G1-G11 (rungs L3-L5) |
+| `m1guest.bin` | EL1 test guest, checks G1-G12 (rungs L3-L5) |
 | `j293-minimal.dts/.dtb` | minimal j293 device tree that m1n1's `kboot_prepare_dt` fills (DESIGN 4.2) |
 | `watari-load.py` | the host loader |
 | `ehw2.py` | optional read-only inventory of the state inherited from iBoot/m1n1 (`docs/procedures/m3a-ehw2-rung.md`) |
@@ -24,9 +24,7 @@ Claims are marked **[verified: source]** or **[hypothesis]**; everything not yet
 
 Built on Marco's Mac by `tools/m3a/build-m1-payload.sh [DIR]` (default `$WATARI_DATA/m3a-payload`, never inside the
 repository, no network, nothing downloaded: Homebrew LLVM, `dtc` and the host `cc` already on the Mac). `WATARI_M1_EFI=<file>`
-picks another EDK2 image, `WATARI_NO_EDK2=1` builds a day-2 bundle without one. **Not in the bundle yet:** a
-`-D WATARI_FB_REPORT_BGR8` EDK2 variant (H7, optional): WatariM1Pkg has no such define today (it appears only in the design
-documents), so it stays E11 work **[verified: grep of `edk2-apple/` and `tools/`]**.
+picks another EDK2 image, `WATARI_NO_EDK2=1` builds a day-2 bundle without one. **BGR8 variant (H7, optional):** `tools/build-edk2-m1.sh --bgr8` builds `WATARI_M1_EFI-bgr8.fd`; it is not in the default bundle: build a second bundle with `WATARI_M1_EFI=<that file> build-m1-payload.sh <other DIR>` (the bundle lands in `<DIR>/bundle/`).
 
 ## On the host Mac (zero footprint)
 

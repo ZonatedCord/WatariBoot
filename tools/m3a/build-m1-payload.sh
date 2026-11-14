@@ -9,7 +9,7 @@
 # The bundle (everything the host Mac needs, nothing else):
 #   wel2-m1.bin          layer, M1 build with the built-in EL1 payload   (rungs L1, L2)
 #   wel2-chain.bin       layer, chain build, enters the guest at wel2.guest (rungs L3, L4, L5)
-#   m1guest.bin          EL1 test guest G1-G11                           (rungs L3, L4, L5)
+#   m1guest.bin          EL1 test guest G1-G12                           (rungs L3, L4, L5)
 #   j293-minimal.dtb/.dts minimal device tree for m1n1's kboot_prepare_dt
 #   watari-load.py       host loader (needs the m1n1 proxyclient of the host, never m1n1.setup)
 #   ehw2.py              optional read-only inherited-state inventory (docs/procedures/m3a-ehw2-rung.md)
@@ -17,8 +17,8 @@
 #   fdt_m1_dump          prebuilt arm64 host tool (no cc needed on the host)
 #   gfdt_dump            prebuilt arm64 host tool: the guest FDT the layer would build from m1n1's prepared FDT (rung D0)
 #   fdt-dump-src/        the sources of both + build.sh (used only if the host has the Command Line Tools)
-# Not in the bundle yet: a WATARI_FB_REPORT_BGR8 EDK2 variant. The package has no such define (grep of edk2-apple and
-# tools finds it only in the design documents), so it is E11 work; this script does not invent it.
+# BGR8 variant: tools/build-edk2-m1.sh --bgr8 builds WATARI_M1_EFI-bgr8.fd; for a second bundle run this script with
+# WATARI_M1_EFI=<that file> and another DIR (it is copied under the name WATARI_M1_EFI.fd; the bundle lands in DIR/bundle).
 # Environment: WATARI_M1_EFI=<file> picks another EDK2 image; WATARI_NO_EDK2=1 builds a day-2 bundle without one.
 #   README-m1-payload.md the rung guide
 #   SHA256SUMS           the loader refuses to run if these do not match
