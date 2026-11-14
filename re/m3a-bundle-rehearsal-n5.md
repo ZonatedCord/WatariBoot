@@ -1,0 +1,37 @@
+<!-- SPDX-License-Identifier: MIT -->
+# M3a bundle rehearsal for days 3 and 4 (T16e, night 5, 2026-11-15)
+
+Everything below ran on Marco's Mac from the night-5 head plus the T16e commit; outputs live in `$WATARI_DATA/rehearsal-n5/` only (logs, firmware copies, `day3/bundle`, `day4/bundle`, `dry3/`, `dry4/`, `neg/`). Nothing was downloaded or installed, nothing contacted a real m1n1 (`--dry-run`, `--m1n1 /nonexistent-m1n1`), no QEMU. The Microsoft-derived image was only copied (never opened) from `$WATARI_DATA/winram/`.
+
+## Firmware (procedure commands, env clean: no `WATARI_M1_BUILD_TAG/PCD/EFI`)
+- `tools/build-edk2-m1.sh` exit 0, `tools/build-edk2-m1.sh --bgr8` exit 0, both with the build checks (DSDT UIDs, "no fw_cfg, virtio, PCI, NOR, PL031, PL011 among 158 modules", image header, size 3 145 728). Built from a clean tree (`dirty=0`).
+- SHA-256 (first 16 hex): plain `4c6b1173321aa798`, BGR8 `9029516f3e0c5cff`. Manifests `*.fd.build.txt`: model j293, bench 0, ramdisk_standin 0, no tag, no PCD.
+- Side effect, same as the procedure: the commands overwrite `$WATARI_DATA/build-m1/WATARI_M1_EFI{,-bgr8}.fd` (copied to the rehearsal folder).
+
+## Bundles
+- Day 3: `build-m1-payload.sh "$R/day3"` with `WATARI_M1_EFI=<plain>`, exit 0, 50 lines in `SHA256SUMS`, `shasum -c` all OK; `wel2-chain.bin` `361b6a151d41a333`, `m1guest.bin` `eb2a1f64d8f25a7d`, `WATARI_M1_EFI.fd` `4c6b1173321aa798`, `gfdt_dump` `3b4c46a34963757a`.
+- Day 4: `WATARI_M1_EFI=<bgr8> build-m1-payload.sh --winram default "$R/day4"`, exit 0, 50 lines, all OK; `WATARI_M1_EFI.fd` `9029516f3e0c5cff`; `winram/winram.img` 747 634 688 bytes, sha256 `09e0e9c6be125a55...`, `shasum -c winram.img.sha256` OK (image outside `SHA256SUMS`).
+
+## Loader dry runs from inside the bundles (all exit 0)
+Day 3 (`day3/bundle`): D0 `--fb band --no-smp`, D0 `--smp`, D0 `--fb guest --no-smp`, D2 `--fb band|guest --args wel2.hold=1`, D2 `--cpuif trap-notc --smp`, L5, D1 (`--rung L5 --go --fb band`), D2 `--go`, D4 (`--go --cpuif trap-notc --smp`), D5 (`--go --fb guest`).
+- Boot arguments as in GATE G-7: `wel2.cpuif=trap wel2.guest=0x846000000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1` (and `wel2.fb=guest`, `wel2.cpuif=trap-notc`); L5 `wel2.step=5 wel2.cpuif=trap wel2.guest=0x844000000 wel2.fb=band wel2.hold=1`.
+- D0 lines: `bundle OK: 50 files`, `kboot_prepare_dt OK`, three `BLOCK` lines (`layer`, `guest`, `edk2`), `BLOCK CHECK: PASS`, `GUEST FDT CHECK: PASS (placement rule of the layer, builder accepted)`, `framebuffer none` / `mode none` (dry-run DTB), `intc@f00000000`, `psci` hvc, `fb-mode`; 8 `cpu@` in the dry run with `--no-smp` (documented).
+Day 4 (`day4/bundle`): `--ramdisk-test 64` (+ `--no-data-csums`, prints the "data checksums disabled" line), D0 `--ramdisk winram/winram.img --fb band --no-smp`, W1c, W2 (`trap-notc --smp`), `--fb guest`.
+- `RAMDISK PLAN: winram.img: 747634688 bytes (713.0 MiB), sha256 09e0e9c6be125a55 (matches its sidecar), crc32 0xe3eb84c7`; block 748 683 264 bytes, 45 slices, heap need <= 864 MiB, the 1/3/10 MB/s times quoted in the procedure; `BLOCK CHECK: PASS` over ramdisk, layer, guest, edk2.
+- The `gfdt_dump --ramdisk` preview runs: no `NOTE: this gfdt_dump has no --ramdisk option`; `// ramdisk at 0x842000000, 0x2ca00000 bytes (cut out of /memory)` and `/reserved-memory/ramdisk@842000000` (`compatible = "watari,ramdisk"`) are in the dump; the first `/memory` range still contains the EDK2 block.
+- Jumps: `wel2.ramdisk=0x842000000,0x2ca00000` right after `wel2.guest=0x874000000`, as the procedure quotes.
+
+## Guard (new, T16e)
+Before: the day-4 "never a bench/tagged firmware" rule was procedure text only. Now `tools/build-edk2-m1.sh` writes `<fd>.build.txt` (model, bench, ramdisk_standin, bgr8, target, build_tag, build_pcd, commit, dirty, fd_size, fd_sha256) and `tools/m3a/build-m1-payload.sh` checks it before building anything; the manifest is copied into the bundle (in `SHA256SUMS`). `WATARI_M1_EFI_ALLOW_BENCH=1` skips the guard for bench bundles.
+Negative tests (`neg/`), all exit 1 with a clear message: names `-bench`, `-t16b`, `-ramdisk`, `-e4` and the real `WATARI_M1_EFI-bench.fd` / `WATARI_M1_EFI-bgr8-t16b.fd`; no manifest; manifest `model=j293-e4`, `qemu-virt-bench`, `qemu-virt`; `bench=1`; `ramdisk_standin=1`; `build_tag=x`; `build_pcd` set; tampered firmware (SHA mismatch). Control: the plain firmware passes (`guard: model j293, no bench, ..., bgr8=0`); the override lets a bench firmware through.
+Limit: the manifest is trusted metadata written by the build script; a hand-edited manifest with a matching SHA would pass. The guard stops mistakes, not forgery.
+
+## Mismatches fixed
+- Day 3 text: D0 blocks are printed `layer`/`guest`/`edk2` ("spacer" is the code's name); expected-files list gains `WATARI_M1_EFI.fd.build.txt`.
+- Day 4 text: file count `48` -> `50`; the "not run end to end" note replaced by this rehearsal; the forbidden-firmware paragraph now describes the real guard; the `NOTE:` sentence is marked as belonging to the older bundle.
+- `README-m1-payload.md`: manifest row, `BLOCK  guest` name.
+
+## Open points
+- A dry run writes `out/` inside the bundle folder (the loader's default `--out`); harmless, deleted with the bundle.
+- Nothing here proves the real transfer rate or any hardware behaviour; the transfer-time lines stay [hypothesis] until W1 (a).
+- Tests: `tools/m3a/test_{ehw2,gfdt_dump,watari_load,winram_trailer}.py` pass; `bash -n` OK on both changed scripts.
