@@ -398,6 +398,8 @@ Use the cpuif that D3/D4 settled (`trap` unless D4 showed a reason).
 | D3 PASS, D4 FAIL | | see D4's split | record both screens |
 | D3 PASS, D5 FAIL | | the full-panel mode: band-mode works, guest mode does not | R-E2; M3b can use band mode meanwhile |
 
+**After D3 (and D4) pass:** the Windows-from-RAM rungs W1-W3 continue in `docs/procedures/m3a-day4-windows-ramdisk.md` (day 4); this day-3 gate (D0-D3 in the same session, plus D4 before W2) is its precondition.
+
 ## 7. Abort criteria and recovery (all rungs; H8)
 
 **Abort criteria.** No new checkpoint, ticker text or picture for **60 s** (D2: no EDK2 ticker text within 10 s of the guest square); a red square; the layer's panic text (`FATAL`, `UNEXPECTED EXCEPTION`, `LAST ERROR` not NONE); the loader printing anything unexpected; either person wanting to stop.
