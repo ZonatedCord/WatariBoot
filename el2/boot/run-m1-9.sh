@@ -148,6 +148,7 @@ EOF
     if [ "$wantgop" = 1 ]; then
         chk "WatariSimpleFb: GOP "
         chk "SELFTEST bars drawn"
+        chk "SELFTEST roundtrip OK"
         if [ "$fmt" = 10 ] && [ "${BGR8:-0}" != 1 ]; then chk "node format x2r10g10b10, reported as PixelBitMask R3FF00000 G000FFC00 B000003FF"
         elif [ "$fmt" = 10 ]; then chk "node format x2r10g10b10, reported as PixelBlueGreenRedReserved8BitPerColor"
         else chk "node format x8r8g8b8, reported as PixelBlueGreenRedReserved8BitPerColor"; fi

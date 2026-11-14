@@ -191,6 +191,8 @@ New code, BSD-2-Clause-Patent, written from the UEFI specification's GOP chapter
   - `x2r10g10b10` → **`PixelBitMask`** with red `0x3FF00000`, green `0x000FFC00`, blue `0x000003FF`, reserved `0xC0000000` (truthful), or, with `-D WATARI_FB_REPORT_BGR8=TRUE`, `PixelBlueGreenRedReserved8BitPerColor` (untruthful; for experiments only).
 - `Blt` through `FrameBufferBltLib`; `SetMode` clears to black; `QueryMode` returns the one mode.
 
+- **Assumption (as built, E11), [hypothesis, Q-D3]:** the framebuffer is not in the UEFI memory map as RAM: the driver adds it to the GCD as memory-mapped I/O **without** `EFI_MEMORY_RUNTIME`, so it does not appear as a runtime region, and Windows is assumed to take the buffer address from the GOP `Mode->FrameBufferBase` and map it itself. Not testable without Windows (E13/hardware).
+
 ### 8.5 The 30-bit problem (the riskiest open question)
 
 EDK2's own output is correct in the truthful mode (8.1). Windows is the unknown: Microsoft's requirement is 8-bit BGR, and what the Windows boot manager and kernel do with a `PixelBitMask` mode is **[hypothesis: unknown; it cannot be learned without running it, and no Microsoft binary may be analysed]**. Three stages, cheapest first:
