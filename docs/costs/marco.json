@@ -116,6 +116,24 @@
         }
       }
     },
+    "6d68f8a2d89e": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 52219896,
+          "cache_write_1h": 1215829,
+          "cache_write_5m": 0,
+          "input": 520,
+          "output": 110244
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 216406299,
+          "cache_write_1h": 0,
+          "cache_write_5m": 6835504,
+          "input": 2490,
+          "output": 1250590
+        }
+      }
+    },
     "76302c85c60e": {
       "models": {
         "claude-sonnet-5-5": {
@@ -130,11 +148,11 @@
     "79992f9a2ccf": {
       "models": {
         "claude-opus-5-5": {
-          "cache_read": 568132,
-          "cache_write_1h": 52364,
+          "cache_read": 2507421,
+          "cache_write_1h": 146825,
           "cache_write_5m": 0,
-          "input": 16,
-          "output": 4398
+          "input": 66,
+          "output": 15083
         }
       }
     },

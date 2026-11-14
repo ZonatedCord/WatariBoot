@@ -192,3 +192,8 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Review (Sonnet): OK, no blocking; note: the `both` case proves only that the removable file boots first (the stand-in resets), not a second attempt.
 - Opus verified on the merged branch: production, `--bench` and `--ramdisk` builds pass their checks; `run-t16a.sh` PASS removable/bootmgfw/both/empty; `make -C el2 test` ALL PASSED; `run-all.sh` 39/39 default.
 - Open: the real Windows ESP layout [hypothesis]; no storage driver exists yet; run-t16a is outside run-all (needs the --ramdisk build).
+
+### 2026-11-14 10:20 - Night 4 stop
+- Done and verified: T17, T18, T12a, T12b, T12c, T12d, T13, T15, T9, T16a. Open: T16 (free choice, repeatable).
+- Final branch checks: `make -C el2 test` ALL PASSED; `run-all.sh` 39/39; firmware builds (production, --bench, --ramdisk) pass their checks; loader/gfdt_dump/ehw2 tests pass.
+- Next: day 3 on the real M1 (`docs/procedures/m3a-day3-hardware.md`), after rebuilding the EDK2 images and the bundle from the final commit. Decisions for Marco listed in T15's entry.
