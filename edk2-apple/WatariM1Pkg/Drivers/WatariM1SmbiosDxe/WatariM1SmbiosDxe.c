@@ -9,7 +9,7 @@
 
   MdeModulePkg's SmbiosDxe adds the end-of-table record (type 127) and the entry point.
   The model identifier is the one of the 13-inch M1 MacBook Pro, from memory
-  [hypothesis: MacBookPro17,1 is j293's identifier].
+  [hypothesis: MacBookPro17,1 is j293's identifier; not verified from a public source, no network use].
 
   Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
   SPDX-License-Identifier: BSD-2-Clause-Patent
@@ -110,7 +110,7 @@ WatariM1SmbiosEntry (
   T0.BiosReleaseDate                     = 3;
   T0.BiosSize                            = 0xFF;                       // 16 MB or more: see ExtendedBiosSize
   T0.BiosCharacteristics.BiosCharacteristicsNotSupported = 1;
-  T0.BIOSCharacteristicsExtensionBytes[1] = 0x0C;                      // UEFI specification supported, VM
+  T0.BIOSCharacteristicsExtensionBytes[1] = 0x08;                      // bit 3: UEFI specification supported (not the VM bit)
   T0.SystemBiosMajorRelease              = 0;
   T0.SystemBiosMinorRelease              = 1;
   T0.EmbeddedControllerFirmwareMajorRelease = 0xFF;

@@ -223,6 +223,29 @@ BootFvFile (
   EfiBootManagerFreeLoadOption (&NewOption);
 }
 
+/**
+  TRUE if the device path points into a firmware volume (UiApp, the Shell, our self-test): those
+  are the firmware's own applications, not something the user installed.
+**/
+STATIC
+BOOLEAN
+IsFirmwareVolumePath (
+  IN EFI_DEVICE_PATH_PROTOCOL  *Path
+  )
+{
+  while (!IsDevicePathEnd (Path)) {
+    if ((DevicePathType (Path) == MEDIA_DEVICE_PATH) &&
+        ((DevicePathSubType (Path) == MEDIA_PIWG_FW_FILE_DP) || (DevicePathSubType (Path) == MEDIA_PIWG_FW_VOL_DP)))
+    {
+      return TRUE;
+    }
+
+    Path = NextDevicePathNode (Path);
+  }
+
+  return FALSE;
+}
+
 VOID
 EFIAPI
 PlatformBootManagerBeforeConsole (
@@ -277,9 +300,29 @@ PlatformBootManagerUnableToBoot (
 {
   EFI_STATUS                    Status;
   EFI_BOOT_MANAGER_LOAD_OPTION  BootManagerMenu;
+  EFI_BOOT_MANAGER_LOAD_OPTION  *BootOptions;
+  UINTN                         BootOptionCount;
+  UINTN                         Index;
 
   EfiBootManagerConnectAll ();
   EfiBootManagerRefreshAllBootOption ();
+
+  //
+  // Variables are RAM-backed here, so the boot options are re-created at every boot: whatever
+  // ConnectAll just discovered (a FAT volume with \EFI\BOOT\BOOTAA64.EFI, ...) must get its
+  // chance before the self-test, or the self-test would reset the machine forever.
+  //
+  BootOptions = EfiBootManagerGetLoadOptions (&BootOptionCount, LoadOptionTypeBoot);
+  for (Index = 0; Index < BootOptionCount; Index++) {
+    if (((BootOptions[Index].Attributes & LOAD_OPTION_ACTIVE) == 0) || IsFirmwareVolumePath (BootOptions[Index].FilePath)) {
+      continue;
+    }
+
+    DEBUG ((DEBUG_INFO, "%a: trying boot option %u (%s)\n", __func__, (UINT32)BootOptions[Index].OptionNumber, BootOptions[Index].Description));
+    EfiBootManagerBoot (&BootOptions[Index]);
+  }
+
+  EfiBootManagerFreeLoadOptions (BootOptions, BootOptionCount);
 
   if (FixedPcdGetBool (PcdUefiShellDefaultBootEnable)) {
     //

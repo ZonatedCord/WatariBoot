@@ -164,6 +164,50 @@ StripBox (
   Gop->Blt (Gop, &Color, EfiBltVideoFill, 0, 0, BOX_X0 + Index * BOX_PITCH, H - STRIP_ROWS + 12, BOX_SIZE, BOX_SIZE, 0);
 }
 
+/**
+  One BufferToVideo + VideoToBlt round trip on a pixel of the status strip (below the boxes,
+  outside every checked area), compared in software. With PixelBitMask the library's conversion
+  is lossy in the low bits, so each channel may differ by up to 4.
+**/
+STATIC
+BOOLEAN
+RoundTrip (
+  IN EFI_GRAPHICS_OUTPUT_PROTOCOL  *Gop
+  )
+{
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Out;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  In;
+  UINTN                          X;
+  UINTN                          Y;
+  EFI_STATUS                     Status;
+  BOOLEAN                        Ok;
+
+  Out.Blue     = 0x20;
+  Out.Green    = 0x40;
+  Out.Red      = 0x80;
+  Out.Reserved = 0;
+  ZeroMem (&In, sizeof (In));
+  X = Gop->Mode->Info->HorizontalResolution - 8;
+  Y = Gop->Mode->Info->VerticalResolution - 8;
+
+  Status = Gop->Blt (Gop, &Out, EfiBltBufferToVideo, 0, 0, X, Y, 1, 1, 0);
+  if (!EFI_ERROR (Status)) {
+    Status = Gop->Blt (Gop, &In, EfiBltVideoToBltBuffer, X, Y, 0, 0, 1, 1, 0);
+  }
+
+  Ok = !EFI_ERROR (Status) &&
+       (In.Red >= Out.Red - 4) && (In.Red <= Out.Red + 4) &&
+       (In.Green >= Out.Green - 4) && (In.Green <= Out.Green + 4) &&
+       (In.Blue >= Out.Blue - 4) && (In.Blue <= Out.Blue + 4);
+  DEBUG ((
+    DEBUG_INFO,
+    "SELFTEST roundtrip %a: wrote R%02x G%02x B%02x, read R%02x G%02x B%02x (%r)\n",
+    Ok ? "OK" : "FAIL",
+    Out.Red, Out.Green, Out.Blue, In.Red, In.Green, In.Blue, Status
+    ));
+  return Ok;
+}
+
 EFI_STATUS
 EFIAPI
 WatariM1SelfTestMain (
@@ -209,6 +253,10 @@ WatariM1SelfTestMain (
       ));
     DrawBars (Gop);
     DEBUG ((DEBUG_INFO, "SELFTEST bars drawn\n"));
+    if (!RoundTrip (Gop)) {
+      DEBUG ((DEBUG_ERROR, "SELFTEST FAIL: Blt round trip\n"));
+      return EFI_DEVICE_ERROR;
+    }
     for (Ticks = 0; Ticks < TICKS_WANTED; Ticks++) {
       StripBox (Gop, Ticks, FALSE);
     }

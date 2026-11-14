@@ -15,6 +15,8 @@
 #   STOP_ON_RESET=1  stop at the first PSCI SYSTEM_RESET/OFF (a bugcheck restarts Windows: use SHOT_EVERY=6 to catch the blue screen)
 #   WEL2_ARGS="wel2.e2h=1 wel2.gran=16k"   extra boot arguments for the layer (E2H mode, translation granule)
 #   TAG=name       run directory name (default: cpuif mode + timestamp)
+#   FWDIR=dir      directory with QEMU_EFI-kernel.fd to load (default $WATARI_DATA/build-kernel; E13 variants:
+#                  $WATARI_DATA/build-watari-e13a|e13b, built by tools/build-edk2-watari.sh --variant)
 #   LOGDIR=m2x     log directory under $WATARI_DATA/logs (default m2)
 # Output (external disk, never in the repo): $WATARI_DATA/logs/m2/<TAG>/
 #   serial.log (layer + EDK2 + Windows KD on COM1), shot-NNNN.png, qemu.out, sockdir.txt
@@ -26,11 +28,14 @@ set -u
 cd "$(dirname "$0")"
 # shellcheck source=/dev/null
 source ../../tools/env.sh || { echo "FAIL: data disk not mounted"; exit 2; }
-FD="$WATARI_DATA/build-kernel/QEMU_EFI-kernel.fd"
+FD="${FWDIR:-$WATARI_DATA/build-kernel}/QEMU_EFI-kernel.fd"
 DISK="$WATARI_DATA/vm/win11.qcow2"
 [ -f "$FD" ] || { echo "FAIL: $FD missing"; exit 2; }
 [ -f "$DISK" ] || { echo "FAIL: $DISK missing"; exit 2; }
-pgrep -f "qemu-system.*win11.qcow2" >/dev/null && { echo "FAIL: another QEMU uses the Windows disk"; exit 2; }
+# F-31: no `pgrep -f` (it matches wait loops and this very shell); look at the QEMU processes' own arguments.
+for p in $(pgrep -x qemu-system-aarch64); do
+    ps -p "$p" -o args= | grep -q "win11.qcow2" && { echo "FAIL: another QEMU uses the Windows disk"; exit 2; }
+done
 make -s chain || { echo "FAIL: build"; exit 2; }
 
 MODE="${CPUIF:-hw}"
