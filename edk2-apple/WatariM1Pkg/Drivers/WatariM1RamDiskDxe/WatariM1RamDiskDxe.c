@@ -13,9 +13,9 @@
        already system memory is accepted and logged (step 3 then decides), anything else is refused. The order here is
        AddMemorySpace, then step 3 AT ONCE, then the other two calls: building the mapping allocates page-table pages
        top-down, and they must not land in the image (T21 review);
-    3. AllocatePages (AllocateAddress, EfiBootServicesData): from now on nothing in boot services can take the pages;
-       EfiBootServicesData (not Reserved) so that RamDiskDxe publishes neither an NFIT nor the NVDIMM SSDT, and
-       Windows can reuse the memory after ExitBootServices (PcdWatariRamDiskType = 0 is the debug switch);
+    3. AllocatePages (AllocateAddress, PcdWatariRamDiskType): from now on nothing in boot services can take the pages.
+       T22: the type is EfiReservedMemoryType (0), so RamDiskDxe publishes an NFIT and the NVDIMM SSDT; with
+       EfiBootServicesData (4) WinPE stops in the kernel with MEMORY_MANAGEMENT (0x1A) [verified: F-35];
     4. the trailer (last 4 KiB of the range): magic "WRAMDSK1", image_bytes, CRC-32 of the image; a mismatch or a missing
        trailer is logged and the disk is NOT registered (PcdWatariRamDiskVerify = FALSE skips only the CRC compare);
     5. EFI_RAM_DISK_PROTOCOL.Register: Block I/O + Device Path, then PartitionDxe (GPT) and the FAT driver follow.

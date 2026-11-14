@@ -29,6 +29,13 @@ int main(void)
     CHECK(qemu_virt_model.ncpus == 4);
     for (size_t i = 0; i < 4; i++)
         CHECK(qemu_virt_cpus[i].mpidr == i);
+    /* T22 qemu-virt-bench: QEMU GIC addresses, the layer's MSI frame (0xFFFFF000, SPI 928, 32), PSCI over HVC, no DBG2 */
+    const acpigen_model *bm = acpigen_find_model("qemu-virt-bench");
+    CHECK(bm == &qemu_virt_bench_model && bm->ncpus == 4 && bm->dbg2 == 0);
+    CHECK(bm->gicd->physical_base_address == 0x08000000ull && bm->madt_opts.gicr_range_base == 0x080A0000ull);
+    CHECK(bm->madt_opts.msi_base == 0xFFFFF000ull && bm->madt_opts.msi_spi_base == 928 && bm->madt_opts.msi_spi_count == 32);
+    CHECK(acpigen_build_madt(b, sizeof b, 0, bm->cpus, bm->ncpus, bm->gicd, &bm->madt_opts) > 0);
+    CHECK(acpigen_build_fadt(b, sizeof b, 0, bm->fadt) == 276);
     /* modelli senza CSRT/DBG2 */
     CHECK(acpigen_build_csrt(b, sizeof b, 0, qemu_virt_model.csrt) == ACPIGEN_E_INVAL);
     CHECK(acpigen_build_dbg2(b, sizeof b, 0, t8103_model.dbg2) == ACPIGEN_E_INVAL);
