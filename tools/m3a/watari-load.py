@@ -427,14 +427,28 @@ def ensure_dump_tool(bundle, given, name="fdt_m1_dump"):
                     "the prepared FDT is saved; check it on Marco's Mac with the same tool" % name)
 
 
-def run_gfdt(tool, blob_path, layer_addr, entry, image_size, fb):
+def gran_from_args(extra):
+    """The granule the layer will pick from --args: stage1.c tests wel2.gran=16k first, then wel2.gran=4k (whole tokens).
+    Returns "16k", "4k" or None (the layer default, which gfdt_dump also uses)."""
+    toks = (extra or "").split()
+    if "wel2.gran=16k" in toks:
+        return "16k"
+    if "wel2.gran=4k" in toks:
+        return "4k"
+    return None
+
+
+def run_gfdt(tool, blob_path, layer_addr, entry, image_size, fb, gran=None):
     """gfdt_dump on the prepared FDT: the guest FDT the layer would build. Returns (rc, stdout). Prints the tool's stdout;
     its stderr lines (NOTE / PRIVACY / refusal reasons) are echoed. Output is the guest tree, never the prepared FDT."""
     out = os.path.join(os.path.dirname(blob_path), "guest-fdt.dtb")
     if os.path.exists(out):
         os.remove(out)
     cmd = [tool, blob_path, "--layer", "0x%x" % layer_addr, "--entry", "0x%x" % entry,
-           "--image-size", "0x%x" % image_size, "--fb", fb, "-o", out]
+           "--image-size", "0x%x" % image_size, "--fb", fb]
+    if gran:
+        cmd += ["--gran", gran]
+    cmd += ["-o", out]
     r = subprocess.run(cmd, capture_output=True, text=True)
     say("== gfdt_dump (the guest FDT the layer would build; no serial number, MAC or seed can appear) ==")
     sys.stdout.write(r.stdout)
@@ -635,7 +649,7 @@ def run(args, target):
                 laddr = l0_blocks["layer"] if preview else layer_addr
                 try:
                     grc, _ = run_gfdt(ensure_dump_tool(bundle, args.gfdt_dump, "gfdt_dump"), path, laddr, gaddr,
-                                      struct.unpack_from("<Q", edk2, 16)[0], args.fb)
+                                      struct.unpack_from("<Q", edk2, 16)[0], args.fb, gran_from_args(args.args))
                 except OSError as e:
                     say("gfdt_dump could not be run (%s: %s): NOT jumping." % (type(e).__name__, e))
                     return 1

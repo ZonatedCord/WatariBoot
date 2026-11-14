@@ -483,6 +483,39 @@ static void write_ppm(const struct screen *s, const char *path)
 	fclose(f);
 }
 
+/* The band texts that docs/procedures/m3a-day3-hardware.md quotes for the final held screens (the panel is not in any UART
+ * log, so this is where they are checked): D1 (test guest, L5, 13 checks, last checkpoint = guest check 12 = G11, which runs
+ * after G12 = check 13) and D2/D3 (EDK2: layer squares 0-8 only). */
+static void t_day3_band_texts(void)
+{
+	for (int k = 0; k < 2; k++) {
+		struct screen s;
+
+		scr_new(&s, FMTS[k], 2560, 1600, 0);
+		wel2_fb_set_rung(&s.fb, 5, 5);
+		for (unsigned i = 0; i <= 8; i++)
+			wel2_fb_checkpoint(&s.fb, i, WEL2_RGB_GREEN);
+		for (unsigned i = 17; i <= 29; i++)
+			wel2_fb_checkpoint(&s.fb, i, WEL2_RGB_GREEN);
+		wel2_fb_checkpoint(&s.fb, 28, WEL2_RGB_GREEN);              /* G11 reports last */
+		wel2_fb_checkpoint_text(&s.fb, "HOLD: TAKE PHOTO");
+		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG L5 STEP 5", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 28 OK (GUEST CHECK 12) HOLD: TAKE PHOTO", C_OK, C_BAND));
+		CHECK(line_is(&s, L2(&s), "GUEST PASS 13 FAIL 0 SKIP 0", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, E0(&s), "LAST ERROR: NONE", C_NOERR, WEL2_RGB_BLACK));
+
+		scr_new(&s, FMTS[k], 2560, 1600, 0);                        /* EDK2: no rung, no step, layer squares 0-8 */
+		for (unsigned i = 0; i <= 8; i++)
+			wel2_fb_checkpoint(&s.fb, i, WEL2_RGB_GREEN);
+		wel2_fb_checkpoint_text(&s.fb, "ENTER_GUEST");
+		CHECK(line_is(&s, L0(&s), "WATARI EL2  RUNG - STEP -", WEL2_RGB_WHITE, C_BAND));
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 8 OK ENTER_GUEST", C_OK, C_BAND));
+		wel2_fb_checkpoint_text(&s.fb, "HOLD: TAKE PHOTO");
+		CHECK(line_is(&s, L1(&s), "CHECKPOINT 8 OK HOLD: TAKE PHOTO", C_OK, C_BAND));
+		CHECK(line_is(&s, L2(&s), "GUEST PASS 0 FAIL 0 SKIP 0", WEL2_RGB_WHITE, C_BAND));
+	}
+}
+
 /* The j293 screen: 2560 x 1600, both pixel formats. The PPM fixture of the last format is written to
  * $WEL2_FB_PPM_2560 when set (looked at by eye / photographed-screen mock-up, not a check). */
 static void t_band_2560(void)
@@ -1152,6 +1185,7 @@ int main(void)
 	RUN(t_bounds_odd_geometry);
 	RUN(t_ppm_sample);
 	RUN(t_band_2560);
+	RUN(t_day3_band_texts);
 	RUN(t_error_persists_across_scrolls);
 	RUN(t_band_800x600);
 	RUN(t_summary_block);

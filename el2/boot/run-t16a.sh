@@ -8,7 +8,7 @@
 # Cases:
 #   removable   the stand-in at \EFI\BOOT\BOOTAA64.EFI only            -> found by EDK2's own discovery
 #   bootmgfw    the stand-in at \EFI\Microsoft\Boot\bootmgfw.efi only  -> found only by WatariM1BootManagerLib (T16a)
-#   both        both files                                              -> both boot, the removable one first
+#   both        both files                                              -> the removable file boots first (nothing more is claimed)
 #   empty       a disk with no boot file                                -> nothing found, the self-test runs (negative control)
 # Env: CASES="..."  CPUIF=hw|trap|trap-notc  FD=<bench firmware>
 # Prerequisite: the data disk and tools/build-edk2-m1.sh --ramdisk. Nothing is downloaded or installed (hdiutil only).
@@ -72,7 +72,9 @@ run_case() {
         removable) chk 'T16A BOOTED from \EFI\BOOT\BOOTAA64.EFI' ;;
         bootmgfw)  chk 'T16A BOOTED from \EFI\Microsoft\Boot\bootmgfw.efi'
                    grep -aqF "trying Windows Boot Manager" "$T" || { echo "MISSING: the bootmgfw path was not the one that booted"; rc=1; } ;;
-        both)      [ "$(grep -ac 'T16A BOOTED from' "$T")" -ge 1 ] || { echo "MISSING: no boot"; rc=1; } ;;
+        both)      # only claim: the removable file boots first (the stand-in resets, so a second attempt is not tested)
+                   chk 'T16A BOOTED from \EFI\BOOT\BOOTAA64.EFI'
+                   [ "$(grep -ac 'T16A BOOTED from' "$T")" = 1 ] || { echo "MISSING: expected exactly one boot (the stand-in resets)"; rc=1; } ;;
         empty)     chk "SELFTEST PASS"
                    grep -aqF "T16A BOOTED" "$T" && { echo "FAIL: something booted from an empty disk"; rc=1; } ;;
     esac
