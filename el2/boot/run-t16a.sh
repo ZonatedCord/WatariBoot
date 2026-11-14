@@ -103,10 +103,10 @@ run_case() {
         empty)     chk "SELFTEST PASS"
                    grep -aqF "T16A BOOTED" "$T" && { echo "FAIL: something booted from an empty disk"; rc=1; } ;;
         crcbad)    chk "WatariM1RamDisk: CRC-32 mismatch"; chk "SELFTEST PASS"
-                   grep -aqF "registered" "$T" && { echo "FAIL: a disk with a bad CRC was registered"; rc=1; }
+                   grep -aqF "bytes registered" "$T" && { echo "FAIL: a disk with a bad CRC was registered"; rc=1; }
                    grep -aqF "T16A BOOTED" "$T" && { echo "FAIL: something booted from a corrupt image"; rc=1; } ;;
         notrailer) chk "WatariM1RamDisk: no trailer"; chk "SELFTEST PASS"
-                   grep -aqF "registered" "$T" && { echo "FAIL: a disk without a trailer was registered"; rc=1; }
+                   grep -aqF "bytes registered" "$T" && { echo "FAIL: a disk without a trailer was registered"; rc=1; }
                    grep -aqF "T16A BOOTED" "$T" && { echo "FAIL: something booted without a trailer"; rc=1; } ;;
     esac
     [ "$EXITED" = 1 ] || { echo "FAIL: QEMU did not exit by itself"; rc=1; }

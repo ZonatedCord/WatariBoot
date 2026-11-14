@@ -232,3 +232,10 @@ Hardware rungs are only attempted after the bench reached S5 for the same firmwa
 | `edk2-apple/WatariM1Pkg/Drivers/WatariM1RamDiskDxe/` (new), DSC/FDF | the driver; the bench driver retired |
 | `el2/boot/run-winram.sh` (new) and `tools/m3a/fb-png.py` (new) | the bench WinPE run and a pmemsave-to-PNG converter (standard library only) |
 | `docs/procedures/m3a-day4-hardware.md` (new), `tools/m3a/build-m1-payload.sh` | hardware procedure; the bundle does **not** carry the image (about 700 MiB, copied separately, sidecar checked) |
+
+## 11. Implementation notes of T21 (differences from the text above)
+
+- **Alignment:** the layer requires `base` aligned to the stage-2 granule (16 KB by default, 4 KB with `wel2.gran=4k`) and `size` a multiple of **4 KB**, not 16 KB: image + 4 KiB trailer cannot be a multiple of 16 KB when the image is. EDK2 needs 4 KB (pages) only. [verified: R:el2/include/wel2_fdt_build.h `wel2_gfdt_place_ramdisk`, tests]
+- **One function:** the validation, the carve and the placement are `wel2_gfdt_place_ramdisk` (host-tested), called by `main.c` `chain_fdt` and by `gfdt_dump --ramdisk`, instead of the layer and the tool each repeating the sequence. "Overlaps the layer block / EDK2 image / FDT" is: not inside one guest RAM range (the layer's block is not in the list), or overlaps `[entry, FDT end)`.
+- **Driver:** `WatariM1RamDiskDxe` does the three `HighMemDxe` steps including `Cpu->SetMemoryAttributes`, accepts an already-system-memory range, and uses `FindCompatibleNode` + `GetNodeProperty("reg")` (as `WatariSimpleFbDxe`). `PcdWatariRamDiskType` (default 4 = BootServicesData; 0 = Reserved debug) and `PcdWatariRamDiskVerify` (default TRUE). Trailer format and the host helper: `tools/m3a/winram_trailer.py` (also what T23's loader should import). The SHA-256 field is informational; EDK2 checks the CRC-32 only.
+- **Bench:** the stand-in run is `el2/boot/run-winram-stub.sh` (image above 4 GB through `-device loader`), not `run-winram.sh`, which stays the name for T22's real-Windows run. [verified: bench run on QEMU TCG, 2026-11-14]
