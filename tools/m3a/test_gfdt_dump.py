@@ -114,6 +114,38 @@ with tempfile.TemporaryDirectory() as tmp:
     r = sh([tool, fx, "--layer", "0x8c0000000", "--entry", "0x81c000000", "--image-size", "0x800000"])
     check(r.returncode == 1 and "placement refused" in r.stderr, "an image within 64 MB of the top of its range is refused (UEFI region)")
 
+    # T21: --ramdisk = the layer's own wel2_gfdt_place_ramdisk, the /reserved-memory node and the /memory cut-out
+    base_args = [tool, fx, "--layer", "0x802000000", "--entry", "0x814000000", "--image-size", "0x800000"]
+    r = sh(base_args + ["--ramdisk", "0x810000000,0x1001000", "-o", out_dtb])
+    o = r.stdout
+    check(r.returncode == 0, "--ramdisk in a small range exits 0: %s" % r.stderr[-300:])
+    check("// ramdisk at 0x810000000, 0x1001000 bytes" in o, "the ramdisk line is printed")
+    check(re.search(r"^  reserved-memory:", o, re.M) and re.search(r"^    ramdisk@810000000:", o, re.M) and 'compatible = "watari,ramdisk"' in o
+          and "reg = <0x8 0x10000000 0x0 0x1001000>" in o and re.search(r"^      no-map;", o, re.M), "the /reserved-memory/ramdisk node")
+    mems = re.findall(r"^  memory@([0-9a-f]+):\n    device_type = \"memory\";\n    reg = <0x(\w+) 0x(\w+) 0x(\w+) 0x(\w+)>", o, re.M)
+    spans = [((int(a, 16) << 32) | int(b, 16), (int(c, 16) << 32) | int(d, 16)) for _, a, b, c, d in mems]
+    check(len(spans) == 3 and spans[0][0] == 0x814000000, "three /memory pieces, the image's first: %s" % spans)
+    check(all(b + s <= 0x810000000 or b >= 0x811001000 for b, s in spans), "no /memory piece overlaps the RAM disk")
+    check(any(b == 0x811001000 and s == 0x2000000 - 0x1001000 for b, s in spans), "the rest of the range above the RAM disk is kept")
+    r = sh(base_args)
+    check("reserved-memory" not in r.stdout and "ramdisk" not in r.stdout, "without --ramdisk no node and no line")
+    r = sh(base_args + ["--ramdisk", "0x81a000000,0x1001000"])
+    check(r.returncode == 1 and "after cutting out the RAM disk" in r.stderr, "a RAM disk that leaves the image's piece under 128 MB is refused")
+    r = sh(base_args + ["--ramdisk", "0x814400000,0x1001000"])
+    check(r.returncode == 1 and "overlaps the image or the FDT" in r.stderr, "a RAM disk over the image is refused")
+    r = sh(base_args + ["--ramdisk", "0x900000000,0x1001000"])
+    check(r.returncode == 1 and "not inside one guest RAM range" in r.stderr, "a RAM disk outside the guest RAM is refused")
+    r = sh(base_args + ["--ramdisk", "0x810001000,0x1001000"])
+    check(r.returncode == 1 and "alignment" in r.stderr, "a RAM disk not aligned to the 16 KB granule is refused")
+    r = sh(base_args + ["--ramdisk", "0x810001000,0x1001000", "--gran", "4k"])
+    check(r.returncode == 0, "the same base is fine with --gran 4k")
+    r = sh(base_args + ["--ramdisk", "0x810000000,0x0"])
+    check(r.returncode == 1, "a RAM disk of size zero is refused")
+    r = sh([tool, fx, "--ramdisk", "0x810000000,0x1001000"])
+    check(r.returncode == 2, "--ramdisk without --entry is a usage error")
+    r = sh(base_args + ["--ramdisk", "0x810000000"])
+    check(r.returncode == 2, "--ramdisk without a size is a usage error")
+
     # input errors
     r = sh([tool, os.path.join(tmp, "nonexistent.dtb")])
     check(r.returncode == 2, "a missing file exits 2")

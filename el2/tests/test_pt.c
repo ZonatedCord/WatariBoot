@@ -863,8 +863,80 @@ static void t_ranges_inward(void)
 	CHECK_EQ(wel2_ranges_inward(in, 3, 0x2000000, 0xfffffffffffff000ULL, 0x2000, out, 8, &n), -1);   /* wrapping cut */
 }
 
+/* T21: wel2_ranges_carve, the pure function behind the guest FDT's /memory cut-out for wel2.ramdisk=. */
+static void t_ranges_carve(void)
+{
+	struct wel2_range in[3] = { { 0x40000000, 0x40000000 }, { 0x100000000ULL, 0x80000000ULL }, { 0x200000000ULL, 0x10000000 } };
+	struct wel2_range out[8];
+	unsigned n = 99;
+
+	/* in the middle of a range: split in two */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x50000000, 0x2000000, out, 8, &n), 0);
+	CHECK_EQ(n, 4);
+	CHECK_EQ(out[0].base, 0x40000000); CHECK_EQ(out[0].size, 0x10000000);
+	CHECK_EQ(out[1].base, 0x52000000); CHECK_EQ(out[1].size, 0x2e000000);
+	CHECK_EQ(out[2].base, 0x100000000ULL); CHECK_EQ(out[3].base, 0x200000000ULL);
+	/* at the start of a range: one piece above */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x40000000, 0x1000000, out, 8, &n), 0);
+	CHECK_EQ(n, 3);
+	CHECK_EQ(out[0].base, 0x41000000); CHECK_EQ(out[0].size, 0x3f000000);
+	/* at the end of a range: one piece below */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x7f000000, 0x1000000, out, 8, &n), 0);
+	CHECK_EQ(n, 3);
+	CHECK_EQ(out[0].base, 0x40000000); CHECK_EQ(out[0].size, 0x3f000000);
+	/* the whole range: it vanishes, the others are kept in order */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x100000000ULL, 0x80000000ULL, out, 8, &n), 0);
+	CHECK_EQ(n, 2);
+	CHECK_EQ(out[0].base, 0x40000000); CHECK_EQ(out[1].base, 0x200000000ULL);
+	/* wider than the range: also gone; straddling two ranges' edge keeps the far sides only */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0xf0000000ULL, 0x100000000ULL, out, 8, &n), 0);
+	CHECK_EQ(n, 2);                                              /* [0xf0000000, 0x1f0000000) eats range 1, leaves 0 below 0x7f.. */
+	CHECK_EQ(out[0].base, 0x40000000); CHECK_EQ(out[0].size, 0x40000000);
+	CHECK_EQ(out[1].base, 0x200000000ULL); CHECK_EQ(out[1].size, 0x10000000);
+	/* overlapping the tail of one range and the head of the next only when they touch it */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x1ff000000ULL, 0x2000000, out, 8, &n), 0);   /* only range 2 loses its head */
+	CHECK_EQ(n, 3);
+	CHECK_EQ(out[1].base, 0x100000000ULL); CHECK_EQ(out[1].size, 0x80000000ULL);
+	CHECK_EQ(out[2].base, 0x201000000ULL); CHECK_EQ(out[2].size, 0xf000000);
+	/* outside every range / touching an edge without overlap: nothing changes */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x90000000, 0x1000, out, 8, &n), 0);
+	CHECK_EQ(n, 3);
+	CHECK_EQ(out[0].size, 0x40000000); CHECK_EQ(out[2].size, 0x10000000);
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x80000000, 0x1000, out, 8, &n), 0);   /* starts at the end of range 0 */
+	CHECK_EQ(n, 3);
+	CHECK_EQ(out[0].size, 0x40000000);
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x3ffff000, 0x1000, out, 8, &n), 0);   /* ends at the start of range 0 */
+	CHECK_EQ(n, 3);
+	CHECK_EQ(out[0].base, 0x40000000); CHECK_EQ(out[0].size, 0x40000000);
+	/* size 0 = nothing to remove; a zero-size input range is dropped */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x50000000, 0, out, 8, &n), 0);
+	CHECK_EQ(n, 3);
+	{
+		struct wel2_range z[2] = { { 0x1000, 0 }, { 0x2000, 0x1000 } };
+
+		CHECK_EQ(wel2_ranges_carve(z, 2, 0, 0, out, 8, &n), 0);
+		CHECK_EQ(n, 1); CHECK_EQ(out[0].base, 0x2000);
+	}
+	/* too many pieces: a split needs one more slot than the input has, -1 when out[] is full */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x50000000, 0x2000000, out, 3, &n), -1);
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x50000000, 0x2000000, out, 4, &n), 0);
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0x300000000ULL, 0x1000, out, 2, &n), -1);   /* no cut, but out[] too small for the copy */
+	/* wrapping carve-out or wrapping input: refused */
+	CHECK_EQ(wel2_ranges_carve(in, 3, 0xfffffffffffff000ULL, 0x2000, out, 8, &n), -1);
+	{
+		struct wel2_range w[1] = { { 0xfffffffffffff000ULL, 0x2000 } };
+
+		CHECK_EQ(wel2_ranges_carve(w, 1, 0, 0, out, 8, &n), -1);
+	}
+	/* a carve-out inside a range that leaves it exactly two pieces, sizes add up */
+	CHECK_EQ(wel2_ranges_carve(in + 1, 1, 0x120000000ULL, 0x10000000, out, 8, &n), 0);
+	CHECK_EQ(n, 2);
+	CHECK_EQ(out[0].size + out[1].size + 0x10000000, 0x80000000ULL);
+}
+
 int main(void)
 {
+	RUN(t_ranges_carve);
 	RUN(t_geometry);
 	RUN(t_registers);
 	RUN(t_blocks_and_pages);
