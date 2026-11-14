@@ -66,7 +66,7 @@ const acpigen_model qemu_virt_nogicd_model = {
 
 /* T22: the M1-SHAPED QEMU bench. The vGIC of the layer on the QEMU platform sits at QEMU's own GICv3 addresses
  * (el2/boot/plat.h PLAT_QEMU_*) but the layer's GICv2m frame is the t8103 one (0xFFFFF000, SPI pool 928..959,
- * el2/boot/main.c v2m_init; emulated only when no guest RAM covers 0xFFFFC000, i.e. -m 3G or less). The j293 model
+ * el2/boot/main.c v2m_init; emulated only when no guest RAM covers 0xFFFFC000: QEMU RAM starts at 0x4000_0000, so -m 2G or less; with 3G the RAM ends at 4 GiB and covers it, as in r9-r15). The j293 model
  * (GIC at 0xF_xxxx_xxxx) and qemu-virt (MSI frame at 0x08020000, which the layer does not back) each describe a
  * machine that does not exist there; both made WinPE stop in the HAL [verified: docs/FAILURES.md F-35]. FADT as j293
  * (PSCI over HVC), no DBG2 (the production firmware has no UART), the 4 QEMU cores. */
