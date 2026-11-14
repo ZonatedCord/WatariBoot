@@ -197,3 +197,12 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Done and verified: T17, T18, T12a, T12b, T12c, T12d, T13, T15, T9, T16a. Open: T16 (free choice, repeatable).
 - Final branch checks: `make -C el2 test` ALL PASSED; `run-all.sh` 39/39; firmware builds (production, --bench, --ramdisk) pass their checks; loader/gfdt_dump/ehw2 tests pass.
 - Next: day 3 on the real M1 (`docs/procedures/m3a-day3-hardware.md`), after rebuilding the EDK2 images and the bundle from the final commit. Decisions for Marco listed in T15's entry.
+
+## Night 5 (2026-11-14/15, branch ralph/m3a-night5)
+
+### 2026-11-14 - T20 design: Windows from a RAM disk on the M1: done
+- Commits: ed974fb (design), da903d4 (review fixes). `docs/design/watari-winram/` + `docs/adr/draft-winram.md`. Decisions: GPT + FAT32 ESP image (efi\, boot\, sources\boot.wim, no install.wim; about 695-700 MiB, 704 MiB budget); loader fourth block in 16 MiB slices over the m1n1 proxy, image limit 896 MiB, rate unknown (2-10 min [hypothesis], measured at the first hardware rung); layer arg `wel2.ramdisk=0x<base>,0x<size>` -> guest FDT `/reserved-memory/ramdisk@<base>` (no-map) carved out of `/memory`, stage 2 unchanged; production `WatariM1RamDiskDxe` (GCD add, SetMemoryAttributes, AllocateAddress, RamDisk.Register) with EfiBootServicesData (Reserved would publish NFIT + an ACPI0012 SSDT); `--bgr8` GOP first; ACPI unchanged (first Windows boot without a PCI host bridge on the bench).
+- Image builder (prep for T22/T23): 2487a36 `tools/m3a/build-winram-image.sh` (GPT default, `--superfloppy`, `--mbr`; ESP retyped by patching the GPT entry; refuses output in the repo). Images in `$WATARI_DATA/winram/`: winram.img 747 634 688 B, winram-sf.img 743 440 384 B, sha256 sidecars. Not yet reviewed independently (reviewed with T22/T23).
+- Review (Sonnet, independent): OK with fixes: image arithmetic, NFIT+SSDT claim, PLAN numbering aligned to TASKS, T21 not blocked, heap limit 896 MiB, driver needs SetMemoryAttributes, bootmgr RamDisk device path stays [hypothesis] with fallbacks (superfloppy/MBR, boot.sdi also in \sources\).
+- Opus verified: fixes present in the files; PLAN uses TASKS numbering.
+- Open for Marco: approve the layer extension + production RAM-disk driver (draft ADR); acceptable transfer time (15 min proposed); M1 RAM size (8/16 GB); GOP default; copying the 700 MiB Microsoft-derived image to Ciani's Mac and deleting it after.
