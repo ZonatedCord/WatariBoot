@@ -97,8 +97,9 @@ run_case() {
         removable) chk 'T16A BOOTED from \EFI\BOOT\BOOTAA64.EFI' ;;
         bootmgfw)  chk 'T16A BOOTED from \EFI\Microsoft\Boot\bootmgfw.efi'
                    grep -aqF "trying Windows Boot Manager" "$T" || { echo "MISSING: the bootmgfw path was not the one that booted"; rc=1; } ;;
-        both)      [ "$(grep -ac 'T16A BOOTED from' "$T")" -ge 1 ] || { echo "MISSING: no boot"; rc=1; }
-                   grep -aqF 'T16A BOOTED from \EFI\BOOT\BOOTAA64.EFI' "$T" || { echo "MISSING: the removable path did not boot first"; rc=1; } ;;
+        both)      # only claim: the removable file boots first (the stand-in resets, so a second attempt is not tested)
+                   chk 'T16A BOOTED from \EFI\BOOT\BOOTAA64.EFI'
+                   [ "$(grep -ac 'T16A BOOTED from' "$T")" = 1 ] || { echo "MISSING: expected exactly one boot (the stand-in resets)"; rc=1; } ;;
         empty)     chk "SELFTEST PASS"
                    grep -aqF "T16A BOOTED" "$T" && { echo "FAIL: something booted from an empty disk"; rc=1; } ;;
         crcbad)    chk "WatariM1RamDisk: CRC-32 mismatch"; chk "SELFTEST PASS"

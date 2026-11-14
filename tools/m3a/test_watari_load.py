@@ -253,6 +253,15 @@ with tempfile.TemporaryDirectory() as tmp:
           "--image-size 0x300000" in g[0] and "--fb band" in g[0], "D2 runs gfdt_dump with the layer, entry, image size and fb: %s" % g)
     check("BLOCK CHECK: PASS" in out and "GUEST FDT CHECK: PASS" in out, "D2: block and guest FDT checks pass before the jump")
 
+    # wel2.gran=4k|16k in --args is passed on to gfdt_dump as --gran (the layer picks the granule the same way)
+    for extra, want_gran in (("wel2.gran=4k", "--gran 4k"), ("wel2.gran=16k", "--gran 16k"), ("wel2.hold=1", None)):
+        t3 = Fake()
+        open(gargs, "w").close()
+        rc, _ = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd", "--args", extra, "--fdt-dump", FD, "--gfdt-dump", GD], t3, tmp)
+        g = gfdt_calls()
+        check(rc == 0 and len(g) == 1 and (want_gran in g[0] if want_gran else "--gran" not in g[0]),
+              "D0 --args %s -> gfdt_dump %s: %s" % (extra, want_gran or "no --gran", g))
+
     # D2 default --fb is layer and is passed as such
     t = Fake()
     rc, _ = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--go", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
