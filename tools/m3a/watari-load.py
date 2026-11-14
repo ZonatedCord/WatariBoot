@@ -70,15 +70,17 @@ EDK2_RUNGS = ("D0", "D2")
 FB_MODES = ("layer", "band", "guest")
 
 
-class ChecksumError(Exception):
-    """A slice write whose m1n1 data checksum did not match (the fake targets raise it; the real one maps m1n1's
-    UartChecksumError [hypothesis: that is the class name in m1n1/proxy.py] onto the same handling)."""
-
-
 class LoadError(Exception):
     def __init__(self, msg, code=1):
         super().__init__(msg)
         self.code = code
+
+
+class ChecksumError(LoadError):
+    """A write whose m1n1 data checksum did not match (the fake targets raise it). The real target maps onto it what m1n1
+    v1.6.1 proxy.py raises for a bad write [verified: AsahiLinux/m1n1 v1.6.1 proxyclient/m1n1/proxy.py]: the reply status
+    ST_CSUMERR becomes UartRemoteError("Reply error: Data checksum failed"), a corrupted reply becomes UartChecksumError.
+    A LoadError subclass, so one that escapes the slice retry (the trailer write) is a clean exit 1, not a traceback."""
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -276,10 +278,13 @@ class M1n1Target:
     """The real thing: m1n1 proxyclient objects (proxy, proxyutils). Built by connect()."""
     dry_run = False
 
-    def __init__(self, iface, p, u, errors, daif_reg, csum_errors=()):
+    checksum_errors = (ChecksumError,)
+
+    def __init__(self, iface, p, u, errors, daif_reg, csum_errors=(), feature_flag=None):
         self.iface, self.p, self.u = iface, p, u
         self.transport_errors = errors
-        self.checksum_errors = csum_errors
+        self._csum_src = csum_errors          # what proxy.py raises for a checksum problem (see ChecksumError)
+        self._feature = feature_flag          # m1n1.proxy.Feature.DISABLE_DATA_CSUMS, or None if this client lacks it
         self.request_sent = False
         self._daif = daif_reg
         self._console = ""
@@ -307,20 +312,33 @@ class M1n1Target:
     def memalign(self, align, n):
         return self.u.memalign(align, n)
 
+    def _is_csum(self, e):
+        # UartRemoteError is also "Bad Command" / "Invalid argument" / "Data transfer failed": only its checksum text counts
+        return type(e).__name__ != "UartRemoteError" or "checksum" in str(e).lower()
+
     def write(self, addr, data):
-        self.iface.writemem(addr, data, True)
+        try:
+            self.iface.writemem(addr, data, len(data) <= MIB)      # the dot-per-8-KiB progress only for small writes
+        except self._csum_src as e:
+            if not self._is_csum(e):
+                raise
+            raise ChecksumError("m1n1 reported a data checksum failure: %s" % e)
 
     def read(self, addr, n):
-        return self.iface.readmem(addr, n)
+        try:
+            return self.iface.readmem(addr, n)
+        except self._csum_src as e:
+            raise LoadError("read-back of %d bytes at 0x%x: %s: %s" % (n, addr, type(e).__name__, e))
 
     def disable_data_csums(self):
-        """Feature.DISABLE_DATA_CSUMS (DESIGN 2.2) [hypothesis: negotiated by the client; this proxyclient's API was not read
-        in detail]. Refuses rather than pretend: the attribute must already exist on the interface."""
-        from m1n1.proxy import Feature
-        if not hasattr(self.iface, "features") or not hasattr(Feature, "DISABLE_DATA_CSUMS"):
-            raise LoadError("--no-data-csums: this m1n1 proxyclient does not expose Feature.DISABLE_DATA_CSUMS on the interface "
-                            "[check]; run without it", 2)
-        self.iface.features = self.iface.features | Feature.DISABLE_DATA_CSUMS
+        """m1n1 v1.6.1 proxy.py has no API to switch this on: Feature.DISABLE_DATA_CSUMS is offered to the target by every
+        UartInterface.nop() (Feature.get_all()) and is on iff the firmware agreed; the state is `iface.enabled_features`
+        [verified: v1.6.1 proxy.py]. So --no-data-csums cannot ask for anything: it only requires that the feature is already on
+        and refuses (exit 2, before any write) otherwise."""
+        on = bool(self._feature is not None and (getattr(self.iface, "enabled_features", 0) & self._feature))
+        if not on:
+            raise LoadError("--no-data-csums: the target did not enable Feature.DISABLE_DATA_CSUMS in the proxy handshake (an older "
+                            "m1n1 or client); it cannot be switched on from here. Run without the flag", 2)
 
     def dc_cvau(self, addr, n):
         self.p.dc_cvau(addr, n)
@@ -367,10 +385,17 @@ def connect(m1n1_dir, device=None):
     if "M1N1DEVICE" not in os.environ:
         raise LoadError("no device: set M1N1DEVICE=/dev/cu.usbmodem...1 (the proxy port) or pass --device")
     from m1n1.proxy import UartInterface, M1N1Proxy, UartError
+    csum_src, feature = (), None
     try:
-        from m1n1.proxy import UartChecksumError as CsumError
+        from m1n1.proxy import UartChecksumError, UartRemoteError
+        csum_src = (UartChecksumError, UartRemoteError)
     except ImportError:
-        CsumError = None
+        pass
+    try:
+        from m1n1.proxy import Feature
+        feature = Feature.DISABLE_DATA_CSUMS
+    except (ImportError, AttributeError):
+        pass
     from m1n1.proxyutils import ProxyUtils, bootstrap_port
     from m1n1.sysreg import DAIF
     if "m1n1.setup" in sys.modules:
@@ -384,7 +409,7 @@ def connect(m1n1_dir, device=None):
         errors = (UartError, OSError, serial.SerialException)
     except ImportError:
         errors = (UartError, OSError)
-    return M1n1Target(iface, p, u, errors, DAIF, (CsumError,) if CsumError else ())
+    return M1n1Target(iface, p, u, errors, DAIF, csum_src, feature)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -424,11 +449,22 @@ class RamdiskImage:
     def __init__(self, path, size, sha, crc):
         self.path, self.size, self.sha256, self.crc32 = path, size, sha, crc
         self.range_size = ramdisk_range_size(size)
+        self._h, self._next = hashlib.sha256(), 0
 
     def read(self, offset, n):
         with open(self.path, "rb") as f:
             f.seek(offset)
-            return f.read(n)
+            d = f.read(n)
+        if offset == self._next:                      # sequential reads: hash what is actually sent (the file may change after
+            self._h.update(d)                         # the sidecar check; see check_streamed)
+            self._next += len(d)
+        return d
+
+    def check_streamed(self):
+        """After the transfer: the bytes read for sending hash to the sidecar value (else the file changed under us)."""
+        if self._next != self.size or self._h.hexdigest() != self.sha256:
+            raise LoadError("--ramdisk %s changed on disk after the sidecar check (the bytes sent differ): aborting before the "
+                            "trailer; nothing was handed over" % self.path)
 
 
 def inspect_ramdisk(path):
@@ -459,6 +495,30 @@ def inspect_ramdisk(path):
         raise LoadError("--ramdisk %s: SHA-256 differs from its sidecar (image damaged, edited or half copied): refusing to "
                         "run\n  image   %s\n  sidecar %s" % (path, h.hexdigest(), want), 2)
     return RamdiskImage(path, size, h.hexdigest(), crc & 0xffffffff)
+
+
+def load_ramdisk(args):
+    """Resolve --ramdisk (a path, or a name inside the bundle) and run the sidecar check. Exit 2 on any problem."""
+    path = args.ramdisk
+    if not os.path.isfile(path) and os.path.isfile(os.path.join(args.bundle, path)):
+        path = os.path.join(args.bundle, path)
+    say("hashing the ramdisk image (%s) ..." % path)
+    return inspect_ramdisk(path)
+
+
+def prevalidate(args):
+    """Everything about the ramdisk options that needs no device, done BEFORE the proxy is opened: opening it already sends
+    requests (bootstrap_port: NOP, set_baud; ProxyUtils: reads, heapblock_set_limit), so the SHA-256 check must come first."""
+    if not 1 <= args.ramdisk_slice <= 64:
+        raise LoadError("--ramdisk-slice must be 1..64 MiB", 2)
+    if args.ramdisk_test is not None:
+        if not 1 <= args.ramdisk_test <= RD_MAX // MIB - 4:
+            raise LoadError("--ramdisk-test %d: between 1 and %d MiB" % (args.ramdisk_test, RD_MAX // MIB - 4), 2)
+        return
+    if args.ramdisk:
+        if not (args.edk2 and args.rung in EDK2_RUNGS):
+            raise LoadError("--ramdisk goes with --edk2 on rung D0 (preview) or D2 (jump): the layer needs wel2.abi=fdt for it", 2)
+        args._rd = load_ramdisk(args)
 
 
 def build_trailer(image, crc=None, sha=None):
@@ -760,11 +820,10 @@ def run(args, target):
     rd = None
     if args.ramdisk:
         # the image and its sidecar are checked here, BEFORE any proxy call (nothing below this block has touched the target)
-        path = args.ramdisk
-        if not os.path.isfile(path) and os.path.isfile(os.path.join(bundle, path)):
-            path = os.path.join(bundle, path)
-        say("hashing the ramdisk image (%s) ..." % path)
-        rd = inspect_ramdisk(path)
+        rd = getattr(args, "_rd", None)                   # main() already did it before opening the device
+        if rd is None:
+            rd = load_ramdisk(args)
+        path = rd.path
         sl = args.ramdisk_slice * MIB
         say("RAMDISK PLAN: %s: %d bytes (%.1f MiB), sha256 %s (matches its sidecar), crc32 0x%08x" %
             (os.path.basename(path), rd.size, rd.size / MIB, rd.sha256[:16], rd.crc32))
@@ -803,11 +862,13 @@ def run(args, target):
         if args.no_data_csums:
             target.disable_data_csums()
             say("data checksums disabled (--no-data-csums)")
+        target.set_timeout(max(args.boot_timeout, 40))    # the proxy default is 3 s: too short for a 16 MiB slice at ~1 MB/s
         rd_addr = target.memalign(BLOCK, rd.range_size)
         if rd_addr % BLOCK:
             raise LoadError("the ramdisk block is not 32 MB aligned (0x%x)" % rd_addr)
         say("RAMDISK block 0x%x..0x%x (%d bytes)" % (rd_addr, rd_addr + rd.range_size, rd.range_size))
         el = write_sliced(target, rd_addr, rd.read, rd.size, args.ramdisk_slice * MIB, "ramdisk", args.ramdisk_verify)
+        rd.check_streamed()
         trailer = build_trailer(rd)
         taddr = rd_addr + rd.range_size - RD_TRAILER
         target.write(taddr, trailer)                      # last
@@ -848,10 +909,11 @@ def run(args, target):
     # --- 3. cache maintenance ----------------------------------------------------------------------------------------
     for addr, length in ((rd_addr, rd.range_size if rd else 0), (layer_addr, len(layer) if layer else 0),
                          (guest_addr, len(guest) if guest else 0), (edk2_addr, len(edk2) if edk2 and not preview else 0)):
-        if length:
-            target.dc_cvau(addr, length)
-            target.dc_cvac(addr, length)      # to the point of coherency; the real guarantee is m1n1's set/way flush in mmu_shutdown
-            target.ic_ivau(addr, length)
+        for off in range(0, length, 32 * MIB):    # chunks: one proxy request per 32 MiB stays far below the reply timeout
+            n = min(32 * MIB, length - off)
+            target.dc_cvau(addr + off, n)
+            target.dc_cvac(addr + off, n)     # to the point of coherency; the real guarantee is m1n1's set/way flush in mmu_shutdown
+            target.ic_ivau(addr + off, n)
 
     # --- 4. boot arguments, after the allocations --------------------------------------------------------------------
     bootargs = build_bootargs(step, args.cpuif, edk2_addr if edk2_addr is not None else guest_addr, args.args,
@@ -1060,6 +1122,7 @@ def main(argv=None, target=None):
                     raise LoadError("rung %s jumps into the layer: add --go once you mean it (try --dry-run first)" % args.rung, 2)
                 if not args.m1n1:
                     raise LoadError("no m1n1 proxyclient: pass --m1n1 <checkout> or set M1N1_DIR", 2)
+                prevalidate(args)                       # the ramdisk sidecar check comes BEFORE the first proxy request
                 target = connect(args.m1n1, args.device)
         return run_ramdisk_test(args, target) if args.ramdisk_test is not None else run(args, target)
     except LoadError as e:

@@ -46,6 +46,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+case "$OUT" in /dev/*) echo "ERROR: --out must be a regular file path, not a device" >&2; exit 1 ;; esac
 # Refuse any output inside the repo (Microsoft binaries must never land there).
 mkdir -p "$(dirname "$OUT")"
 OUT_ABS="$(cd "$(dirname "$OUT")" && pwd -P)/$(basename "$OUT")"
@@ -70,20 +71,44 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Attach our own image (raw) and set IMG_DEV; refuse unless the device is a
-# disk image whose backing file is exactly our file.
+# The whole-disk device that hdiutil reports for exactly this image file (empty if none): the first /dev/diskN line of the
+# `hdiutil info` block whose image-path line equals the file. Used before every destructive call.
+dev_of_image() {  # args: image
+    hdiutil info | awk -v want="$1" '
+        /^=+/ { hit = 0 }
+        /^image-path/ { v = $0; sub(/^image-path[ \t]*:[ \t]*/, "", v); hit = (v == want) }
+        hit && /^\/dev\/disk[0-9]+[ \t]/ { print $1; exit }'
+}
+
+# Attach our own image (raw). IMG_DEV is set only to a device that hdiutil itself lists as backed by exactly this file and
+# that diskutil calls a disk image; anything else aborts before any diskutil/newfs call can see the device. Every destructive
+# call below goes through assert_own_dev first, so none can reach an internal disk.
 attach_checked() {  # args: image, extra hdiutil args...
     local img="$1"; shift
-    local out dev
+    local out dev real
     out="$(hdiutil attach -imagekey diskimage-class=CRawDiskImage "$@" "$img")"
-    dev="$(printf '%s\n' "$out" | awk 'NR==1{print $1}')"
-    IMG_DEV="$dev"
     ATTACH_OUT="$out"
-    if ! hdiutil info | grep -F "image-path" | grep -qF "$img"; then
-        echo "ERROR: could not match $dev to $img; aborting" >&2; exit 1
+    dev="$(printf '%s\n' "$out" | awk 'NR==1{print $1}')"
+    real="$(dev_of_image "$img")"
+    if ! [[ "$real" =~ ^/dev/disk[0-9]+$ ]]; then
+        echo "ERROR: hdiutil does not list $img as attached; cannot verify the device (attach said: '$dev'). Detach it by hand." >&2; exit 1
     fi
-    if ! diskutil info "$dev" | grep -q "Disk Image"; then
-        echo "ERROR: $dev is not a disk image; aborting" >&2; exit 1
+    if [ "$dev" != "$real" ]; then
+        echo "ERROR: attach reported '$dev' but hdiutil lists $img as $real; detaching $real and aborting" >&2
+        hdiutil detach "$real" -force -quiet 2>/dev/null; exit 1
+    fi
+    if ! diskutil info "$real" | grep -q "Protocol: *Disk Image"; then
+        echo "ERROR: $real is not a disk image; detaching it and aborting" >&2
+        hdiutil detach "$real" -force -quiet 2>/dev/null; exit 1
+    fi
+    IMG_DEV="$real"
+}
+
+assert_own_dev() {  # abort unless IMG_DEV is still the disk image of $WORK
+    local cur
+    cur="$(dev_of_image "$WORK")"
+    if [ -z "$IMG_DEV" ] || [ "$cur" != "$IMG_DEV" ]; then
+        echo "ERROR: $IMG_DEV is not the attached image of $WORK (hdiutil says '$cur'); refusing a destructive call" >&2; exit 1
     fi
 }
 
@@ -168,6 +193,7 @@ echo "== creating $LAYOUT image"
 LABEL=WINRAM
 attach_checked "$WORK" -nomount
 echo "device: $IMG_DEV"
+assert_own_dev
 if [ "$LAYOUT" = superfloppy ]; then
     newfs_msdos -F 32 -S 512 -v "$LABEL" "${IMG_DEV/disk/rdisk}" >/dev/null
     diskutil mount -mountPoint "$IMG_MNT" "$IMG_DEV" >/dev/null
@@ -180,6 +206,9 @@ else
     diskutil unmount "/dev/$PART" >/dev/null 2>&1 || true
     diskutil mount -mountPoint "$IMG_MNT" "/dev/$PART" >/dev/null
 fi
+assert_own_dev
+diskutil info "$IMG_MNT" | awk -F': *' '/Device Node/{print $2}' | grep -q "^$IMG_DEV" ||
+    { echo "ERROR: $IMG_MNT is not a volume of $IMG_DEV" >&2; exit 1; }
 mount | grep -qF "$(cd "$IMG_MNT" && pwd -P)" || { echo "ERROR: image volume not mounted" >&2; exit 1; }
 
 echo "== copying"

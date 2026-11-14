@@ -451,7 +451,7 @@ with tempfile.TemporaryDirectory() as tmp:
     allocs = [c for c in t.calls if c[0] == "memalign"]
     check(len(allocs) == 4 and allocs[0][1] == wl.BLOCK and allocs[0][2] == RD_RANGE and all(c[1] == wl.BLOCK for c in allocs),
           "D2 --ramdisk: four 32 MB aligned blocks, the FIRST is the ramdisk of %d bytes" % RD_RANGE)
-    check(n[0] == "malloc" and idx(t, "memalign", 0) == 2, "D2 --ramdisk: DTB written, then the ramdisk block is the first memalign")
+    check(n[0] == "malloc" and idx(t, "memalign", 0) == 3 and t.calls[2][0] == "timeout", "D2 --ramdisk: DTB written, the long timeout set, then the ramdisk block is the first memalign")
     wr = [c for c in t.calls if c[0] == "writemem"]
     rd_base = wr[1][1]                                  # writes: DTB, then the first ramdisk slice
     sl = [c for c in wr if c[1] >= rd_base and c[1] < rd_base + RD_RANGE]
@@ -465,10 +465,16 @@ with tempfile.TemporaryDirectory() as tmp:
     first_other = min(i for i, c in enumerate(t.calls) if c[0] == "memalign" and c is not allocs[0])
     check(max(i for i, c in enumerate(t.calls) if c[0] == "writemem" and c[1] in [x[1] for x in sl]) < first_other,
           "the ramdisk is fully written (trailer last) before the layer block is allocated")
-    cv = [c for c in t.calls if c[0] == "dc_cvau"]
-    check(cv[0][1] == rd_base and cv[0][2] == RD_RANGE and len(cv) == 3 and
-          [c[1:] for c in t.calls if c[0] == "ic_ivau"][0] == (rd_base, RD_RANGE) and
-          [c[1:] for c in t.calls if c[0] == "dc_cvac"][0] == (rd_base, RD_RANGE),
+    def covered(op):
+        return sorted((c[1], c[2]) for c in t.calls if c[0] == op and rd_base <= c[1] < rd_base + RD_RANGE)
+    def contiguous(spans):
+        pos = rd_base
+        for a, n in spans:
+            if a != pos or n > 32 * MIB:
+                return False
+            pos += n
+        return pos == rd_base + RD_RANGE
+    check(all(contiguous(covered(op)) for op in ("dc_cvau", "dc_cvac", "ic_ivau")) and len([c for c in t.calls if c[0] == "dc_cvau"]) >= 3,
           "cache maintenance over the WHOLE ramdisk range (and the layer, EDK2)")
     check(idx(t, "ic_ivau", 2) < idx(t, "kboot_set_chosen"), "cache maintenance precedes the boot arguments")
     got = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
@@ -684,6 +690,87 @@ with tempfile.TemporaryDirectory() as tmp:
     with contextlib.redirect_stdout(out):
         rc = wl.main(["--bundle", tmp, "--ramdisk-test", "20", "--dry-run"])
     check(rc == 0 and "[proxy] memalign" in out.getvalue() and "not compared" in out.getvalue(), "rate test --dry-run opens no device")
+
+    # --- review fixes: the sidecar check precedes the first proxy request (connect() already sends some) -------------------
+    order = []
+    real_connect2 = wl.connect
+    def fake_connect(*a, **k):
+        order.append("connect")
+        raise wl.LoadError("stop here (test)", 2)
+    wl.connect = fake_connect
+    try:
+        for sha, label in (("0" * 64, "a wrong sidecar"), (rd_sha, "a good sidecar")):
+            write_sidecar(sha)
+            order.clear()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = wl.main(["--bundle", tmp, "--out", os.path.join(tmp, "out"), "--rung", "D2", "--go", "--m1n1", "/x"] + RD_ARGS)
+            if sha != rd_sha:
+                check(rc == 2 and order == [] and "differs from its sidecar" in out.getvalue(), "%s: refused BEFORE connect() opens the proxy" % label)
+            else:
+                check(order == ["connect"], "%s: the check passes, then (and only then) connect() is called" % label)
+        write_sidecar(rd_sha)
+        out = io.StringIO()
+        order.clear()
+        with contextlib.redirect_stdout(out):
+            rc = wl.main(["--bundle", tmp, "--ramdisk-test", "5000", "--m1n1", "/x", "--go"])
+        check(rc == 2 and order == [], "an out-of-range rate test is refused before connect()")
+    finally:
+        wl.connect = real_connect2
+
+    # M1n1Target: what v1.6.1 proxy.py raises for a bad write maps onto ChecksumError; other remote errors do not
+    class UartRemoteError(RuntimeError):
+        pass
+    class UartChecksumError(RuntimeError):
+        pass
+    class Iface:
+        def __init__(self):
+            self.cmd, self.unkhandler, self.enabled_features, self.exc, self.n = (lambda *a, **k: None), None, 0, None, 0
+        def writemem(self, a, d, progress=False):
+            self.n += 1
+            if self.exc and self.n <= self.fail:
+                raise self.exc
+        def readmem(self, a, n):
+            raise UartChecksumError("Reply data checksum error")
+    ifc = Iface()
+    tg = wl.M1n1Target(ifc, None, None, (OSError,), None, (UartChecksumError, UartRemoteError), 1)
+    ifc.exc, ifc.fail = UartRemoteError("Reply error: Data checksum failed"), 1
+    lines = []
+    wl.write_sliced(tg, 0x1000, lambda off, n: bytes(n), 8, 8, "x", "none", out=lines.append)
+    check(ifc.n == 2 and any("retrying" in l for l in lines), "real target: UartRemoteError 'Data checksum failed' is retried once as a checksum error")
+    ifc.n, ifc.exc, ifc.fail = 0, UartRemoteError("Reply error: Invalid argument"), 1
+    try:
+        wl.write_sliced(tg, 0x1000, lambda off, n: bytes(n), 8, 8, "x", "none", out=lines.append)
+        check(False, "an 'Invalid argument' remote error is not retried")
+    except UartRemoteError:
+        check(ifc.n == 1, "an 'Invalid argument' remote error is not retried")
+    try:
+        tg.read(0, 4)
+        check(False, "read-back checksum error is a LoadError")
+    except wl.LoadError:
+        check(True, "a read-back checksum error is a LoadError, not a traceback")
+    try:
+        tg.disable_data_csums()
+        check(False, "--no-data-csums refuses when the handshake did not enable the feature")
+    except wl.LoadError as e:
+        check(e.code == 2, "--no-data-csums refuses (exit 2) when the handshake did not enable the feature")
+    ifc.enabled_features = 1
+    tg.disable_data_csums()
+    check(True, "--no-data-csums passes only when iface.enabled_features already has the flag")
+
+    # the file changing after the sidecar check is caught before the trailer
+    rdi = wl.inspect_ramdisk(rd_path)
+    rdi.read(0, 100)
+    try:
+        rdi.check_streamed()
+        check(False, "a partly read image fails check_streamed")
+    except wl.LoadError:
+        check(True, "check_streamed refuses a transfer that did not hash to the sidecar value")
+    rdi = wl.inspect_ramdisk(rd_path)
+    for off in range(0, RD_BYTES, 16 * MIB):
+        rdi.read(off, min(16 * MIB, RD_BYTES - off))
+    rdi.check_streamed()
+    check(True, "check_streamed accepts a complete sequential read")
 
     # --- jump rungs need --go on a real device; refused before any m1n1 import ----------------------------------------
     rc, out = run(["--rung", "L1", "--m1n1", "/nonexistent"], None, tmp)
