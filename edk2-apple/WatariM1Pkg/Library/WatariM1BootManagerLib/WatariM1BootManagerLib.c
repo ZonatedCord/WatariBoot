@@ -7,6 +7,10 @@
     the boot menu, never started by itself, no hotkey).
   - Never waits for a key: no hotkey is registered and PcdPlatformBootTimeOut is 0 in the DSC,
     so BdsDxe does not wait.
+  - UnableToBoot: ConnectAll + RefreshAllBootOption, then every discovered active option outside
+    the firmware volume, then (T16a) \EFI\Microsoft\Boot\bootmgfw.efi on every file system that
+    has it (EDK2's own discovery only knows \EFI\BOOT\BOOTAA64.EFI, and the installer's Boot####
+    variable is lost: variables are RAM-backed).
   - UnableToBoot (nothing bootable, which is the normal first boot): the bench build, which sets
     PcdUefiShellDefaultBootEnable, starts the Shell; every other build starts the built-in
     self-test (Application/WatariM1SelfTest), which ends in ResetSystem. Only if that fails does
@@ -26,6 +30,7 @@
 #include <Protocol/DevicePath.h>
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/LoadedImage.h>
+#include <Protocol/SimpleFileSystem.h>
 
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
@@ -38,6 +43,8 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
+
+#define WATARI_WINDOWS_BOOTMGR  L"\\EFI\\Microsoft\\Boot\\bootmgfw.efi"
 
 #define DP_NODE_LEN(Type)  { (UINT8)sizeof (Type), (UINT8)(sizeof (Type) >> 8) }
 
@@ -246,6 +253,124 @@ IsFirmwareVolumePath (
   return FALSE;
 }
 
+/**
+  TRUE if the file system has the file.
+**/
+STATIC
+BOOLEAN
+VolumeHasFile (
+  IN EFI_HANDLE  Handle,
+  IN CHAR16      *FileName
+  )
+{
+  EFI_STATUS                       Status;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *Fs;
+  EFI_FILE_PROTOCOL                *Root;
+  EFI_FILE_PROTOCOL                *File;
+
+  Status = gBS->HandleProtocol (Handle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&Fs);
+  if (EFI_ERROR (Status)) {
+    return FALSE;
+  }
+
+  Status = Fs->OpenVolume (Fs, &Root);
+  if (EFI_ERROR (Status)) {
+    return FALSE;
+  }
+
+  Status = Root->Open (Root, &File, FileName, EFI_FILE_MODE_READ, 0);
+  if (!EFI_ERROR (Status)) {
+    File->Close (File);
+  }
+
+  Root->Close (Root);
+  return !EFI_ERROR (Status);
+}
+
+/**
+  T16a: EfiBootManagerRefreshAllBootOption only creates options for the removable-media default
+  file (\EFI\BOOT\BOOTAA64.EFI) [verified: MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c
+  BmEnumerateBootOptions 2289-2420 makes options holding the device path of a disk/volume, and
+  BmExpandMediaDevicePath 1106-1230 (FileDevicePath with EFI_REMOVABLE_MEDIA_FILE_NAME at 1133
+  and 1209, called from BmGetNextLoadOptionDevicePath 1746) expands it to that file only]. A Windows ESP written by the installer may carry only
+  \EFI\Microsoft\Boot\bootmgfw.efi, and the installer's own Boot#### variable is gone (RAM-backed
+  variables). So: on every file system that has bootmgfw.efi and that no option already points at
+  (by exact file path), create an option and boot it.
+**/
+STATIC
+VOID
+BootWindowsBootManagers (
+  IN EFI_BOOT_MANAGER_LOAD_OPTION  *BootOptions,
+  IN UINTN                         BootOptionCount
+  )
+{
+  EFI_STATUS                    Status;
+  EFI_HANDLE                    *Handles;
+  UINTN                         NoHandles;
+  UINTN                         Idx;
+  UINTN                         Opt;
+  EFI_DEVICE_PATH_PROTOCOL      *FilePath;
+  EFI_BOOT_MANAGER_LOAD_OPTION  NewOption;
+  BOOLEAN                       Known;
+
+  Status = gBS->LocateHandleBuffer (ByProtocol, &gEfiSimpleFileSystemProtocolGuid, NULL, &NoHandles, &Handles);
+  if (EFI_ERROR (Status)) {
+    return;
+  }
+
+  for (Idx = 0; Idx < NoHandles; Idx++) {
+    if (!VolumeHasFile (Handles[Idx], WATARI_WINDOWS_BOOTMGR)) {
+      continue;
+    }
+
+    FilePath = FileDevicePath (Handles[Idx], WATARI_WINDOWS_BOOTMGR);
+    if (FilePath == NULL) {
+      continue;
+    }
+
+    if (IsFirmwareVolumePath (FilePath)) {
+      FreePool (FilePath);
+      continue;
+    }
+
+    Known = FALSE;
+    for (Opt = 0; Opt < BootOptionCount; Opt++) {
+      if ((GetDevicePathSize (BootOptions[Opt].FilePath) == GetDevicePathSize (FilePath)) &&
+          (CompareMem (BootOptions[Opt].FilePath, FilePath, GetDevicePathSize (FilePath)) == 0))
+      {
+        Known = TRUE;
+        break;
+      }
+    }
+
+    if (Known) {
+      FreePool (FilePath);
+      continue;
+    }
+
+    Status = EfiBootManagerInitializeLoadOption (
+               &NewOption,
+               LoadOptionNumberUnassigned,
+               LoadOptionTypeBoot,
+               LOAD_OPTION_ACTIVE,
+               L"Windows Boot Manager",
+               FilePath,
+               NULL,
+               0
+               );
+    FreePool (FilePath);
+    if (EFI_ERROR (Status)) {
+      continue;
+    }
+
+    DEBUG ((DEBUG_INFO, "%a: trying %s on file system handle %p\n", __func__, NewOption.Description, Handles[Idx]));
+    EfiBootManagerBoot (&NewOption);
+    EfiBootManagerFreeLoadOption (&NewOption);
+  }
+
+  FreePool (Handles);
+}
+
 VOID
 EFIAPI
 PlatformBootManagerBeforeConsole (
@@ -321,6 +446,11 @@ PlatformBootManagerUnableToBoot (
     DEBUG ((DEBUG_INFO, "%a: trying boot option %u (%s)\n", __func__, (UINT32)BootOptions[Index].OptionNumber, BootOptions[Index].Description));
     EfiBootManagerBoot (&BootOptions[Index]);
   }
+
+  //
+  // T16a: Windows' own boot manager where EDK2's discovery does not look.
+  //
+  BootWindowsBootManagers (BootOptions, BootOptionCount);
 
   EfiBootManagerFreeLoadOptions (BootOptions, BootOptionCount);
 
