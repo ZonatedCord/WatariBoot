@@ -14,7 +14,6 @@
 #include <Uefi.h>
 #include <Protocol/RamDisk.h>
 #include <Protocol/DevicePath.h>
-#include <Guid/RamDiskProtocol.h>
 
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>

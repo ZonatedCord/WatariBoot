@@ -3,13 +3,17 @@
 # Build of edk2-apple/WatariM1Pkg/WatariM1Pkg.dsc: the EDK2 firmware for the Apple M1 (j293) at EL1
 # on top of Watari EL2 (docs/design/watari-edk2-m1/, PLAN E1-E4).
 #
-# Usage: tools/build-edk2-m1.sh [--bench] [--bgr8] [--model <acpigen model>] [DEBUG|RELEASE]
+# Usage: tools/build-edk2-m1.sh [--bench] [--bgr8] [--ramdisk] [--model <acpigen model>] [DEBUG|RELEASE]
 #   (default)  production configuration: no UART of any kind, ACPI tables of acpigen model j293.
 #              Output: $WATARI_DATA/build-m1/WATARI_M1_EFI.fd
 #   --bench    QEMU bench configuration (-D WATARI_M1_BENCH_PL011=TRUE): serial and debug through
 #              the PL011 of QEMU's device tree, ACPI tables of model qemu-virt (GIC at QEMU's
 #              addresses), the Shell with acpiview, boots the Shell by default.
 #              Output: $WATARI_DATA/build-m1/WATARI_M1_EFI-bench.fd  (separate WORKSPACE)
+#   --ramdisk  T16a, bench only: the production configuration (hypercall console, the layer holes the PL011 away from the
+#              guest) plus WatariM1BenchRamDiskDxe (a RAM disk over an image the bench loads into RAM) and the stand-in
+#              boot application WatariM1BenchBootTest.efi (copied to $WATARI_DATA/build-m1/WatariM1BenchBootTest.efi).
+#              Output name gets "-ramdisk", separate WORKSPACE. A build without --ramdisk must not contain either (check 2).
 #   --bgr8     -D WATARI_FB_REPORT_BGR8=TRUE (E11): the 10-bit panel is reported as 8-bit BGR GOP (untruthful,
 #              DESIGN 8.5 stage 2). Output name gets "-bgr8", separate WORKSPACE.
 #   --model m  override the acpigen model.
@@ -32,15 +36,17 @@ source "$HERE/env.sh"
 
 BENCH=0
 BGR8=0
+RAMDISK=0
 MODEL=""
 TARGET="DEBUG"
 while [ $# -gt 0 ]; do
     case "$1" in
         --bench) BENCH=1 ;;
         --bgr8) BGR8=1 ;;
+        --ramdisk) RAMDISK=1 ;;
         --model) MODEL="$2"; shift ;;
         DEBUG|RELEASE|NOOPT) TARGET="$1" ;;
-        *) echo "usage: $0 [--bench] [--bgr8] [--model <name>] [DEBUG|RELEASE]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--bench] [--bgr8] [--ramdisk] [--model <name>] [DEBUG|RELEASE]" >&2; exit 2 ;;
     esac
     shift
 done
@@ -50,6 +56,7 @@ else
     SUFFIX=""; MODEL="${MODEL:-j293}"
 fi
 [ "$BGR8" = 1 ] && SUFFIX="${SUFFIX}-bgr8"
+[ "$RAMDISK" = 1 ] && SUFFIX="${SUFFIX}-ramdisk"
 case "$MODEL" in j293|qemu-virt) ;; *) echo "ERROR: --model must be j293 or qemu-virt (got '$MODEL')" >&2; exit 2 ;; esac
 mkdir -p "$WATARI_LOGS"
 
@@ -98,6 +105,7 @@ if [ "$BENCH" = 1 ]; then
 fi
 
 [ "$BGR8" = 1 ] && DEFS+=(-D WATARI_FB_REPORT_BGR8=TRUE)
+[ "$RAMDISK" = 1 ] && DEFS+=(-D WATARI_M1_BENCH_RAMDISK=TRUE)
 
 # F-12: EDK2 does not notice changes to the acpigen headers (a path outside PACKAGES_PATH), so the
 # platform's modules are rebuilt every time.
@@ -118,6 +126,7 @@ BUILT="$(cd "$OUT/AARCH64" && find . -name OUTPUT -type d | sed -e 's|^\./||' -e
 echo "$BUILT" > "$WORKSPACE/built-modules.txt"
 FORBID='VirtNorFlash|QemuFwCfg|FwCfg|Virtio|PciBus|PciHostBridge|PciLib|NvmExpress|QemuRamfb|PL031|Xhci|Usb'
 if [ "$BENCH" = 0 ]; then FORBID="$FORBID|PL011"; fi
+if [ "$RAMDISK" = 0 ]; then FORBID="$FORBID|WatariM1BenchRamDisk|WatariM1BenchBootTest"; fi
 if echo "$BUILT" | grep -E "$FORBID"; then
     echo "ERROR: forbidden module(s) listed above are part of this build (bench=$BENCH)" >&2
     exit 1
@@ -138,6 +147,11 @@ ISIZE="$(xxd -s 0x10 -l 8 -e -g 8 "$FD" | awk '{print $2}')"
 echo "OK: image header: magic ARM\\x64 at +0x38, image_size = FD size = $FDSIZE"
 
 mkdir -p "$WATARI_DATA/build-m1"
+if [ "$RAMDISK" = 1 ]; then
+    TESTAPP="$(find "$OUT/AARCH64/WatariM1Pkg/Application/WatariM1BenchBootTest" -name WatariM1BenchBootTest.efi | head -1)"
+    [ -n "$TESTAPP" ] || { echo "ERROR: WatariM1BenchBootTest.efi was not built" >&2; exit 1; }
+    cp "$TESTAPP" "$WATARI_DATA/build-m1/WatariM1BenchBootTest.efi"
+fi
 DEST="$WATARI_DATA/build-m1/WATARI_M1_EFI${SUFFIX}.fd"
 cp "$FD" "$DEST"
 echo "Output: $FD -> $DEST"
