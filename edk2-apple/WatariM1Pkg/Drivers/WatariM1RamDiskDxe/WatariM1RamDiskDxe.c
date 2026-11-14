@@ -10,7 +10,9 @@
     2. make the range usable memory: the layer cut it out of /memory, so the GCD says "non existent": the same three
        calls OvmfPkg/Fdt/HighMemDxe makes for a /memory range (AddMemorySpace, SetMemorySpaceAttributes, then
        Cpu->SetMemoryAttributes, which builds the page-table mapping the early MMU map does not have); a range that is
-       already system memory is accepted and logged (step 3 then decides), anything else is refused;
+       already system memory is accepted and logged (step 3 then decides), anything else is refused. The order here is
+       AddMemorySpace, then step 3 AT ONCE, then the other two calls: building the mapping allocates page-table pages
+       top-down, and they must not land in the image (T21 review);
     3. AllocatePages (AllocateAddress, EfiBootServicesData): from now on nothing in boot services can take the pages;
        EfiBootServicesData (not Reserved) so that RamDiskDxe publishes neither an NFIT nor the NVDIMM SSDT, and
        Windows can reuse the memory after ExitBootServices (PcdWatariRamDiskType = 0 is the debug switch);
@@ -84,6 +86,7 @@ WatariM1RamDiskEntry (
   UINT32                           Crc;
   UINT32                           CrcWant;
   EFI_MEMORY_TYPE                  Type;
+  BOOLEAN                          Added;
 
   Status = gBS->LocateProtocol (&gFdtClientProtocolGuid, NULL, (VOID **)&FdtClient);
   if (EFI_ERROR (Status)) {
@@ -122,6 +125,8 @@ WatariM1RamDiskEntry (
     return EFI_SUCCESS;
   }
 
+  Cpu   = NULL;
+  Added = FALSE;
   if (Gcd.GcdMemoryType == EfiGcdMemoryTypeNonExistent) {
     Status = gBS->LocateProtocol (&gEfiCpuArchProtocolGuid, NULL, (VOID **)&Cpu);
     if (EFI_ERROR (Status)) {
@@ -135,6 +140,36 @@ WatariM1RamDiskEntry (
       return EFI_SUCCESS;
     }
 
+    Added = TRUE;
+  } else if (Gcd.GcdMemoryType == EfiGcdMemoryTypeSystemMemory) {
+    DEBUG ((DEBUG_INFO, "WatariM1RamDisk: the range is already system memory (the layer did not cut it out of /memory?)\n"));
+  } else {
+    DEBUG ((DEBUG_ERROR, "WatariM1RamDisk: the range is GCD type %d: not registered\n", (INT32)Gcd.GcdMemoryType));
+    return EFI_SUCCESS;
+  }
+
+  //
+  // 3. Claim the pages at once: nothing in boot services can allocate them from now on. This comes BEFORE the page-table
+  //    mapping below because that mapping allocates page-table pages (top-down from the highest free memory, which may be
+  //    this very range, its trailer page first) and they must not land inside the image.
+  //
+  Type = (EFI_MEMORY_TYPE)FixedPcdGet32 (PcdWatariRamDiskType);
+  Addr = Base;
+  Status = gBS->AllocatePages (AllocateAddress, Type, EFI_SIZE_TO_PAGES (Size), &Addr);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "WatariM1RamDisk: cannot claim %lx..+%lx as memory type %d: %r: not registered\n", Base, Size, (INT32)Type, Status));
+    if (Added) {
+      //
+      // Do not leave unmapped free memory that the core could hand out and fault on.
+      //
+      Status = gDS->RemoveMemorySpace (Base, Size);
+      DEBUG ((DEBUG_ERROR, "WatariM1RamDisk: RemoveMemorySpace: %r\n", Status));
+    }
+
+    return EFI_SUCCESS;
+  }
+
+  if (Added) {
     Status = gDS->SetMemorySpaceAttributes (Base, Size, EFI_MEMORY_WB);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_WARN, "WatariM1RamDisk: SetMemorySpaceAttributes: %r\n", Status));
@@ -151,25 +186,9 @@ WatariM1RamDiskEntry (
 
     Status = Cpu->SetMemoryAttributes (Cpu, Base, Size, Attributes);
     if (EFI_ERROR (Status)) {
-      DEBUG ((DEBUG_ERROR, "WatariM1RamDisk: Cpu->SetMemoryAttributes failed: %r: not registered\n", Status));
+      DEBUG ((DEBUG_ERROR, "WatariM1RamDisk: Cpu->SetMemoryAttributes failed: %r: not registered (the range stays claimed)\n", Status));
       return EFI_SUCCESS;
     }
-  } else if (Gcd.GcdMemoryType == EfiGcdMemoryTypeSystemMemory) {
-    DEBUG ((DEBUG_INFO, "WatariM1RamDisk: the range is already system memory (the layer did not cut it out of /memory?)\n"));
-  } else {
-    DEBUG ((DEBUG_ERROR, "WatariM1RamDisk: the range is GCD type %d: not registered\n", (INT32)Gcd.GcdMemoryType));
-    return EFI_SUCCESS;
-  }
-
-  //
-  // 3. Claim the pages: nothing in boot services can allocate them from now on.
-  //
-  Type = (EFI_MEMORY_TYPE)FixedPcdGet32 (PcdWatariRamDiskType);
-  Addr = Base;
-  Status = gBS->AllocatePages (AllocateAddress, Type, EFI_SIZE_TO_PAGES (Size), &Addr);
-  if (EFI_ERROR (Status)) {
-    DEBUG ((DEBUG_ERROR, "WatariM1RamDisk: cannot claim %lx..+%lx as memory type %d: %r: not registered\n", Base, Size, (INT32)Type, Status));
-    return EFI_SUCCESS;
   }
 
   //
