@@ -197,3 +197,10 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Done and verified: T17, T18, T12a, T12b, T12c, T12d, T13, T15, T9, T16a. Open: T16 (free choice, repeatable).
 - Final branch checks: `make -C el2 test` ALL PASSED; `run-all.sh` 39/39; firmware builds (production, --bench, --ramdisk) pass their checks; loader/gfdt_dump/ehw2 tests pass.
 - Next: day 3 on the real M1 (`docs/procedures/m3a-day3-hardware.md`), after rebuilding the EDK2 images and the bundle from the final commit. Decisions for Marco listed in T15's entry.
+
+### 2026-11-14 - T19 day-3 dress rehearsal: done
+- Rebuilt `WATARI_M1_EFI.fd` and `WATARI_M1_EFI-bgr8.fd` (three build checks OK), bundle and BGR8 bundle (`shasum -c` OK). Every loader command of `docs/procedures/m3a-day3-hardware.md` run with `--dry-run` against the real bundle (D0, D2 band/guest, D2 `trap-notc --smp`, L5, D4-0, D5-0, D3b, D4a/b, D5, BGR8 bundle): all exit 0, the `boot arguments` lines are those of G-7. Bench stand-ins (run-m1guest, run-fb, run-m1-8, run-m1-9 trap/trap-notc/BGR8): all PASS. Logs: `$WATARI_DATA/logs/night5-t19/`.
+- Procedure fixed from the real output: bench GOP is `1280x592` (not 1280x600), 14 stats lines (not 13), `cores (redistributors) = 0x0000000000000008` full form, the dry-run D0 shows no framebuffer / 8 cpus / `fb-mode = "none"` (band lines come from the j293 fixture run), D1 bench counterpart (`PASS 12 FAIL 0` + G8 SKIP on the bench, 13/0/0 expected on the M1), `watchdog (no firmware)` is M1-only text (psci.c, no bench log), run-all count 39.
+- New host test `t_day3_band_texts` (`el2/tests/test_fb.c`) asserts the band texts the procedure quotes for D1 and D2/D3 (they never reach a UART log).
+- Leftovers: `run-t16a.sh` `both` claims only that the removable file boots first (also in `edk2-apple/WatariM1Pkg/README.md`); `watari-load.py` passes `--gran 4k|16k` to `gfdt_dump` when `wel2.gran=...` is in `--args` (test in `test_watari_load.py`).
+- Checks: `make -C el2 test` ALL PASSED, loader/gfdt_dump/ehw2 tests pass, `make -C tools/acpigen test` OK, `run-all.sh` after `make clean`: 39 PASS 0 FAIL.
