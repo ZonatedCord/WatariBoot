@@ -139,6 +139,9 @@ READ_LOCK_STATUS   = TRUE
   INF WatariM1Pkg/Drivers/WatariSimpleFbDxe/WatariSimpleFbDxe.inf
   INF MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
   INF WatariM1Pkg/Drivers/WatariM1SmbiosDxe/WatariM1SmbiosDxe.inf
+!if $(WATARI_M1_BENCH_RAMDISK) == TRUE
+  INF WatariM1Pkg/Drivers/WatariM1BenchRamDiskDxe/WatariM1BenchRamDiskDxe.inf
+!endif
   INF WatariM1Pkg/Application/WatariM1SelfTest/WatariM1SelfTest.inf
 
 [FV.FVMAIN_COMPACT]

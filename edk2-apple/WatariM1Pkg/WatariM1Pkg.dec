@@ -41,3 +41,10 @@
   #  writer puts B in bits 7:0, G in 15:8, R in 23:16, which the panel reads as other channels
   #  (wrong colours, shapes visible; DESIGN 8.5 stage 2). FALSE (default): the truthful PixelBitMask.
   gWatariM1TokenSpaceGuid.PcdWatariFbReportBgr8|FALSE|BOOLEAN|0x00000002
+
+  ## T16a, BENCH ONLY (-D WATARI_M1_BENCH_RAMDISK=TRUE): base address and size of the RAM that the QEMU
+  #  bench fills with a disk image (-device loader) and WatariM1BenchRamDiskDxe turns into a RAM disk.
+  #  Zero (the production value) = no RAM disk. The image must be exactly PcdWatariM1BenchRamDiskSize
+  #  bytes (the GPT backup header is at the end of it).
+  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskBase|0x0|UINT64|0x00000003
+  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskSize|0x0|UINT64|0x00000004
