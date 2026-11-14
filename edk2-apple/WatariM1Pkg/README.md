@@ -5,13 +5,14 @@ Design: `docs/design/watari-edk2-m1/` (README, DESIGN, PLAN, RISKS). Decisions: 
 ## Build
 
 ```
-tools/build-edk2-m1.sh [--bench] [--bgr8] [--model <acpigen model>] [DEBUG|RELEASE]
+tools/build-edk2-m1.sh [--bench] [--bgr8] [--ramdisk] [--model <acpigen model>] [DEBUG|RELEASE]
 ```
 
 | Configuration | Output (data disk, never in the repo) | Content |
 |---|---|---|
 | default (production) | `$WATARI_DATA/build-m1/WATARI_M1_EFI.fd` | no UART of any kind; the console is the Watari EL2 hypercall (`WatariHvcSerialPortLib`, E8); ACPI tables of acpigen model `j293` |
 | `--bench` (`-D WATARI_M1_BENCH_PL011=TRUE`) | `$WATARI_DATA/build-m1/WATARI_M1_EFI-bench.fd` | console and debug through the PL011 of QEMU's device tree, acpigen model `qemu-virt` (GIC at QEMU's addresses), Shell with `acpiview`, boots the Shell by default |
+| `--ramdisk` (`-D WATARI_M1_BENCH_RAMDISK=TRUE`, bench only, T16a) | `$WATARI_DATA/build-m1/WATARI_M1_EFI-ramdisk.fd` + `WatariM1BenchBootTest.efi` | the production configuration (hypercall console) plus `WatariM1BenchRamDiskDxe` and the stand-in boot application; the build check 2 fails any other build that contains them |
 
 Separate EDK2 workspaces (`/tmp/watari-data/build-m1`, `build-m1-bench`); the EDK2 tree gets only the idempotent HVF/GICv3 patch (`tools/edk2-hvf-gicv3.patch`). Nothing is downloaded. Build time: about 1 minute (DEBUG, 8 cores).
 
@@ -110,3 +111,9 @@ Limits: a RELEASE build was not built; the QEMU panel is RAM (no write-combining
 - SMBIOS type 0 extension byte 1 = `0x08` (UEFI specification supported, no VM bit). The model identifier `MacBookPro17,1` is still **[hypothesis]**: not verified from a public source (no network used).
 - The self-test does one `BufferToVideo` + `VideoToBlt` round trip through the GOP and fails if it differs: `SELFTEST roundtrip OK: wrote R80 G40 B20, read R80 G40 B20` [verified: run output, band x2r10 and guest x8r8].
 - DESIGN 8.4 records the framebuffer-not-in-the-memory-map assumption [hypothesis, Q-D3].
+
+## Windows boot manager discovery and the bench disk (T16a) [verified: run output, 2026-11-14]
+
+**Finding** (EDK2 `edk2-stable202608`, `MdeModulePkg/Library/UefiBootManagerLib/BmBoot.c`): `EfiBootManagerRefreshAllBootOption` -> `BmEnumerateBootOptions` (2289-2420) creates options holding the device path of a disk or volume, which `BmExpandMediaDevicePath` (1106-1230, `FileDevicePath (..., EFI_REMOVABLE_MEDIA_FILE_NAME)` at 1133 and 1209) expands to `\EFI\BOOT\BOOTAA64.EFI` only. So a Windows ESP with only `\EFI\Microsoft\Boot\bootmgfw.efi` is not found, and the installer's `Boot####` variable is gone (variables are RAM-backed). **Fix:** `WatariM1BootManagerLib` (`BootWindowsBootManagers`), in `PlatformBootManagerUnableToBoot`, after the discovered options and before the self-test: for every Simple File System handle with `\EFI\Microsoft\Boot\bootmgfw.efi` and no option with exactly that file path, an option "Windows Boot Manager" is created and booted. Firmware-volume paths stay skipped.
+
+**Bench** (`el2/boot/run-t16a.sh`, needs `tools/build-edk2-m1.sh --ramdisk`): the M1 package has no block, PCI or virtio driver (by design), and the layer's guest FDT has no virtio node, so a bench-only driver `WatariM1BenchRamDiskDxe` (in the build only with `--ramdisk`) claims 16 MiB at `0xB0000000` and registers a RAM disk (`EFI_RAM_DISK_PROTOCOL`) over the GPT/FAT16 image that QEMU `-device loader` put there; `PartitionDxe` and the FAT driver then mount it. The image is made with `hdiutil` from a folder holding the EDK2-built stand-in `WatariM1BenchBootTest.efi` (prints `T16A BOOTED from <path>`, `ResetSystem`); no Windows or Microsoft binary. Result on QEMU TCG under the layer: `removable` (only `\EFI\BOOT\BOOTAA64.EFI`) boots it; `bootmgfw` (only `\EFI\Microsoft\Boot\bootmgfw.efi`) boots it through the new path (`trying Windows Boot Manager`, after the discovered option failed); `both` boots the removable one first; `empty` runs the self-test. Not verified: a real Windows ESP layout, a real disk driver (none exists yet), behaviour when `bootmgfw.efi` itself fails (it would just return and the self-test runs).

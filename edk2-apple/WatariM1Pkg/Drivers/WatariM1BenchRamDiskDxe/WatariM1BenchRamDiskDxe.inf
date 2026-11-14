@@ -1,0 +1,45 @@
+## @file
+#  Watari Boot (T16a), BENCH ONLY (-D WATARI_M1_BENCH_RAMDISK=TRUE, never in a production build):
+#  registers a RAM disk over a disk image that the QEMU bench loaded into RAM (-device loader), so the
+#  boot manager has a block device with a file system to discover although the M1 platform has no
+#  storage driver by design (DESIGN 10.3). Does nothing when no image was loaded.
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = WatariM1BenchRamDiskDxe
+  FILE_GUID                      = 2f6a93c4-8e17-4b50-a3d9-6c01e7b852f4
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariM1BenchRamDiskEntry
+
+[Sources]
+  WatariM1BenchRamDiskDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  PcdLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gEfiRamDiskProtocolGuid                       ## CONSUMES
+
+[Guids]
+  gEfiVirtualDiskGuid                           ## CONSUMES
+
+[FixedPcd]
+  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskBase
+  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskSize
+
+[Depex]
+  gEfiRamDiskProtocolGuid
