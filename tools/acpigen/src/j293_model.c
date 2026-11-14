@@ -69,3 +69,16 @@ const acpigen_model j293_model = {
                    .msi_base = 0xFFFFF000ull, .msi_flags = 1, .msi_spi_count = 32, .msi_spi_base = 928 },
     .gtdt = &j293_gtdt, .csrt = 0, .dbg2 = 0, .fadt = &j293_fadt,
 };
+
+/* T16b (bench only, NOT for the real M1): the j293 machine description with only the four Icestorm cores (MPIDR 0..3,
+ * the same values QEMU's first four cores have), everything else as j293 (GIC at 0xF_xxxx_xxxx, MSI frame, GTDT, FADT).
+ * It isolates the 8-core topology (four cores that a QEMU bench does not have, two efficiency classes) from the other
+ * j293 assumptions when WinPE stops on the bench with the plain j293 tables [hypothesis: see re/m3b-winram-bench.md T16b]. */
+const acpigen_model j293_e4_model = {
+    .name = "j293-e4", .cpus = j293_cpus, .ncpus = 4,
+    .gicd = &j293_gicd,
+    .madt_opts = { .boot_index = 0, .gicc_gicr_base = 0, .gicd_first = 1,
+                   .gicr_range_base = 0xF10000000ull, .gicr_range_length = 4 * 0x20000,
+                   .msi_base = 0xFFFFF000ull, .msi_flags = 1, .msi_spi_count = 32, .msi_spi_base = 928 },
+    .gtdt = &j293_gtdt, .csrt = 0, .dbg2 = 0, .fadt = &j293_fadt,
+};

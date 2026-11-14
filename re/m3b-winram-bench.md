@@ -88,6 +88,43 @@ Conclusions:
 - **MEM=2G (MSI frame emulated by the layer) works** (m4) [verified: run]: no "MSI frame page 0xFFFFC000 is guest RAM here: not emulated" line (so the frame hole was in stage 2), RDBASE 0x80000000 + 0x2ca00000 fits below 3 GiB, Setup reached. This closes the "[open]" of the Conclusions above: the frame path does not break Windows on the bench. Whether Windows touched the frame is not logged [not verified]. The doorbell is not used by any device on the bench.
 - All four runs saw `PSCI CPU_ON` for cpu 1, 2, 3 only [verified: serial.log].
 
+## T16b: the j293 GIC addresses on the bench (2026-11-14)
+
+Question: can the PRODUCTION tables (acpigen model `j293`, GIC at `0xF_0000_0000`) boot WinPE on the bench? Answer: the GIC addresses were
+not the problem once the layer can present them; the 8-core MADT is [verified: r-t16b-2 vs -3]. Evidence (not in the repo):
+`$WATARI_DATA/logs/winram/t16b-{1,2,3}/` (serial.log, pc.log, shot-NNNN.png). Firmware: `WATARI_M1_BUILD_TAG=t16b tools/build-edk2-m1.sh --bgr8`
+(model j293, no `--model`) and `WATARI_M1_BUILD_TAG=t16be4 ... --model j293-e4`. Run: `WATARI_M1_BUILD_TAG=<tag> PANEL=8 MEM=3G RDBASE=0x80000000 SMP=4
+WEL2_ARGS="wel2.vgicipa=m1" el2/boot/run-winram.sh` (CPUIF=trap).
+
+**The option `wel2.vgicipa=m1`** (QEMU bench only; `el2/boot/main.c`, `plat_select.c plat_vgic_windows`): the guest-visible vGIC windows are the M1's
+(GICD `0xF_0000_0000`, GICR `0xF_1000_0000`, 128 KB per core), the same constants the j293 MADT and `plat_m1` use. The physical GIC stays at QEMU's
+`0x0800_0000`/`0x080A_0000`; stage 2 gets two holes over it (the guest cannot touch it) and leaves the M1 windows unmapped (they already are holes of
+the vGIC), so every guest access faults to EL2 and `vgic_mmio_*` answers it, in `hw`, `trap` and `trap-notc` modes (the vGIC model only ever saw
+the configured base; the CPU interface does not depend on the window). The layer-built guest FDT's `intc` node and the test guest's info block carry the
+moved addresses; the option needs `wel2.abi=fdt wel2.gfdt=build` or the test guest (fatal otherwise: the patched QEMU FDT would say `0x0800_0000`).
+Default unchanged; on `plat_m1` a no-op (logged). Host tests: `el2/tests/test_plat.c t_vgic_windows` (translation, M1 no-op, a vGIC on the
+moved windows answers there and refuses QEMU's). Bench regression: `run-m1guest.sh` G1-G12 PASS with the option in hw, trap and trap-notc (now in `run-all.sh`).
+
+| Run | Config | Result |
+|---|---|---|
+| t16b-1 | plain j293 firmware, `vgicipa=m1`, SMP 4, 3G | boot logo, `CPU_ON` cpu 1-3 accepted, then `PSCI SYSTEM_RESET` after about 60 s (a bugcheck restart) |
+| t16b-2 | same with `QEMU_EXTRA=-no-shutdown` | `shot-0002.png`: "Your device ran into a problem and needs to restart", **Stop Code INTERNAL_POWER_ERROR (0xA0)** |
+| t16b-3 | firmware with model `j293-e4` (j293 with only the four Icestorm cores, MPIDR 0..3, GICR range of 4 frames; everything else j293: GIC, MSI frame, GTDT, FADT, no DBG2), same option | **Setup first screen** ("Installa il driver per visualizzare l'hardware"), `shot-0007.png` at 370 s, 4 vCPUs, about 134 000 layer log lines |
+
+What the j293 tables assume that the bench lacks (checked one by one):
+- GIC addresses: handled by the option (above). GTDT PPIs 27/30 and the FADT (PSCI over HVC, HW-reduced): the layer answers both (the bench
+  uses the same FADT and the QEMU GTDT lists the same PPIs); no change needed [verified: t16b-3 runs with them].
+- MSI frame `0xFFFFF000`: emulated by the layer only when no guest RAM covers `0xFFFFC000`; with `MEM=3G` it is plain RAM ("not emulated", as r9-r15) and
+  Setup was reached without it. The frame path (`MEM=2G`) with the j293 tables was NOT run here (T16c).
+- DBG2/CSRT: none in either model. Memory map: the bench's RAM at `0x4000_0000` with the RAM disk at `0x8000_0000` (as T22).
+- **Eight cores in the MADT/PPTT, four on the bench (and MPIDR `0x10100..3` for the P cores that QEMU cannot present):** the only blocking difference.
+  With four GICC entries (`j293-e4`) everything else of j293 boots to Setup; with eight, Windows starts the three cores that exist and stops with
+  INTERNAL_POWER_ERROR (0xA0). Why (a power policy over processors that never come online, the two efficiency classes, or the failed starts) is
+  [hypothesis]; the parameters of the stop were not read. A bench with eight matching cores needs QEMU `-smp 8` plus a virtual-MPIDR remap and a
+  stack-slot formula for QEMU Aff0 4..7 (`wel2_core_index` accepts Aff0 < 4 only; `start.S`): not done [open]; `wel2.vgicipa=m1` does not touch that.
+- Consequence for the hardware day: the all-eight-cores j293 tables are untested on any bench; the first time they run is on the M1. The bench
+  proves everything else of the production description (addresses, MSI, GTDT, FADT, GOP, RAM disk) with `j293-e4`.
+
 ## Next step
 
 1. Rebuild the hardware bundle (production firmware, j293 model) with the new `PcdWatariRamDiskType` default (type 0); on the bench the j293 firmware

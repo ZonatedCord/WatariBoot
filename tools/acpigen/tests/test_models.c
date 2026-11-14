@@ -36,6 +36,14 @@ int main(void)
     CHECK(bm->madt_opts.msi_base == 0xFFFFF000ull && bm->madt_opts.msi_spi_base == 928 && bm->madt_opts.msi_spi_count == 32);
     CHECK(acpigen_build_madt(b, sizeof b, 0, bm->cpus, bm->ncpus, bm->gicd, &bm->madt_opts) > 0);
     CHECK(acpigen_build_fadt(b, sizeof b, 0, bm->fadt) == 276);
+    /* T16b j293-e4: j293 addresses, four E cores, GICR range of four frames */
+    const acpigen_model *em = acpigen_find_model("j293-e4");
+    CHECK(em == &j293_e4_model && em->ncpus == 4 && em->gicd->physical_base_address == 0xF00000000ull);
+    CHECK(em->madt_opts.gicr_range_base == 0xF10000000ull && em->madt_opts.gicr_range_length == 4 * 0x20000);
+    CHECK(em->madt_opts.msi_base == 0xFFFFF000ull && em->fadt == &j293_fadt && em->dbg2 == 0);
+    for (size_t i = 0; i < 4; i++)
+        CHECK(em->cpus[i].mpidr == i && em->cpus[i].efficiency == 0);
+    CHECK(acpigen_build_madt(b, sizeof b, 0, em->cpus, em->ncpus, em->gicd, &em->madt_opts) > 0);
     /* modelli senza CSRT/DBG2 */
     CHECK(acpigen_build_csrt(b, sizeof b, 0, qemu_virt_model.csrt) == ACPIGEN_E_INVAL);
     CHECK(acpigen_build_dbg2(b, sizeof b, 0, t8103_model.dbg2) == ACPIGEN_E_INVAL);

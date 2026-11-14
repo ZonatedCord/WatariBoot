@@ -62,7 +62,7 @@ else
 fi
 [ "$BGR8" = 1 ] && SUFFIX="${SUFFIX}-bgr8"
 [ "$RAMDISK" = 1 ] && SUFFIX="${SUFFIX}-ramdisk"
-case "$MODEL" in j293|qemu-virt|qemu-virt-bench) ;; *) echo "ERROR: --model must be j293, qemu-virt or qemu-virt-bench (got '$MODEL')" >&2; exit 2 ;; esac
+case "$MODEL" in j293|j293-e4|qemu-virt|qemu-virt-bench) ;; *) echo "ERROR: --model must be j293, j293-e4, qemu-virt or qemu-virt-bench (got '$MODEL')" >&2; exit 2 ;; esac
 TAGSUF=""
 if [ -n "${WATARI_M1_BUILD_TAG:-}" ]; then
     case "$WATARI_M1_BUILD_TAG" in *[!A-Za-z0-9_-]*) echo "ERROR: WATARI_M1_BUILD_TAG may hold letters, digits, - and _ only" >&2; exit 2 ;; esac

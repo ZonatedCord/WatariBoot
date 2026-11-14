@@ -134,6 +134,39 @@ static void t_m1_table(void)
 	CHECK(plat_qemu.fiq == NULL);                                     /* QEMU: an unexpected FIQ stays fatal */
 }
 
+/* T16b: wel2.vgicipa=m1. The bench's vGIC windows move to the M1 addresses (the guest's j293 tables), the M1's do not
+ * move (no-op), and a vGIC built on the moved windows answers a trapped access there and refuses one at QEMU's window. */
+static void t_vgic_windows(void)
+{
+	uint64_t d = 1, r = 1;
+
+	CHECK(!plat_vgic_windows(&plat_qemu, false, &d, &r));             /* default: unchanged */
+	CHECK_EQ(d, PLAT_QEMU_GICD_BASE);
+	CHECK_EQ(r, PLAT_QEMU_GICR_BASE);
+	CHECK(plat_vgic_windows(&plat_qemu, true, &d, &r));               /* option on the bench: the M1 addresses */
+	CHECK_EQ(d, 0xF00000000ULL);
+	CHECK_EQ(r, 0xF10000000ULL);
+	CHECK(!plat_vgic_windows(&plat_m1, true, &d, &r));                /* on the M1: nothing to move */
+	CHECK_EQ(d, plat_m1.vgic_gicd_base);
+	CHECK_EQ(r, plat_m1.vgic_gicr_base);
+	CHECK(!plat_vgic_windows(&plat_m1, false, &d, &r));
+	CHECK_EQ(d, plat_m1.vgic_gicd_base);
+
+	/* the translation in the trap path: the model, configured with the moved windows, answers there only */
+	plat_vgic_windows(&plat_qemu, true, &d, &r);
+	struct vgic v;
+	struct vgic_config cfg = { d, r, 4, NULL, { fx_log, fx_eff, NULL, NULL }, false, 0 };
+	uint64_t val = 0;
+
+	CHECK_EQ(vgic_init(&v, &cfg), 0);
+	CHECK_EQ(vgic_mmio_read(&v, d + 4 /* GICD_TYPER */, 4, &val), VGIC_OK);
+	CHECK((val & 0x1f) > 0);                                          /* ITLinesNumber: some SPIs */
+	CHECK_EQ(vgic_mmio_read(&v, r + 0x20000ULL * 3 + 8, 8, &val), VGIC_OK);   /* GICR_TYPER of cpu 3 */
+	CHECK_EQ(val & 0x10, 0x10);                                       /* Last: the walk of the redistributors ends there */
+	CHECK_EQ(vgic_mmio_read(&v, PLAT_QEMU_GICD_BASE + 4, 4, &val), VGIC_ERR_RANGE);
+	CHECK_EQ(vgic_mmio_read(&v, PLAT_QEMU_GICR_BASE + 8, 8, &val), VGIC_ERR_RANGE);
+}
+
 /* ---- the M1 wiring (T6d/T6e/T6f): the real plat_m1.c hooks against a memory-backed AIC window, the fake system
  * registers and a fake core-start ops table. The instructions that cannot run on the host (mrs MPIDR in discover_cpus,
  * the halts) are not exercised. ---- */
@@ -333,6 +366,7 @@ int main(void)
 {
 	RUN(t_select);
 	RUN(t_m1_table);
+	RUN(t_vgic_windows);
 	RUN(t_m1_wiring_table);
 	RUN(t_m1_aic_irq_path);
 	RUN(t_m1_fiq_timer_ipi);

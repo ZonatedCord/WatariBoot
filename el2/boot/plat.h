@@ -90,6 +90,12 @@ extern const struct wel2_platform plat_qemu;
 extern const struct wel2_platform plat_m1;
 extern const struct wel2_platform *g_plat;            /* set by stage1_build, read by everyone after */
 
+/* T16b: the guest-visible vGIC windows for a platform and the wel2.vgicipa=m1 option (QEMU bench only). Writes *gicd and *gicr:
+ * the platform's own windows, or, when m1_ipa is set and the platform has a physical GIC (the bench; the M1 already
+ * uses these addresses and the option is a no-op there), PLAT_M1_GICD_BASE / PLAT_M1_GICR_BASE. Returns true when the
+ * windows were moved away from the platform's. */
+bool plat_vgic_windows(const struct wel2_platform *p, bool m1_ipa, uint64_t *gicd, uint64_t *gicr);
+
 /* The platform for a parsed FDT: plat_m1 when fdt_m1_parse() returned 0 and found the AIC node (p->is_m1), plat_qemu
  * otherwise, also when the parse failed (rc != 0): a blob the layer cannot read is not recognised as an M1. */
 const struct wel2_platform *plat_select(int parse_rc, const struct m1_platform *p);
