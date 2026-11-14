@@ -166,5 +166,20 @@ if [ "$RAMDISK" = 1 ]; then
 fi
 DEST="$WATARI_DATA/build-m1/WATARI_M1_EFI${SUFFIX}${TAGSUF}.fd"
 cp "$FD" "$DEST"
-echo "Output: $FD -> $DEST"
+# Build manifest (T16e): the file name and the log carry no model line, so a sidecar records what this firmware is. The bundle script
+# (tools/m3a/build-m1-payload.sh) refuses a firmware without it, and a bench/tagged/non-j293 one, unless told otherwise.
+{
+    echo "model=$MODEL"
+    echo "bench=$BENCH"
+    echo "ramdisk_standin=$RAMDISK"
+    echo "bgr8=$BGR8"
+    echo "target=$TARGET"
+    echo "build_tag=${WATARI_M1_BUILD_TAG:-}"
+    echo "build_pcd=${WATARI_M1_BUILD_PCD:-}"
+    echo "commit=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
+    echo "dirty=$([ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ] && echo 1 || echo 0)"
+    echo "fd_size=$FDSIZE"
+    echo "fd_sha256=$(shasum -a 256 "$FD" | cut -d" " -f1)"
+} > "$DEST.build.txt"
+echo "Output: $FD -> $DEST (manifest $DEST.build.txt)"
 ls -l "$DEST"

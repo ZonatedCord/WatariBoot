@@ -71,6 +71,34 @@ command -v ld.lld >/dev/null 2>&1 || export PATH="$LLVM:$PATH"
 command -v ld.lld >/dev/null 2>&1 || die "ld.lld not found"
 if command -v sha256sum >/dev/null 2>&1; then SHA() { sha256sum "$@"; }; else SHA() { shasum -a 256 "$@"; }; fi
 
+# Hardware-firmware guard (T16e), run before any build so a wrong file fails at once.
+if [ "${WATARI_NO_EDK2:-0}" != 1 ]; then
+    EFI_SRC="${WATARI_M1_EFI:-${WATARI_DATA:-}/build-m1/WATARI_M1_EFI.fd}"
+    [ -f "$EFI_SRC" ] || die "no EDK2 image at $EFI_SRC: run tools/build-edk2-m1.sh first, or set WATARI_M1_EFI=<file>, or WATARI_NO_EDK2=1 for a bundle without it"
+    MANIFEST="$EFI_SRC.build.txt"
+    # What it checks: the bundle is for the real M1, so the firmware must be the production j293 build:
+    # no bench, no RAM-disk stand-in, no build tag, no PCD override, model j293. tools/build-edk2-m1.sh writes
+    # <image>.build.txt with exactly that; a name with -bench/-ramdisk/-t<NN>/-vb or a missing or different manifest is refused.
+    # WATARI_M1_EFI_ALLOW_BENCH=1 skips the guard (QEMU-bench bundles only, never for hardware).
+    if [ "${WATARI_M1_EFI_ALLOW_BENCH:-0}" != 1 ]; then
+        EFI_BASE="$(basename "$EFI_SRC")"
+        case "$EFI_BASE" in
+            *-bench*|*-ramdisk*|*-t[0-9]*|*-vb*|*-e4*|*-qb*|*-qv*|*-nf*)
+                die "$EFI_BASE looks like a bench/tagged firmware (name has -bench, -ramdisk, -t<NN>, -vb, -e4, ...): the hardware bundle takes only the plain 'tools/build-edk2-m1.sh [--bgr8]' output (WATARI_M1_EFI_ALLOW_BENCH=1 overrides, bench bundles only)" ;;
+        esac
+        [ -f "$MANIFEST" ] || die "no build manifest $MANIFEST: rebuild with tools/build-edk2-m1.sh [--bgr8] (it writes one), or WATARI_M1_EFI_ALLOW_BENCH=1 for a bench bundle"
+        mval() { sed -n "s/^$1=//p" "$MANIFEST" | head -1; }
+        [ "$(mval model)" = j293 ] || die "firmware model is '$(mval model)', not j293 ($MANIFEST)"
+        [ "$(mval bench)" = 0 ] || die "firmware is a --bench build ($MANIFEST)"
+        [ "$(mval ramdisk_standin)" = 0 ] || die "firmware is a --ramdisk bench build ($MANIFEST)"
+        [ -z "$(mval build_tag)" ] || die "firmware has a build tag '$(mval build_tag)' ($MANIFEST)"
+        [ -z "$(mval build_pcd)" ] || die "firmware was built with WATARI_M1_BUILD_PCD ($MANIFEST)"
+        [ "$(mval fd_sha256)" = "$(shasum -a 256 "$EFI_SRC" | cut -d' ' -f1)" ] || die "firmware SHA-256 differs from its manifest: edited, copied from elsewhere or rebuilt since ($MANIFEST)"
+        [ "$(mval dirty)" = 0 ] || echo "WARNING: the firmware was built from a dirty tree ($MANIFEST)" >&2
+        echo "  guard: model j293, no bench, no ramdisk stand-in, no tag/PCD, bgr8=$(mval bgr8), commit $(mval commit | cut -c1-9)"
+    fi
+fi
+
 OUT="$DIR/bundle"
 # make cannot handle spaces in paths (the data disk is "Arthur Fonzarelli"): when DIR has one, the work tree goes
 # to a space-free temp dir (removed on exit); only the finished bundle is written under DIR (the shell quotes it).
@@ -102,6 +130,7 @@ if [ "${WATARI_NO_EDK2:-0}" != 1 ]; then
     EFI_SRC="${WATARI_M1_EFI:-${WATARI_DATA:-}/build-m1/$EFI_NAME}"
     [ -f "$EFI_SRC" ] || die "no EDK2 image at $EFI_SRC: run tools/build-edk2-m1.sh first, or set WATARI_M1_EFI=<file>, or WATARI_NO_EDK2=1 for a bundle without it"
     echo "== EDK2 image: $EFI_SRC =="
+    [ -f "$MANIFEST" ] && cp "$MANIFEST" "$OUT/$EFI_NAME.build.txt"
     cp "$EFI_SRC" "$OUT/$EFI_NAME"
 fi
 
