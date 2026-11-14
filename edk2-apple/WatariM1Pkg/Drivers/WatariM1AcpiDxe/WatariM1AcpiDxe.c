@@ -31,6 +31,8 @@
 // Model switch, set by the DSC (-D WATARI_M1_ACPIGEN_MODEL=qemu-virt adds this flag).
 #ifdef WATARI_M1_MODEL_QEMU_VIRT
 #define WATARI_M1_ACPIGEN_MODEL  "qemu-virt"
+#elif defined (WATARI_M1_MODEL_J293_E4)
+#define WATARI_M1_ACPIGEN_MODEL  "j293-e4"   // T16b: j293 with the four E cores only (bench experiment, NOT for the M1)
 #elif defined (WATARI_M1_MODEL_QEMU_BENCH)
 #define WATARI_M1_ACPIGEN_MODEL  "qemu-virt-bench"   // T22: M1-shaped QEMU bench (el2/boot/run-winram.sh)
 #else

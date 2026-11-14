@@ -85,6 +85,8 @@ const acpigen_model *acpigen_find_model(const char *name)
         return &t8103_model;
     if (name && !strcmp(name, j293_model.name))
         return &j293_model;
+    if (name && !strcmp(name, j293_e4_model.name))
+        return &j293_e4_model;
     if (name && !strcmp(name, qemu_virt_model.name))
         return &qemu_virt_model;
     if (name && !strcmp(name, qemu_virt_nogicd_model.name))

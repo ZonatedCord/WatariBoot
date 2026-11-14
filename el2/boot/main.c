@@ -374,6 +374,14 @@ static void handle_smc(struct frame *f)
 struct fdt_aic_info g_aic_info;         /* the Watari AIC node (#42), found when g_aic_on */
 static uint8_t s2_pool[WEL2_S2_POOL_BYTES] __attribute__((aligned(16384)));
 static struct wel2_pt s2_pt;
+/* wel2.vgicipa=m1 (T16b, QEMU bench only): the guest-visible vGIC windows. Default: the platform's own (g_plat->vgic_*);
+ * with the option the guest sees the distributor and redistributors at the M1 addresses (the j293 ACPI tables and the
+ * layer-built guest FDT then describe a machine whose GIC the guest reaches through stage-2 faults only), while the
+ * physical GIC stays where QEMU has it and is hidden from the guest by two stage-2 holes. Set once in main, before
+ * vgic_setup() and stage2_init(). */
+static uint64_t g_gicd_ipa, g_gicr_ipa;
+static bool g_vgicipa_m1, g_vgicipa_moved;
+
 static bool g_v2m_on;                   /* the page is a hole (no guest RAM there) */
 static struct v2m g_v2m;                /* #74: the MSI frame at 0xFFFFF000, trapped as one 16 KB page */
 static uint64_t g_vtcr;
@@ -403,10 +411,16 @@ static void stage2_init(void)
 {
     struct wel2_ram ram = { g_ram_base, g_ram_end };
     struct wel2_range holes[HOLES_MAX] = {
-        { g_plat->vgic_gicd_base, GICD_SIZE },
-        { g_plat->vgic_gicr_base, 8ULL * VGIC_GICR_FRAME_SIZE },
+        { g_gicd_ipa, GICD_SIZE },
+        { g_gicr_ipa, 8ULL * VGIC_GICR_FRAME_SIZE },
     };
     unsigned nholes = 2;
+
+    /* T16b: the vGIC windows were moved to the M1 addresses: QEMU's physical GIC must not be reachable from the guest. */
+    if (g_vgicipa_moved &&
+        (wel2_s2_add_hole(holes, &nholes, HOLES_MAX, GICD_PHYS, GICD_SIZE, g_gran) ||
+         wel2_s2_add_hole(holes, &nholes, HOLES_MAX, GICR_PHYS, 8ULL * VGIC_GICR_FRAME_SIZE, g_gran)))
+        fatal_msg("stage-2 holes: the physical GIC windows do not fit");
 
     /* #74: the GICv2m frame (4 KB at 0xFFFFF000) lives in the 16 KB page 0xFFFFC000-0xFFFFFFFF, trapped for
      * both granules (v2m_add_hole -> wel2_s2_add_hole). Nothing else is there on the t8103 [verified: ADT,
@@ -557,8 +571,8 @@ static void vgic_setup(uint64_t fdt)
     for (unsigned i = 0; i < g_ncpu; i++)
         aff[i] = g_pcpu[i].aff;
     struct vgic_config cfg = {
-        .gicd_base = g_plat->vgic_gicd_base,
-        .gicr_base = g_plat->vgic_gicr_base,
+        .gicd_base = g_gicd_ipa,
+        .gicr_base = g_gicr_ipa,
         .nr_vcpus = g_ncpu,
         .affinity = aff,
         .hooks = { vgic_log_cb, vgic_effect_cb, 0, lpi_reg_cb },
@@ -585,8 +599,8 @@ static void handle_dabt(struct frame *f, unsigned idx)
     unsigned srt = (iss >> 16) & 31;
     int wnr = (iss >> 6) & 1;
     uint32_t dfsc = iss & 0x3f;
-    int in_gic = (ipa >= g_plat->vgic_gicd_base && ipa < g_plat->vgic_gicd_base + GICD_SIZE) ||
-                 (ipa >= g_plat->vgic_gicr_base && ipa < g_plat->vgic_gicr_base + 8 * VGIC_GICR_FRAME_SIZE);
+    int in_gic = (ipa >= g_gicd_ipa && ipa < g_gicd_ipa + GICD_SIZE) ||
+                 (ipa >= g_gicr_ipa && ipa < g_gicr_ipa + 8 * VGIC_GICR_FRAME_SIZE);
     int in_v2m = g_v2m_on && v2m_contains(&g_v2m, ipa);        /* #74: the whole 16 KB page */
 
     if (!isv || !(in_gic || in_v2m) || (dfsc >> 2) != 1 /* translation fault, any level */) {
@@ -645,11 +659,11 @@ static void handle_dabt(struct frame *f, unsigned idx)
     /* M1-4: progress evidence for a firmware that does thousands of GIC accesses. */
     {
         static unsigned n_gicd, n_gicr;
-        unsigned n = in_v2m ? 0 : ipa < g_plat->vgic_gicd_base + GICD_SIZE ? ++n_gicd : ++n_gicr;   /* v2m: no progress line */
+        unsigned n = in_v2m ? 0 : ipa < g_gicd_ipa + GICD_SIZE ? ++n_gicd : ++n_gicr;   /* v2m: no progress line */
 
         for (unsigned p = 1; p <= 1000000; p *= 10) {
             if (n == p) {
-                put_kv(ipa < g_plat->vgic_gicd_base + GICD_SIZE ? "Watari EL2: vGIC GICD traps handled = "
+                put_kv(ipa < g_gicd_ipa + GICD_SIZE ? "Watari EL2: vGIC GICD traps handled = "
                                                    : "Watari EL2: vGIC GICR traps handled = ", n);
             }
         }
@@ -739,8 +753,8 @@ static uint64_t write_guest_info(uint64_t at)
     gi->size = sizeof(*gi);
     for (unsigned i = 0; name[i] && i < sizeof(gi->platform) - 1; i++)
         gi->platform[i] = name[i];
-    gi->gicd_base = g_plat->vgic_gicd_base;
-    gi->gicr_base = g_plat->vgic_gicr_base;
+    gi->gicd_base = g_gicd_ipa;
+    gi->gicr_base = g_gicr_ipa;
     gi->gicr_stride = 0x20000;
     gi->ncores = g_ncpu < WEL2_GINFO_MAX_CORES ? g_ncpu : WEL2_GINFO_MAX_CORES;
     /* Hardware ladder (DESIGN 9): L3 = G1-G6, L4 = G1-G8, L5 and no step = all (G11, the final reset, always runs). */
@@ -927,8 +941,8 @@ static void __attribute__((noreturn)) chain_fdt(void)
     gi.platform = g_plat->name;
     gi.ranges = gp.ordered;
     gi.nranges = gp.n;
-    gi.gicd_base = g_plat->vgic_gicd_base;
-    gi.gicr_base = g_plat->vgic_gicr_base;
+    gi.gicd_base = g_gicd_ipa;
+    gi.gicr_base = g_gicr_ipa;
     gi.gicr_stride = 0x20000;
     gi.ncores = g_ncpu < WEL2_GFDT_MAX_CORES ? g_ncpu : WEL2_GFDT_MAX_CORES;
     for (unsigned i = 0; i < gi.ncores; i++)
@@ -1004,6 +1018,8 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
         fatal_msg("wel2.ramdisk needs wel2.abi=fdt (and wel2.gfdt=build on the bench)");
     if (g_gfdt_build && !g_abi_fdt)
         fatal_msg("wel2.gfdt=build needs wel2.abi=fdt");
+    if (g_vgicipa_moved && !(g_abi_fdt && g_gfdt_build) && !g_guest_mode)   /* the patched QEMU FDT would still say 0x08000000 */
+        fatal_msg("wel2.vgicipa=m1 needs wel2.abi=fdt wel2.gfdt=build or the test guest (the guest must be told the moved windows)");
     if (!g_plat->m1_memory && g_nguest_ram && !g_abi_fdt)       /* the patched QEMU FDT would list the split holes as RAM */
         fatal_msg("wel2.split needs wel2.abi=fdt (and wel2.gfdt=build)");
     if (g_abi_fdt)
@@ -1075,6 +1091,9 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
  *   wel2.cpuif=hw|trap|trap-notc   mode of the virtual CPU interface (build default WEL2_CPUIF_TRAP_DEFAULT);
  *                        trap-notc = trap without ICH_HCR_EL2.TC (T6g). The M1 accepts trap and trap-notc only.
  *   wel2.ramdisk=0x<base>,0x<size>   (WEL2_CHAIN, needs wel2.abi=fdt) T21: a RAM disk image in guest RAM: guest FDT node + /memory cut-out
+ *   wel2.vgicipa=m1|native   (QEMU bench, needs wel2.abi=fdt wel2.gfdt=build) T16b: the guest's vGIC distributor/redistributors at the M1
+ *                        addresses (GICD 0xF_0000_0000, GICR 0xF_1000_0000: what the j293 ACPI tables say); QEMU's physical GIC is hidden by
+ *                        stage-2 holes; every guest access traps to the vGIC model. No-op on the M1. Default native.
  *   wel2.hold=1          do not reset at the end of a step or of the guest (wel2.step=2, the guest's SYSTEM_RESET): paint the final
  *                        state, print the HOLD message and park, so the screen can be photographed (not wel2.step=1)
  *   wel2.tid3=1|0        HCR_EL2.TID3: emulate the ID register group, GIC forced to 1 (default: on on the M1, off on QEMU)
@@ -1145,6 +1164,10 @@ static void parse_bootargs(uint64_t fdt)
                 g_trace_skip = g_trace_skip * 10 + (unsigned)(*q - '0');
         } else if (arg_is(p, "wel2.test=noeoi")) {
             g_cpuif_noeoi = true;
+        } else if (arg_is(p, "wel2.vgicipa=m1")) {
+            g_vgicipa_m1 = true;
+        } else if (arg_is(p, "wel2.vgicipa=native")) {
+            g_vgicipa_m1 = false;
 #ifdef WEL2_CHAIN
         } else if (arg_is(p, "wel2.test=badfbfmt")) {
             g_test_badfbfmt = true;
@@ -1317,6 +1340,11 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
         g_tid3 = true;                          /* DESIGN 5.4: EDK2's GIC code and Windows read ID_AA64PFR0_EL1.GIC; wel2.tid3=0 overrides */
     }
     parse_bootargs(fdt);
+    g_vgicipa_moved = plat_vgic_windows(g_plat, g_vgicipa_m1, &g_gicd_ipa, &g_gicr_ipa);
+    if (g_vgicipa_moved)
+        put_kv("Watari EL2: wel2.vgicipa=m1: guest vGIC distributor at ", g_gicd_ipa);
+    else if (g_vgicipa_m1)
+        puts_("Watari EL2: wel2.vgicipa=m1: the platform's windows already are the M1's, nothing to move\n");
     /* T6g: pointer authentication (DESIGN 5.1) and the ID register group (DESIGN 5.4). */
     if (cpu_has_pauth()) {
         g_hcr |= HCR_API | HCR_APK;
