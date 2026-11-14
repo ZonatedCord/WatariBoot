@@ -1,0 +1,53 @@
+## @file
+#  Watari Boot (T21): RAM disk over a disk image in guest RAM, described by the guest device tree node
+#  /reserved-memory/ramdisk@<base> (compatible "watari,ramdisk"), which Watari EL2 writes for wel2.ramdisk=.
+#  PRODUCTION driver: without that node it does nothing. Replaces the bench-only WatariM1BenchRamDiskDxe (T16a).
+#  Design: docs/design/watari-winram/DESIGN.md sections 3 and 4.
+#
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = WatariM1RamDiskDxe
+  FILE_GUID                      = 8c41e7d2-3b95-4f06-a1d8-52e9c0b7f613
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = WatariM1RamDiskEntry
+
+[Sources]
+  WatariM1RamDiskDxe.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  EmbeddedPkg/EmbeddedPkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  DebugLib
+  DxeServicesTableLib
+  PcdLib
+  UefiBootServicesTableLib
+  UefiDriverEntryPoint
+
+[Protocols]
+  gEfiRamDiskProtocolGuid                       ## CONSUMES
+  gEfiCpuArchProtocolGuid                       ## CONSUMES
+  gFdtClientProtocolGuid                        ## CONSUMES
+
+[Guids]
+  gEfiVirtualDiskGuid                           ## CONSUMES
+
+[Pcd]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdDxeNxMemoryProtectionPolicy
+
+[FixedPcd]
+  gWatariM1TokenSpaceGuid.PcdWatariRamDiskType
+  gWatariM1TokenSpaceGuid.PcdWatariRamDiskVerify
+
+[Depex]
+  gFdtClientProtocolGuid AND gEfiRamDiskProtocolGuid AND gEfiCpuArchProtocolGuid

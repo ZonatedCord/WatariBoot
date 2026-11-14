@@ -380,10 +380,6 @@
   # QEMU virt: PL011 at 0x09000000 (the only peripheral the PEI MMU map gets; the GIC is mapped on demand).
   gWatariM1TokenSpaceGuid.PcdWatariM1BenchUartBase|0x09000000
 !endif
-!if $(WATARI_M1_BENCH_RAMDISK) == TRUE
-  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskBase|0xB0000000
-  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskSize|0x1000000
-!endif
 
   gEfiMdeModulePkgTokenSpaceGuid.PcdResetOnMemoryTypeInformationChange|FALSE
 
@@ -520,6 +516,7 @@
   FatPkg/EnhancedFatDxe/Fat.inf
   MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf
   MdeModulePkg/Universal/Disk/RamDiskDxe/RamDiskDxe.inf
+  WatariM1Pkg/Drivers/WatariM1RamDiskDxe/WatariM1RamDiskDxe.inf
 
   MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
 
@@ -567,6 +564,5 @@
   MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
   WatariM1Pkg/Drivers/WatariM1SmbiosDxe/WatariM1SmbiosDxe.inf
 !if $(WATARI_M1_BENCH_RAMDISK) == TRUE
-  WatariM1Pkg/Drivers/WatariM1BenchRamDiskDxe/WatariM1BenchRamDiskDxe.inf
   WatariM1Pkg/Application/WatariM1BenchBootTest/WatariM1BenchBootTest.inf
 !endif
