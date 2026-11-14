@@ -42,9 +42,12 @@
   #  (wrong colours, shapes visible; DESIGN 8.5 stage 2). FALSE (default): the truthful PixelBitMask.
   gWatariM1TokenSpaceGuid.PcdWatariFbReportBgr8|FALSE|BOOLEAN|0x00000002
 
-  ## T16a, BENCH ONLY (-D WATARI_M1_BENCH_RAMDISK=TRUE): base address and size of the RAM that the QEMU
-  #  bench fills with a disk image (-device loader) and WatariM1BenchRamDiskDxe turns into a RAM disk.
-  #  Zero (the production value) = no RAM disk. The image must be exactly PcdWatariM1BenchRamDiskSize
-  #  bytes (the GPT backup header is at the end of it).
-  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskBase|0x0|UINT64|0x00000003
-  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskSize|0x0|UINT64|0x00000004
+  ## T21: the EFI_MEMORY_TYPE WatariM1RamDiskDxe gives the RAM disk's pages. 4 = EfiBootServicesData (default: the
+  #  firmware cannot lose them, no NFIT or NVDIMM SSDT is published, Windows reclaims the memory after ExitBootServices).
+  #  0 = EfiReservedMemoryType: DEBUG SWITCH ONLY, RamDiskDxe then publishes an NFIT and an SSDT with an ACPI0012 NVDIMM
+  #  root device (DESIGN watari-winram 4.2).
+  gWatariM1TokenSpaceGuid.PcdWatariRamDiskType|4|UINT32|0x00000003
+
+  ## T21: check the CRC-32 of the RAM disk image against its trailer before registering it (a mismatch is never ignored;
+  #  FALSE skips the check, for a run that cannot wait for it).
+  gWatariM1TokenSpaceGuid.PcdWatariRamDiskVerify|TRUE|BOOLEAN|0x00000004

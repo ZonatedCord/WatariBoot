@@ -90,6 +90,9 @@ struct wel2_gfdt_in {
 	uint64_t msi_frame_base;                       /* 0 = none */
 	const char *fb_mode;                           /* "none" (NULL too), "band" or "guest" */
 	const struct wel2_gfdt_fb *fb;                 /* NULL = no /chosen/framebuffer node */
+	uint64_t ramdisk_base, ramdisk_size;           /* T21: size 0 = none (the blob is then byte-identical to the one without these
+							* fields); else /reserved-memory/ramdisk@<base> (DESIGN watari-winram 3.2). The caller has
+							* already cut the range out of `ranges` (wel2_ranges_carve) */
 };
 
 /* Builds the guest FDT into buf (cap bytes). 0 and *size, or -1: bad input, buffer too small, or the result would
@@ -124,5 +127,26 @@ struct wel2_gfdt_place {
  * its system memory from that node only (DESIGN 3.3). Ranges above 4 GB are fine (all 64 bit). */
 int wel2_gfdt_place(const struct wel2_range *ranges, unsigned n, uint64_t entry, uint64_t image_size, uint32_t fdt_max,
 		    struct wel2_gfdt_place *out);
+
+/* ---- the RAM disk (T21, DESIGN watari-winram 3.1, 3.3) ------------------------------------------------------------ */
+
+enum wel2_rd_err {
+	WEL2_RD_OK = 0,
+	WEL2_RD_ZERO,              /* base zero, size not above the 4 KB trailer, or the range wraps */
+	WEL2_RD_ALIGN,             /* base not aligned to the granule (1 << gshift) or size not a multiple of 4 KB */
+	WEL2_RD_NOT_IN_RAM,        /* not wholly inside ONE guest RAM range (layer block, framebuffer, a hole between ranges) */
+	WEL2_RD_OVERLAP_IMAGE,     /* overlaps [entry, FDT end): the guest image and the guest FDT */
+	WEL2_RD_TOO_MANY,          /* the cut-out would leave more than WEL2_MAX_GUEST_RANGES pieces */
+	WEL2_RD_PLACE,             /* the placement of the image in the carved ranges fails: *place_rc says why (wel2_gfdt_place_err) */
+	WEL2_RD_PLACE0,            /* the placement fails even before the cut-out (*place_rc), as without wel2.ramdisk */
+};
+
+/* wel2_gfdt_place for a guest with a RAM disk at [rd_base, rd_base + rd_size): validates the range, cuts it out of `ranges`
+ * (wel2_ranges_carve) and places the image in the pieces, so the piece that holds the image must still be 128 MB and leave PrePi's
+ * 64 MB region. out->ordered is the carved list to give to guest_fdt_build. rd_size == 0: as wel2_gfdt_place (WEL2_RD_OK or
+ * WEL2_RD_PLACE0). *place_rc (may be NULL) = the wel2_gfdt_place code of the failing call. Pure arithmetic, host-tested; the layer
+ * (main.c chain_fdt) and the host preview (tools/m3a/gfdt_dump.c) both call it. */
+int wel2_gfdt_place_ramdisk(const struct wel2_range *ranges, unsigned n, uint64_t entry, uint64_t image_size, uint32_t fdt_max,
+			    uint64_t rd_base, uint64_t rd_size, unsigned gshift, struct wel2_gfdt_place *out, int *place_rc);
 
 #endif

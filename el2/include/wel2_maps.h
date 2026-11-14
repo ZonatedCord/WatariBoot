@@ -85,6 +85,13 @@ int wel2_s2_add_hole(struct wel2_range *holes, unsigned *n, unsigned cap, uint64
 int wel2_ranges_inward(const struct wel2_range *in, unsigned n, uint64_t align, uint64_t cut_base, uint64_t cut_size,
 		       struct wel2_range *out, unsigned max, unsigned *nout);
 
+/* T21: out[] = in[0..n) with [base, base+size) removed, exact (no rounding): a range that wholly contains it is split in two,
+ * one that it overlaps keeps its other side, one inside it vanishes, one outside is copied as it is. Order is kept. Zero-size
+ * input ranges are dropped. size == 0 copies in[] (nothing to remove). 0 and *nout, or -1 if base+size wraps, an input
+ * range wraps, or out[] (capacity max) is too small; out[] and *nout are then unspecified. */
+int wel2_ranges_carve(const struct wel2_range *in, unsigned n, uint64_t base, uint64_t size, struct wel2_range *out,
+		      unsigned max, unsigned *nout);
+
 struct wel2_s1_m1 {
 	const struct wel2_range *ram;     /* usable RAM, exact (rounded inward to WEL2_M1_S1_ALIGN here) */
 	unsigned nram;

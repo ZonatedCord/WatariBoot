@@ -356,6 +356,8 @@ int guest_fdt_build(void *buf, uint32_t cap, const struct wel2_gfdt_in *in, uint
 	if (!in || !in->platform || !in->ranges || in->nranges == 0 || in->nranges > WEL2_MAX_GUEST_RANGES ||
 	    in->ncores == 0 || in->ncores > WEL2_GFDT_MAX_CORES || !str_in(mode, fb_modes, 3))
 		return -1;
+	if (in->ramdisk_size && (!in->ramdisk_base || in->ramdisk_base + in->ramdisk_size < in->ramdisk_base))
+		return -1;
 	if (in->fb && (!in->fb->format || !str_in(in->fb->format, fb_formats, 2) || !in->fb->width || !in->fb->height ||
 		       !in->fb->stride || !in->fb->size || in->fb->base + in->fb->size < in->fb->base))
 		return -1;
@@ -380,6 +382,26 @@ int guest_fdt_build(void *buf, uint32_t cap, const struct wel2_gfdt_in *in, uint
 		wel2_fdtw_begin(&w, name);
 		wel2_fdtw_prop_str(&w, "device_type", "memory");
 		wel2_fdtw_prop_cells(&w, "reg", reg, 4);
+		wel2_fdtw_end(&w);
+	}
+
+	/* T21: the RAM disk the loader put into guest RAM (DESIGN watari-winram 3.2): a standard reserved-memory child, private to
+	 * the firmware's WatariM1RamDiskDxe (nothing else in EDK2 reads /reserved-memory). The range is not in any /memory node. */
+	if (in->ramdisk_size) {
+		uint32_t reg[4] = { (uint32_t)(in->ramdisk_base >> 32), (uint32_t)in->ramdisk_base,
+				    (uint32_t)(in->ramdisk_size >> 32), (uint32_t)in->ramdisk_size };
+
+		wel2_fdtw_begin(&w, "reserved-memory");
+		wel2_fdtw_prop_u32(&w, "#address-cells", 2);
+		wel2_fdtw_prop_u32(&w, "#size-cells", 2);
+		wel2_fdtw_prop_empty(&w, "ranges");
+		unit_name(name, sizeof(name), "ramdisk@", in->ramdisk_base);
+		wel2_fdtw_begin(&w, name);
+		wel2_fdtw_prop_str(&w, "compatible", "watari,ramdisk");
+		wel2_fdtw_prop_cells(&w, "reg", reg, 4);
+		wel2_fdtw_prop_empty(&w, "no-map");
+		wel2_fdtw_prop_str(&w, "watari,format", "disk-image");
+		wel2_fdtw_end(&w);
 		wel2_fdtw_end(&w);
 	}
 
@@ -520,4 +542,44 @@ int wel2_gfdt_place(const struct wel2_range *ranges, unsigned n, uint64_t entry,
 		if (i != hit && ranges[i].size && ranges[i].base + ranges[i].size >= ranges[i].base)
 			out->ordered[out->n++] = ranges[i];
 	return WEL2_GFP_OK;
+}
+
+/* ---- the RAM disk ------------------------------------------------------------------------------------------------- */
+
+/* [pa, pa+len) wholly inside ONE range (the same rule as wel2_ranges_cover; local so that the host preview needs no more files). */
+static bool in_one_range(const struct wel2_range *r, unsigned n, uint64_t pa, uint64_t len)
+{
+	for (unsigned i = 0; i < n; i++)
+		if (r[i].size && r[i].base + r[i].size > r[i].base && pa >= r[i].base && pa + len <= r[i].base + r[i].size)
+			return true;
+	return false;
+}
+
+int wel2_gfdt_place_ramdisk(const struct wel2_range *ranges, unsigned n, uint64_t entry, uint64_t image_size, uint32_t fdt_max,
+			    uint64_t rd_base, uint64_t rd_size, unsigned gshift, struct wel2_gfdt_place *out, int *place_rc)
+{
+	struct wel2_range carved[WEL2_MAX_GUEST_RANGES + 1];
+	unsigned nc = 0;
+	int rc = wel2_gfdt_place(ranges, n, entry, image_size, fdt_max, out);
+
+	if (place_rc)
+		*place_rc = rc;
+	if (rc != WEL2_GFP_OK)
+		return WEL2_RD_PLACE0;
+	if (!rd_size)
+		return WEL2_RD_OK;
+	if (!rd_base || rd_size <= 0x1000 || rd_base + rd_size < rd_base)
+		return WEL2_RD_ZERO;
+	if ((rd_base & ((1ULL << gshift) - 1)) || (rd_size & 0xfff))
+		return WEL2_RD_ALIGN;
+	if (!in_one_range(ranges, n, rd_base, rd_size))
+		return WEL2_RD_NOT_IN_RAM;
+	if (rd_base < out->fdt_end && rd_base + rd_size > out->entry)
+		return WEL2_RD_OVERLAP_IMAGE;
+	if (wel2_ranges_carve(ranges, n, rd_base, rd_size, carved, WEL2_MAX_GUEST_RANGES + 1, &nc))
+		return WEL2_RD_TOO_MANY;
+	rc = wel2_gfdt_place(carved, nc, entry, image_size, fdt_max, out);
+	if (place_rc)
+		*place_rc = rc;
+	return rc == WEL2_GFP_OK ? WEL2_RD_OK : WEL2_RD_PLACE;
 }

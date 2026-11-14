@@ -39,6 +39,7 @@ run "run-step (wel2.step=1, 2, 3)" ./run-step.sh
 run "run-hold (wel2.hold=1 keeps the final state, no reset)" ./run-hold.sh
 run "run-tid3 (ID registers with and without TID3)" ./run-tid3.sh
 run "run-gfdt (guest FDT hand-off, wel2.abi=fdt, wel2.split=3)" SPLIT=3 ./run-gfdt.sh
+run "run-ramdisk-fdt (T21: wel2.ramdisk= guest FDT node, /memory cut-out, refusals)" ./run-ramdisk-fdt.sh
 run "run-fb (E9: wel2.fb=band|guest, fake panel in both formats, G12, pmemsave pixels)" ./run-fb.sh
 [ "${SKIP_M14:-0}" = 1 ] || run "run-m1-8 (-m 6G, EDK2 image above 4 GB, RISKS R-E4)" HIGH=1 ./run-m1-8.sh
 [ "${SKIP_M14:-0}" = 1 ] || run "run-m1-9 (full matrix: band/guest x both formats, unknown format, no framebuffer node)" ./run-m1-9.sh

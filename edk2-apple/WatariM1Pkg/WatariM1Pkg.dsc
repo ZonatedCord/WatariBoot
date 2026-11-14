@@ -18,8 +18,9 @@
 #    -D WATARI_M1_ACPIVIEW=TRUE      add the Shell's acpiview command (bench).
 #    -D WATARI_M1_SHELL_BOOT=TRUE    boot the UEFI Shell by default (bench). Without it the boot
 #                                    manager starts the built-in self-test when nothing is bootable.
-#    -D WATARI_M1_BENCH_RAMDISK=TRUE a RAM disk over a disk image the QEMU bench loaded into RAM, and a
-#                                    stand-in boot application for it (bench, T16a; never in production).
+#    -D WATARI_M1_BENCH_RAMDISK=TRUE the stand-in boot application WatariM1BenchBootTest for the RAM-disk benches
+#                                    (bench, T16a/T21; never in production). The RAM-disk driver itself,
+#                                    WatariM1RamDiskDxe, is in every build and does nothing without the FDT node.
 #    -D WATARI_FB_REPORT_BGR8=TRUE   report the 10-bit panel as 8-bit BGR (untruthful, E11/DESIGN 8.5).
 #
 #  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
@@ -380,10 +381,6 @@
   # QEMU virt: PL011 at 0x09000000 (the only peripheral the PEI MMU map gets; the GIC is mapped on demand).
   gWatariM1TokenSpaceGuid.PcdWatariM1BenchUartBase|0x09000000
 !endif
-!if $(WATARI_M1_BENCH_RAMDISK) == TRUE
-  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskBase|0xB0000000
-  gWatariM1TokenSpaceGuid.PcdWatariM1BenchRamDiskSize|0x1000000
-!endif
 
   gEfiMdeModulePkgTokenSpaceGuid.PcdResetOnMemoryTypeInformationChange|FALSE
 
@@ -520,6 +517,7 @@
   FatPkg/EnhancedFatDxe/Fat.inf
   MdeModulePkg/Universal/Disk/UdfDxe/UdfDxe.inf
   MdeModulePkg/Universal/Disk/RamDiskDxe/RamDiskDxe.inf
+  WatariM1Pkg/Drivers/WatariM1RamDiskDxe/WatariM1RamDiskDxe.inf
 
   MdeModulePkg/Universal/HiiDatabaseDxe/HiiDatabaseDxe.inf
 
@@ -567,6 +565,5 @@
   MdeModulePkg/Universal/SmbiosDxe/SmbiosDxe.inf
   WatariM1Pkg/Drivers/WatariM1SmbiosDxe/WatariM1SmbiosDxe.inf
 !if $(WATARI_M1_BENCH_RAMDISK) == TRUE
-  WatariM1Pkg/Drivers/WatariM1BenchRamDiskDxe/WatariM1BenchRamDiskDxe.inf
   WatariM1Pkg/Application/WatariM1BenchBootTest/WatariM1BenchBootTest.inf
 !endif

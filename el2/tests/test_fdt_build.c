@@ -506,6 +506,124 @@ static void t_guest_bad_input(void)
 	}
 }
 
+/* T21: /reserved-memory/ramdisk@<base>; without a RAM disk the blob is byte-identical to one built before the fields existed. */
+static void t_ramdisk(void)
+{
+	static uint8_t B0[WEL2_GFDT_MAX + 64];
+	struct wel2_gfdt_in in;
+	uint32_t size = 0, size0 = 0;
+	struct col c;
+	const struct pr *p;
+	/* the j293 shape with a 704 MiB + 4 KiB image cut out of the middle of the second range */
+	const uint64_t rb = 0x840000000ULL, rs = 0x2c001000ULL;
+	struct wel2_range cut[8];
+	unsigned ncut = 0;
+
+	fill_j293(&in, J293, 5);
+	CHECK_EQ(guest_fdt_build(B0, sizeof(B0), &in, &size0), 0);
+	in.ramdisk_base = 0x123000; in.ramdisk_size = 0;             /* a size of zero disables it whatever the base says */
+	CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), 0);
+	CHECK_EQ(size, size0);
+	CHECK(!memcmp(B, B0, size));
+	CHECK(!contains(B, size, "reserved-memory") && !contains(B, size, "watari,ramdisk"));
+
+	CHECK_EQ(wel2_ranges_carve(J293, 5, rb, rs, cut, 8, &ncut), 0);
+	CHECK_EQ(ncut, 6);                                           /* the second range [0x832000000, +0x4e000000) is split */
+	fill_j293(&in, cut, ncut);
+	in.ramdisk_base = rb; in.ramdisk_size = rs;
+	CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), 0);
+	CHECK(size > size0 - 32 && size <= WEL2_GFDT_MAX);
+	CHECK_EQ(fdt_check(B), 0);
+	CHECK_EQ(collect(B, &c), 0);
+	check_no_identifying(B, size);
+	CHECK((p = find(&c, "reserved-memory", "#address-cells", 0)) && be32(p->val) == 2);
+	CHECK((p = find(&c, "reserved-memory", "#size-cells", 0)) && be32(p->val) == 2);
+	CHECK((p = find(&c, "reserved-memory", "ranges", 0)) && p->len == 0);
+	CHECK((p = find(&c, "ramdisk@840000000", "compatible", 0)) && !strcmp((const char *)p->val, "watari,ramdisk"));
+	CHECK((p = find(&c, "ramdisk@840000000", "reg", 0)) && p->len == 16 && be64(p->val) == rb && be64(p->val + 8) == rs);
+	CHECK((p = find(&c, "ramdisk@840000000", "no-map", 0)) && p->len == 0);
+	CHECK((p = find(&c, "ramdisk@840000000", "watari,format", 0)) && !strcmp((const char *)p->val, "disk-image"));
+	/* no /memory node overlaps the range, and the pieces are the ones the carve made */
+	for (unsigned i = 0; i < ncut; i++) {
+		p = find(&c, "memory@", "reg", i);
+		CHECK(p && be64(p->val) == cut[i].base && be64(p->val + 8) == cut[i].size);
+		CHECK(p && (be64(p->val) + be64(p->val + 8) <= rb || be64(p->val) >= rb + rs));
+	}
+	CHECK(find(&c, "memory@", "reg", ncut) == NULL);
+	/* the forbidden-property list still holds and nothing else was added to the node */
+	{
+		unsigned k = 0;
+
+		for (unsigned i = 0; i < c.n; i++)
+			if (!strncmp(c.p[i].node, "ramdisk@", 8))
+				k++;
+		CHECK_EQ(k, 4);                                  /* compatible, reg, no-map, watari,format */
+	}
+	/* bad input: a base of zero or a wrapping range */
+	in.ramdisk_base = 0; in.ramdisk_size = rs;
+	CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), -1);
+	in.ramdisk_base = 0xfffffffffffff000ULL; in.ramdisk_size = 0x2000;
+	CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), -1);
+	/* the largest legal tree stays inside the 32 KB bound with a RAM disk too */
+	{
+		struct wel2_range r[WEL2_MAX_GUEST_RANGES];
+
+		for (unsigned i = 0; i < WEL2_MAX_GUEST_RANGES; i++) {
+			r[i].base = 0x800000000ULL + (uint64_t)i * 0x4000000ULL;
+			r[i].size = 0x2000000ULL;
+		}
+		fill_j293(&in, r, WEL2_MAX_GUEST_RANGES);
+		in.ramdisk_base = 0x700000000ULL; in.ramdisk_size = 0x10000000ULL;
+		CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), 0);
+		CHECK(size <= WEL2_GFDT_MAX);
+	}
+}
+
+/* T21: wel2_gfdt_place_ramdisk, the validation + carve + placement the layer and the host preview share. */
+#define FDTMAX WEL2_GFDT_MAX
+
+static void t_place_ramdisk(void)
+{
+	const struct wel2_range R[] = { { 0x800000000ULL, 0x100000000ULL }, { 0x980000000ULL, 0x40000000ULL } };
+	const uint64_t entry = 0x802000000ULL, isz = 0x2000000ULL;
+	const unsigned G16 = 14, G4 = 12;
+	struct wel2_gfdt_place gp;
+	int prc = -1;
+
+	/* no RAM disk: as wel2_gfdt_place */
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0, 0, G16, &gp, &prc), WEL2_RD_OK);
+	CHECK_EQ(gp.n, 2);
+	/* above the image, 704 MiB + 4 KiB: the first range splits, the image's piece stays first */
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x840000000ULL, 0x2c001000ULL, G16, &gp, &prc), WEL2_RD_OK);
+	CHECK_EQ(gp.n, 3);
+	CHECK_EQ(gp.ordered[0].base, 0x800000000ULL); CHECK_EQ(gp.ordered[0].size, 0x40000000ULL);
+	/* in the other range */
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x990000000ULL, 0x1001000, G16, &gp, &prc), WEL2_RD_OK);
+	CHECK_EQ(gp.n, 3);
+	CHECK_EQ(gp.ordered[0].base, 0x800000000ULL);
+	/* granules */
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x840001000ULL, 0x1001000, G4, &gp, &prc), WEL2_RD_OK);
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x840001000ULL, 0x1001000, G16, &gp, &prc), WEL2_RD_ALIGN);
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x840000000ULL, 0x1000800, G16, &gp, &prc), WEL2_RD_ALIGN);
+	/* zero, trailer-only, wrapping */
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0, 0x1001000, G16, &gp, &prc), WEL2_RD_ZERO);
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x840000000ULL, 0x1000, G16, &gp, &prc), WEL2_RD_ZERO);
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0xfffffffffffff000ULL, 0x2000, G16, &gp, &prc), WEL2_RD_ZERO);
+	/* not inside one range: in the hole, straddling the end of a range, beyond RAM */
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x920000000ULL, 0x1000000, G16, &gp, &prc), WEL2_RD_NOT_IN_RAM);
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x8ff000000ULL, 0x2000000, G16, &gp, &prc), WEL2_RD_NOT_IN_RAM);
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0xf00000000ULL, 0x1000000, G16, &gp, &prc), WEL2_RD_NOT_IN_RAM);
+	/* overlaps the image or the FDT behind it */
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x801000000ULL, 0x2000000, G16, &gp, &prc), WEL2_RD_OVERLAP_IMAGE);
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x804000000ULL, 0x4000, G16, &gp, &prc), WEL2_RD_OVERLAP_IMAGE);
+	/* leaves the image's piece without room for PrePi's 64 MB region (image ends 0x804000000, FDT after it) */
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, entry, isz, FDTMAX, 0x806000000ULL, 0x1001000, G16, &gp, &prc), WEL2_RD_PLACE);
+	CHECK_EQ(prc, WEL2_GFP_SMALL_RANGE);
+	/* a layout that already fails without the RAM disk reports that */
+	CHECK_EQ(wel2_gfdt_place_ramdisk(R, 2, 0x10000000ULL, isz, FDTMAX, 0x840000000ULL, 0x1001000, G16, &gp, &prc), WEL2_RD_PLACE0);
+	CHECK_EQ(prc, WEL2_GFP_NOT_IN_RAM);
+}
+
 static void t_dtc(void)
 {
 	struct wel2_gfdt_in in;
@@ -564,8 +682,6 @@ static void t_dtc(void)
 }
 
 /* ---- placement and ordering ---- */
-
-#define FDTMAX WEL2_GFDT_MAX
 
 static void t_place_qemu_bench(void)
 {
@@ -719,6 +835,8 @@ int main(void)
 	RUN(t_guest_qemu);
 	RUN(t_guest_bounds);
 	RUN(t_guest_bad_input);
+	RUN(t_ramdisk);
+	RUN(t_place_ramdisk);
 	RUN(t_dtc);
 	RUN(t_place_qemu_bench);
 	RUN(t_place_first_range_holds_everything);

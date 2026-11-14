@@ -830,6 +830,36 @@ static void __attribute__((noreturn)) m1_enter_guest(void)
 static bool g_abi_fdt;          /* wel2.abi=fdt */
 static bool g_gfdt_build;       /* wel2.gfdt=build */
 static bool g_test_badfbfmt;    /* wel2.test=badfbfmt (E11 bench): the guest FDT's framebuffer node gets a format nobody knows */
+/* T21: wel2.ramdisk=0x<base>,0x<size> (DESIGN watari-winram 3.1): a RAM disk image the loader put into guest RAM. The guest
+ * FDT gets /reserved-memory/ramdisk@<base> and /memory loses the range; stage 2 is not touched (it stays guest RAM). */
+static uint64_t g_ramdisk_base, g_ramdisk_size;
+static bool g_ramdisk_arg, g_ramdisk_bad;    /* given / malformed */
+
+/* 0x<hex> or <hex> at *pp; advances *pp past the digits; false when there is no digit or more than 16. */
+static bool parse_hex_arg(const char **pp, uint64_t *out)
+{
+    const char *q = *pp;
+    uint64_t v = 0;
+    unsigned nd = 0;
+
+    if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X'))
+        q += 2;
+    for (; (*q >= '0' && *q <= '9') || (*q >= 'a' && *q <= 'f') || (*q >= 'A' && *q <= 'F'); q++, nd++)
+        v = v * 16 + (uint64_t)(*q <= '9' ? *q - '0' : (*q | 0x20) - 'a' + 10);
+    if (nd == 0 || nd > 16)
+        return false;
+    *pp = q;
+    *out = v;
+    return true;
+}
+
+/* The whole value of "wel2.ramdisk=": <base>,<size> then a space or the end. */
+static void parse_ramdisk_arg(const char *v)
+{
+    g_ramdisk_arg = true;
+    if (!parse_hex_arg(&v, &g_ramdisk_base) || *v++ != ',' || !parse_hex_arg(&v, &g_ramdisk_size) || (*v && *v != ' '))
+        g_ramdisk_bad = true;
+}
 
 static void __attribute__((noreturn)) chain_fdt(void)
 {
@@ -862,10 +892,33 @@ static void __attribute__((noreturn)) chain_fdt(void)
             "wel2.guest: the image is within 64 MB of the top of its range (PrePi's UEFI region): load it lower",
             "wel2.guest: too many RAM ranges",
         };
-        int rc = wel2_gfdt_place(ranges, n, entry, image_size, WEL2_GFDT_MAX, &gp);
+        int prc = 0;
+        int rc = wel2_gfdt_place_ramdisk(ranges, n, entry, image_size, WEL2_GFDT_MAX, g_ramdisk_arg ? g_ramdisk_base : 0,
+                                         g_ramdisk_arg ? g_ramdisk_size : 0, g_gran, &gp, &prc);
 
-        if (rc != WEL2_GFP_OK)
-            fatal_msg(why[(unsigned)rc < sizeof(why) / sizeof(why[0]) ? (unsigned)rc : 0]);
+        /* T21 (DESIGN watari-winram 3.1, 3.3): a range the guest could not use or one that collides with the image and the FDT
+         * is refused; otherwise it is cut out of the /memory pieces and the image is placed in what is left. */
+        if (g_ramdisk_arg && g_ramdisk_bad)
+            fatal_msg("wel2.ramdisk: expected 0x<base>,0x<size>");
+        if (g_ramdisk_arg && !g_ramdisk_size)
+            fatal_msg("wel2.ramdisk: zero base, size not above the 4 KB trailer, or the range wraps");
+        if (rc == WEL2_RD_PLACE0 || rc == WEL2_RD_PLACE || rc == WEL2_RD_OK) {
+            if (rc != WEL2_RD_OK)
+                fatal_msg(why[(unsigned)prc < sizeof(why) / sizeof(why[0]) ? (unsigned)prc : 0]);
+        } else {
+            static const char *const rwhy[] = {
+                "ok", "wel2.ramdisk: zero base, size not above the 4 KB trailer, or the range wraps",
+                "wel2.ramdisk: base is not aligned to the granule, or size is not a multiple of 4 KB",
+                "wel2.ramdisk: the range is not wholly inside one guest RAM range (layer, framebuffer or a hole in it?)",
+                "wel2.ramdisk: the range overlaps the guest image or the guest FDT",
+                "wel2.ramdisk: cutting the range out of the guest RAM leaves too many pieces",
+            };
+            fatal_msg(rwhy[(unsigned)rc < sizeof(rwhy) / sizeof(rwhy[0]) ? (unsigned)rc : 0]);
+        }
+        if (g_ramdisk_arg) {
+            put_kv("Watari EL2: ramdisk at ", g_ramdisk_base);
+            put_kv("Watari EL2:   size = ", g_ramdisk_size);
+        }
     }
     if (!gp.entry_2mb_aligned)
         puts_("Watari EL2: WARNING: wel2.guest is not 2 MB aligned (the arm64 boot protocol asks for it) [hypothesis: PrePi copes]\n");
@@ -881,6 +934,10 @@ static void __attribute__((noreturn)) chain_fdt(void)
     for (unsigned i = 0; i < gi.ncores; i++)
         gi.mpidr[i] = ((uint64_t)(g_pcpu[i].aff >> 24) << 32) | (g_pcpu[i].aff & 0xffffff);
     gi.msi_frame_base = g_plat->m1_memory && g_v2m_on ? V2M_T8103_BASE : 0;
+    if (g_ramdisk_arg) {
+        gi.ramdisk_base = g_ramdisk_base;
+        gi.ramdisk_size = g_ramdisk_size;
+    }
     gi.fb_mode = "none";                                     /* wel2.fb=layer: the framebuffer stays the layer's */
     if (g_fb.fmt && g_fb_plan.mode != WEL2_FBM_LAYER) {      /* E9: a simple-framebuffer node for the guest's part */
         gfb.base = g_fb_plan.guest_base;
@@ -943,6 +1000,8 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
      * nothing and the first timer tick would be lost for good (F-21). The boot vCPU
      * (here) and each vCPU PSCI starts (el2_secondary_main) are handed over awake. */
     vgic_vcpu_wake(&g_vgic, this_cpu());
+    if (g_ramdisk_arg && !g_abi_fdt)
+        fatal_msg("wel2.ramdisk needs wel2.abi=fdt (and wel2.gfdt=build on the bench)");
     if (g_gfdt_build && !g_abi_fdt)
         fatal_msg("wel2.gfdt=build needs wel2.abi=fdt");
     if (!g_plat->m1_memory && g_nguest_ram && !g_abi_fdt)       /* the patched QEMU FDT would list the split holes as RAM */
@@ -1015,6 +1074,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
 /* Boot arguments (/chosen/bootargs, QEMU -append), space separated:
  *   wel2.cpuif=hw|trap|trap-notc   mode of the virtual CPU interface (build default WEL2_CPUIF_TRAP_DEFAULT);
  *                        trap-notc = trap without ICH_HCR_EL2.TC (T6g). The M1 accepts trap and trap-notc only.
+ *   wel2.ramdisk=0x<base>,0x<size>   (WEL2_CHAIN, needs wel2.abi=fdt) T21: a RAM disk image in guest RAM: guest FDT node + /memory cut-out
  *   wel2.hold=1          do not reset at the end of a step or of the guest (wel2.step=2, the guest's SYSTEM_RESET): paint the final
  *                        state, print the HOLD message and park, so the screen can be photographed (not wel2.step=1)
  *   wel2.tid3=1|0        HCR_EL2.TID3: emulate the ID register group, GIC forced to 1 (default: on on the M1, off on QEMU)
@@ -1094,6 +1154,9 @@ static void parse_bootargs(uint64_t fdt)
             g_abi_fdt = false;                       /* the default with wel2.guest: the test guest's info block */
         } else if (arg_is(p, "wel2.gfdt=build")) {
             g_gfdt_build = true;
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'r' && p[6] == 'a' &&
+                   p[7] == 'm' && p[8] == 'd' && p[9] == 'i' && p[10] == 's' && p[11] == 'k' && p[12] == '=') {
+            parse_ramdisk_arg(p + 13);
         } else if ((p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'a' &&
                     p[6] == 'b' && p[7] == 'i' && p[8] == '=') ||
                    (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'g' &&
