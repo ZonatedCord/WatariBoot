@@ -17,6 +17,7 @@
 #   SMP=8 MEM=4G     cores / guest RAM (the host has 8 GB: do not raise MEM; the image is 0.7 GB above 4 GB)
 #   CPUIF=hw|trap|trap-notc   virtual CPU interface (default trap, as the other TCG runs)
 #   TIMEOUT=3600 SHOT_EVERY=120   seconds;  STALL=N stop when the panel is unchanged for N shots (default 0 = never)
+#   QEMU_EXTRA="-no-shutdown"  keep QEMU alive (paused) after the guest's SYSTEM_RESET: the panel and the registers can still be read
 #   WEL2_ARGS="..."  extra layer arguments        TAG=name  run directory name
 # Output (data disk, never the repository): $WATARI_DATA/logs/winram/<TAG>/ serial.log, shot-NNNN.png, pc.log (PC of every vCPU per shot), qemu.out
 # Nothing is downloaded or installed; the Windows VM disk is not touched; QEMU is waited on by its own PID only.
@@ -31,7 +32,7 @@ PANEL="${PANEL:-10}"; SIZE="${SIZE:-1280x800}"; FB="${FB:-band}"
 SMP="${SMP:-8}"; MEM="${MEM:-4G}"; CPUIF="${CPUIF:-trap}"
 TIMEOUT="${TIMEOUT:-3600}"; SHOT_EVERY="${SHOT_EVERY:-120}"
 W=${SIZE%x*}; H=${SIZE#*x}
-RDBASE=0x100000000
+RDBASE="${RDBASE:-0x100000000}"   # RDBASE=0x80000000 with MEM=3G keeps guest RAM below the layer's MSI frame (0xFFFFF000), F-35
 [ -f "$FD" ] || { echo "FAIL: $FD missing: run tools/build-edk2-m1.sh --bgr8 (WATARI_M1_BUILD_TAG=${WATARI_M1_BUILD_TAG:-})"; exit 2; }
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing: tools/m3a/build-winram-image.sh"; exit 2; }
 case "$PANEL" in
@@ -58,7 +59,7 @@ ARGS="wel2.guest=0x40280000 wel2.abi=fdt wel2.gfdt=build wel2.cpuif=$CPUIF wel2.
 echo "layer args: $ARGS"; echo "smp=$SMP mem=$MEM fd=$FD out=$OUT"
 LOG="$OUT/serial.log"; : > "$LOG"
 "${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu "${QEMU_CPU:-max}" -accel tcg,thread=multi \
-    -nographic -m "$MEM" -smp "$SMP" -nic none -no-reboot -kernel build-chain/wel2.bin -append "$ARGS" \
+    -nographic -m "$MEM" -smp "$SMP" -nic none -no-reboot ${QEMU_EXTRA:-} -kernel build-chain/wel2.bin -append "$ARGS" \
     -device loader,file="$FD",addr=0x40280000,force-raw=on \
     -device loader,file="$RD",addr=$RDBASE,force-raw=on \
     -serial "file:$LOG" -monitor "unix:$SOCK,server,nowait" >"$OUT/qemu.out" 2>&1 &

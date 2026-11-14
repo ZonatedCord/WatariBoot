@@ -31,6 +31,8 @@
 // Model switch, set by the DSC (-D WATARI_M1_ACPIGEN_MODEL=qemu-virt adds this flag).
 #ifdef WATARI_M1_MODEL_QEMU_VIRT
 #define WATARI_M1_ACPIGEN_MODEL  "qemu-virt"
+#elif defined (WATARI_M1_MODEL_QEMU_BENCH)
+#define WATARI_M1_ACPIGEN_MODEL  "qemu-virt-bench"   // T22: M1-shaped QEMU bench (el2/boot/run-winram.sh)
 #else
 #define WATARI_M1_ACPIGEN_MODEL  "j293"
 #endif

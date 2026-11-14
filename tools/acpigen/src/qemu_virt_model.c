@@ -64,6 +64,21 @@ const acpigen_model qemu_virt_nogicd_model = {
     .gtdt = &qemu_virt_gtdt, .csrt = 0, .dbg2 = &qemu_virt_dbg2, .fadt = 0,
 };
 
+/* T22: the M1-SHAPED QEMU bench. The vGIC of the layer on the QEMU platform sits at QEMU's own GICv3 addresses
+ * (el2/boot/plat.h PLAT_QEMU_*) but the layer's GICv2m frame is the t8103 one (0xFFFFF000, SPI pool 928..959,
+ * el2/boot/main.c v2m_init; emulated only when no guest RAM covers 0xFFFFC000, i.e. -m 3G or less). The j293 model
+ * (GIC at 0xF_xxxx_xxxx) and qemu-virt (MSI frame at 0x08020000, which the layer does not back) each describe a
+ * machine that does not exist there; both made WinPE stop in the HAL [verified: docs/FAILURES.md F-35]. FADT as j293
+ * (PSCI over HVC), no DBG2 (the production firmware has no UART), the 4 QEMU cores. */
+const acpigen_model qemu_virt_bench_model = {
+    .name = "qemu-virt-bench", .cpus = qemu_virt_cpus, .ncpus = QEMU_VIRT_NCPUS,
+    .gicd = &qemu_virt_gicd,
+    .madt_opts = { .boot_index = 0, .gicc_gicr_base = 0, .gicd_first = 1,
+                   .gicr_range_base = 0x080A0000ull, .gicr_range_length = 0xF60000,
+                   .msi_base = 0xFFFFF000ull, .msi_flags = 1, .msi_spi_count = 32, .msi_spi_base = 928 },
+    .gtdt = &qemu_virt_gtdt, .csrt = 0, .dbg2 = 0, .fadt = &j293_fadt,
+};
+
 const acpigen_model *acpigen_find_model(const char *name)
 {
     if (name && !strcmp(name, t8103_model.name))
@@ -74,5 +89,7 @@ const acpigen_model *acpigen_find_model(const char *name)
         return &qemu_virt_model;
     if (name && !strcmp(name, qemu_virt_nogicd_model.name))
         return &qemu_virt_nogicd_model;
+    if (name && !strcmp(name, qemu_virt_bench_model.name))
+        return &qemu_virt_bench_model;
     return 0;
 }
