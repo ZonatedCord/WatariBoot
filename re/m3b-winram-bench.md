@@ -125,6 +125,43 @@ What the j293 tables assume that the bench lacks (checked one by one):
 - Consequence for the hardware day: the all-eight-cores j293 tables are untested on any bench; the first time they run is on the M1. The bench
   proves everything else of the production description (addresses, MSI, GTDT, FADT, GOP, RAM disk) with `j293-e4`.
 
+## T16d: eight cores with the M1's MPIDRs on the bench (2026-11-14)
+
+Question (open after T16b): do the all-eight-cores j293 tables boot WinPE when the bench really has eight cores named like the M1's? Answer: **yes**,
+the plain j293 `--bgr8` firmware reaches Setup's first screen (language/driver page "Installa il driver per visualizzare l'hardware") with all seven
+`CPU_ON` accepted [verified: run `t16d-1`]. So the T16b 0xA0 came from the missing cores, not from the j293 tables (F-37 updated).
+
+**The option `wel2.vmpidr=m1`** (QEMU bench only, opt-in; `el2/include/wel2_vmpidr.h`, `boot/main.c`, `boot/psci.c`, `boot/start.S`):
+- Physical side: QEMU virt `-smp 8` gives Aff0 = 0..7, Aff1 = Aff2 = 0 [hypothesis from QEMU's numbering, checked at start-up: the layer stops
+  with "needs QEMU -smp 8 with Aff0 = 0..7 in one cluster" otherwise; on the log the eight redistributors were found in that order].
+- Virtual side: vCPU i (= physical core i, as everywhere) reads `VMPIDR_EL2` = `0x80000000 | aff`, aff = 0..3 for E cores and `0x10100..0x10103` for P
+  cores: exactly the real M1's values (bit 31 RES1, U = 0, MT = 0, [verified: re/m3a-ehw0-measurements.md]) and the MADT's affinity fields
+  (`tools/acpigen/src/j293_model.c`). Same table feeds the vGIC (`cfg.affinity`: GICR_TYPER Affinity_Value, ICC_SGI1R decode with Aff2/Aff1 for the P
+  cores, GICD_IROUTER match), the layer-built guest FDT and the test guest's info block.
+- PSCI: CPU_ON / AFFINITY_INFO accept the guest's MPIDR (RES bits 31/30/24 stripped, as on the M1), find the vCPU by the virtual table and hand the
+  PHYSICAL QEMU MPIDR of the same index to the firmware; the stack-slot check uses the flat rule.
+- Stack slot of a QEMU core: `start.S core_sp` reads `g_core_idx8` (its own 128-byte line, cleaned to memory by the boot core, invalidated by the
+  secondary before the MMU-off read); non-zero = idx = Aff0 (Aff0 < 8, rest 0), zero = the M1 formula Aff0 + 4*Aff1.
+- Default and `plat_m1` unchanged: `g_vmpidr_m1` stays false (on `plat_m1` the option only logs "nothing to do"), `g_vaff` equals the physical affinity,
+  `set_virtual_ids` writes the physical MPIDR as before, PSCI takes the old branches. The one change on the M1 path is a load of `g_core_idx8` (zero)
+  in `core_sp` [hypothesis: harmless; not run on hardware].
+
+Host tests: `el2/tests/test_vmpidr.c` (MPIDR table, PSCI lookup incl. non-M1 names, physical-rule, GICR_TYPER of eight frames with Last on the
+last, SGIs to P cores via Aff2/Aff1 and to E cores, IROUTER). It caught one real bug before the bench: the flat-index mask had included bit 31.
+Bench regression: `run-m1guest.sh` with `SMP=8 WEL2_ARGS=wel2.vmpidr=m1` (G1-G12 PASS in hw, trap, trap-notc; G9 "UP 7"; guest MPIDR 0x0..0x3,
+0x10100..0x10103); now in `run-all.sh`.
+
+| Run | Config | Result |
+|---|---|---|
+| t16d-1 | plain j293 firmware (`WATARI_M1_BUILD_TAG=t16b`), `-smp 8`, `PANEL=8 MEM=3G RDBASE=0x80000000`, trap, `wel2.vgicipa=m1 wel2.vmpidr=m1` | `CPU_ON` cpu 1-7 accepted, no core parked, no FATAL; kernel on all 8 vCPUs at 100 s (pc.log), Setup "Attendere" at 183 s (`shot-0003.png`), **Setup driver page at 368 s** (`shot-0005.png`), about 130 000 layer log lines. Stopped by us at 368 s. |
+
+Evidence (not in the repo): `$WATARI_DATA/logs/winram/t16d-1/` (serial.log, pc.log, shot-NNNN.png). Run: `WATARI_M1_BUILD_TAG=t16b PANEL=8 MEM=3G
+RDBASE=0x80000000 SMP=8 CPUIF=trap QEMU_EXTRA=-no-shutdown WEL2_ARGS="wel2.vgicipa=m1 wel2.vmpidr=m1" el2/boot/run-winram.sh`.
+
+What it does not show: the M1's AIC/FIQ interrupt path, the real efficiency/performance class behaviour, and a timing difference of real hardware
+[hypothesis]. It does show that the PPTT/MADT (E and P clusters, MPIDR 0x10100), the GICR frames for eight cores and 7 PSCI starts are accepted by
+the Windows kernel.
+
 ## Next step
 
 1. Rebuild the hardware bundle (production firmware, j293 model) with the new `PcdWatariRamDiskType` default (type 0); on the bench the j293 firmware

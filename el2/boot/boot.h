@@ -58,6 +58,12 @@ struct pcpu {
 };
 extern struct pcpu g_pcpu[MAX_CPUS];
 extern unsigned g_ncpu;
+/* T16d (QEMU bench, wel2.vmpidr=m1): the guest sees the M1's eight MPIDRs. g_vmpidr_m1 false = everything below is the identity (default, and
+ * always on plat_m1). g_vaff[i] = packed Aff3.Aff2.Aff1.Aff0 the guest sees for vCPU i (== g_pcpu[i].aff when off); g_core_idx8 (start.S) selects
+ * the flat Aff0 stack-slot rule for the 8 QEMU cores. include/wel2_vmpidr.h. */
+extern bool g_vmpidr_m1;
+extern uint32_t g_vaff[MAX_CPUS];
+extern volatile uint64_t g_core_idx8;
 extern struct vgic g_vgic;
 extern uint64_t g_hcr;
 extern bool g_cpuif_noeoi;         /* test knob wel2.test=noeoi: LRs without EOI maintenance */

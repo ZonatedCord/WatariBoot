@@ -30,7 +30,7 @@ OUT=build-chain
 LOG=$OUT/guest-uart.log
 : > "$LOG"
 "${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu "${QEMU_CPU:-max}" -accel tcg \
-    -nographic -m 512M -smp 4 -nic none -no-reboot -kernel $OUT/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
+    -nographic -m 512M -smp ${SMP:-4} -nic none -no-reboot -kernel $OUT/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
     -device loader,file="$GUEST",addr=0x40280000,force-raw=on \
     -serial "file:$LOG" -monitor none >$OUT/guest-qemu.out 2>&1 &
 QPID=$!

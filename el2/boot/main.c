@@ -17,6 +17,7 @@
 #include "wel2_guest_info.h"
 #include "wel2_guest_place.h"
 #include "wel2_fdt_build.h"
+#include "wel2_vmpidr.h"
 
 #define HCR_VM   (1ULL << 0)
 #define HCR_FMO  (1ULL << 3)
@@ -381,6 +382,10 @@ static struct wel2_pt s2_pt;
  * vgic_setup() and stage2_init(). */
 static uint64_t g_gicd_ipa, g_gicr_ipa;
 static bool g_vgicipa_m1, g_vgicipa_moved;
+/* T16d: wel2.vmpidr=m1 (QEMU bench only, opt-in). See boot.h and include/wel2_vmpidr.h. */
+bool g_vmpidr_m1;
+static bool g_vmpidr_arg;
+uint32_t g_vaff[MAX_CPUS];
 
 static bool g_v2m_on;                   /* the page is a hole (no guest RAM there) */
 static struct v2m g_v2m;                /* #74: the MSI frame at 0xFFFFF000, trapped as one 16 KB page */
@@ -569,7 +574,7 @@ static void vgic_setup(uint64_t fdt)
     uint32_t aff[MAX_CPUS];
 
     for (unsigned i = 0; i < g_ncpu; i++)
-        aff[i] = g_pcpu[i].aff;
+        aff[i] = g_vaff[i];                     /* the guest-visible affinities (== physical unless wel2.vmpidr=m1) */
     struct vgic_config cfg = {
         .gicd_base = g_gicd_ipa,
         .gicr_base = g_gicr_ipa,
@@ -726,6 +731,8 @@ static void set_virtual_ids(void)
     uint64_t midr, mpidr;
     __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
     __asm__ volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+    if (g_vmpidr_m1)                            /* T16d: the M1's MPIDR of this vCPU (bit 31 RES1, U = 0, MT = 0) */
+        mpidr = wel2_vm1_mpidr(this_cpu());
     __asm__ volatile("msr vpidr_el2, %0; msr vmpidr_el2, %1; isb" : : "r"(midr), "r"(mpidr));
 }
 
@@ -777,7 +784,7 @@ static uint64_t write_guest_info(uint64_t at)
         gi->fb_band_rows = g_fb_plan.band_rows;
     }
     for (unsigned i = 0; i < gi->ncores; i++)
-        gi->mpidr[i] = ((uint64_t)(g_pcpu[i].aff >> 24) << 32) | (g_pcpu[i].aff & 0xffffff);
+        gi->mpidr[i] = wel2_aff_to_mpidr(g_vaff[i]);
     dcache_clean_range(gi, sizeof(*gi));
     return (uint64_t)(uintptr_t)gi;
 }
@@ -946,7 +953,7 @@ static void __attribute__((noreturn)) chain_fdt(void)
     gi.gicr_stride = 0x20000;
     gi.ncores = g_ncpu < WEL2_GFDT_MAX_CORES ? g_ncpu : WEL2_GFDT_MAX_CORES;
     for (unsigned i = 0; i < gi.ncores; i++)
-        gi.mpidr[i] = ((uint64_t)(g_pcpu[i].aff >> 24) << 32) | (g_pcpu[i].aff & 0xffffff);
+        gi.mpidr[i] = wel2_aff_to_mpidr(g_vaff[i]);
     gi.msi_frame_base = g_plat->m1_memory && g_v2m_on ? V2M_T8103_BASE : 0;
     if (g_ramdisk_arg) {
         gi.ramdisk_base = g_ramdisk_base;
@@ -1094,6 +1101,9 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
  *   wel2.vgicipa=m1|native   (QEMU bench, needs wel2.abi=fdt wel2.gfdt=build) T16b: the guest's vGIC distributor/redistributors at the M1
  *                        addresses (GICD 0xF_0000_0000, GICR 0xF_1000_0000: what the j293 ACPI tables say); QEMU's physical GIC is hidden by
  *                        stage-2 holes; every guest access traps to the vGIC model. No-op on the M1. Default native.
+ *   wel2.vmpidr=m1|native    (QEMU bench with -smp 8 only) T16d: VMPIDR_EL2 of vCPU i = the M1's (E cores 0x80000000..3, P cores 0x80010100..3); the vGIC
+ *                        (GICR_TYPER, ICC_SGI1R, IROUTER), the guest FDT/info block and PSCI CPU_ON/AFFINITY_INFO use them; the physical cores keep
+ *                        QEMU's Aff0 0..7 (start.S stack slot = Aff0). No-op on the M1. Default native.
  *   wel2.hold=1          do not reset at the end of a step or of the guest (wel2.step=2, the guest's SYSTEM_RESET): paint the final
  *                        state, print the HOLD message and park, so the screen can be photographed (not wel2.step=1)
  *   wel2.tid3=1|0        HCR_EL2.TID3: emulate the ID register group, GIC forced to 1 (default: on on the M1, off on QEMU)
@@ -1168,6 +1178,10 @@ static void parse_bootargs(uint64_t fdt)
             g_vgicipa_m1 = true;
         } else if (arg_is(p, "wel2.vgicipa=native")) {
             g_vgicipa_m1 = false;
+        } else if (arg_is(p, "wel2.vmpidr=m1")) {
+            g_vmpidr_arg = true;
+        } else if (arg_is(p, "wel2.vmpidr=native")) {
+            g_vmpidr_arg = false;
 #ifdef WEL2_CHAIN
         } else if (arg_is(p, "wel2.test=badfbfmt")) {
             g_test_badfbfmt = true;
@@ -1345,6 +1359,27 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
         put_kv("Watari EL2: wel2.vgicipa=m1: guest vGIC distributor at ", g_gicd_ipa);
     else if (g_vgicipa_m1)
         puts_("Watari EL2: wel2.vgicipa=m1: the platform's windows already are the M1's, nothing to move\n");
+    /* T16d: the guest-visible affinities. Identity unless wel2.vmpidr=m1 (QEMU bench with -smp 8 only). */
+    for (unsigned i = 0; i < g_ncpu; i++)
+        g_vaff[i] = g_pcpu[i].aff;
+    if (g_vmpidr_arg) {
+        uint32_t paff[MAX_CPUS];
+
+        if (g_plat->m1_memory) {
+            puts_("Watari EL2: wel2.vmpidr=m1: the real M1 already has these MPIDRs, nothing to do\n");
+        } else {
+            for (unsigned i = 0; i < g_ncpu; i++)
+                paff[i] = g_pcpu[i].aff;
+            if (!wel2_vm1_phys_ok(paff, g_ncpu))
+                fatal_msg("wel2.vmpidr=m1 needs QEMU -smp 8 with Aff0 = 0..7 in one cluster");
+            for (unsigned i = 0; i < g_ncpu; i++)
+                g_vaff[i] = wel2_vm1_aff(i);
+            g_vmpidr_m1 = true;
+            g_core_idx8 = 1;                            /* start.S core_sp: stack slot = Aff0 (secondaries read it with the MMU off) */
+            __asm__ volatile("dsb sy; dc civac, %0; dsb sy" : : "r"(&g_core_idx8) : "memory");
+            put_kv("Watari EL2: wel2.vmpidr=m1: the guest sees the M1's MPIDRs; cores = ", g_ncpu);
+        }
+    }
     /* T6g: pointer authentication (DESIGN 5.1) and the ID register group (DESIGN 5.4). */
     if (cpu_has_pauth()) {
         g_hcr |= HCR_API | HCR_APK;

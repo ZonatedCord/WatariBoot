@@ -6,7 +6,7 @@ WARN    := -std=c11 -Wall -Wextra -Werror
 INC     := -Iinclude
 BUILD   := build
 LIBSRC  := vgic/vgic.c vgic/vcif.c vgic/intr_map.c vgic/pirq.c vgic/pirq_guard.c vgic/pirq_aic.c vgic/v2m.c vgic/ram_map.c vgic/pt.c vgic/maps.c vgic/uart.c vgic/fb.c vgic/cpu_start.c vgic/apple_fiq.c vgic/idreg_tbl.c vgic/guest_place.c vgic/fdt_build.c
-TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif intr_map ram_map pirq_guard pirq_aic v2m pirq_eoi pt core_index uart_s5l fb fdt_m1 cpu_start apple_fiq hvc_vendor plat idreg chk guest_place fdt_build
+TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif intr_map ram_map pirq_guard pirq_aic v2m pirq_eoi pt core_index uart_s5l fb fdt_m1 cpu_start apple_fiq hvc_vendor plat idreg chk guest_place fdt_build vmpidr
 
 .PHONY: test clean
 test: $(addprefix $(BUILD)/test_,$(TESTS)) $(BUILD)/fdt_m1_dump

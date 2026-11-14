@@ -25,6 +25,8 @@ for mode in hw trap trap-notc; do
     run "run-m1-5 [$mode, noeoi]" CPUIF=$mode NOEOI=1 ./run-m1-5.sh
     # T16b: the same test guest with the vGIC windows moved to the M1 addresses (all accesses trap to the model; QEMU's GIC hidden).
     run "run-m1guest [$mode, wel2.vgicipa=m1]" CPUIF=$mode WEL2_ARGS="wel2.vgicipa=m1 ${WEL2_ARGS:-}" ./run-m1guest.sh
+    # T16d: -smp 8 with the M1's eight MPIDRs for the guest (E 0x0..0x3, P 0x10100..0x10103): PSCI CPU_ON of seven cores, SGIs across the clusters (G9).
+    run "run-m1guest [$mode, -smp 8, wel2.vmpidr=m1]" CPUIF=$mode SMP=8 WEL2_ARGS="wel2.vmpidr=m1 ${WEL2_ARGS:-}" ./run-m1guest.sh
     [ "${SKIP_M14:-0}" = 1 ] || run "run-m1-4 [$mode]" CPUIF=$mode ./run-m1-4.sh
     # T12b/E10: the production EDK2 build (hypercall console) on the layer's guest FDT; needs tools/build-edk2-m1.sh (not --bench).
     [ "${SKIP_M14:-0}" = 1 ] || run "run-m1-8 (EDK2 on the M1-shaped FDT, hypercall console) [$mode]" CPUIF=$mode ./run-m1-8.sh
