@@ -162,6 +162,43 @@ What it does not show: the M1's AIC/FIQ interrupt path, the real efficiency/perf
 [hypothesis]. It does show that the PPTT/MADT (E and P clusters, MPIDR 0x10100), the GICR frames for eight cores and 7 PSCI starts are accepted by
 the Windows kernel.
 
+## T16f soak: Setup idle for 55 minutes with the day-4 configuration (2026-11-15)
+
+Question: does WinPE/Setup, sitting idle on its first screen with the day-4 configuration, keep running (timer, IPIs, layer) or does it stall,
+bugcheck or lose cores over time? Answer: **it keeps running for the whole hour, no stall, no stop code, no layer fault** [verified: run `t16f-1`].
+
+Config: plain j293 `--bgr8` firmware `WATARI_M1_EFI-bgr8.fd` (built from the branch; `.build.txt`: model=j293, bench=0, bgr8=1, no tag, commit 87eba25,
+clean), `-smp 8`, `MEM=3G RDBASE=0x80000000 PANEL=8`, `CPUIF=trap-notc`, `wel2.vgicipa=m1 wel2.vmpidr=m1`, `QEMU_EXTRA=-no-shutdown`, `SHOT_EVERY=120`,
+`STALL=0` (never stop on identical screens), `TIMEOUT=3700`. Command: `TAG=t16f-1 PANEL=8 MEM=3G RDBASE=0x80000000 SMP=8 CPUIF=trap-notc TIMEOUT=3700
+SHOT_EVERY=120 STALL=0 QEMU_EXTRA=-no-shutdown WEL2_ARGS="wel2.vgicipa=m1 wel2.vmpidr=m1" el2/boot/run-winram.sh` (no script change needed).
+
+| t (s) | layer log lines | ICC_SGI1R writes (IPIs) | timer irqs cpu 0 (hex) | notes |
+|---|---|---|---|---|
+| 378 | 137 k | 66 k | 0xb34c | Setup driver page on screen (first seen between 244 and 366 s) |
+| 624 | 205 k | 99 k | 0xfac8 | |
+| 995 | 270 k | 131 k | 0x14118 | |
+| 1244 | 336 k | 164 k | 0x187cc | |
+| 1613 | 403 k | 196 k | 0x1ce1c | |
+| 2820 | 666 k | 325 k | 0x2e694 | |
+| 3064 | 732 k | 357 k | 0x32e74 | |
+| 3433 | 798 k | 390 k | 0x37460 | |
+| 3716 (end) | ~850 k | 414 896 | 0x3ab10 | QEMU stopped by the script at TIMEOUT |
+
+- Counters grow steadily (about 130 timer irqs/s on cpu 0 [timer irqs 0x3ab10 = 240 400 in 3700 s are the layer's own tally], about 110 SGIs/s). The
+  layer log is 120-150 k lines per 10 min; no FATAL / abort / UNEXPECTED / bugcheck line in the whole log (0 matches).
+- `pc.log` (31 snapshots, PC of all 8 vCPUs): at every snapshot most cores sit at the same kernel address `fffff802ba67fe4c` (EL1t, idle loop, PSTATE
+  0x600031c4 [hypothesis: the idle loop]); cpu0 and one or two others were seen at other kernel addresses (`fffff802ba414a68`) or in the layer (EL2h,
+  `0x4008...`: in the middle of an IPI/timer trap) in different snapshots, i.e. the cores keep moving and wake up. All eight cores stayed in the guest.
+- Screenshots (31): `shot-0005` (about 400 s), `0013`, `0026`, `0032` (the end) read with the viewer: Setup page "Installa il driver per visualizzare
+  l'hardware", language Italian, identical; the four PNGs have the same SHA-1 prefix, the whole run shows one static screen (Setup waits for a driver or
+  a click: static by design, there is no cursor or clock). No stop code. The layer's band shows "CHECKPOINT 8 OK ENTER_GUEST, LAST ERROR: NONE".
+- Liveness evidence therefore is the counters and the PCs, not the screen.
+
+Verdict [verified: run `t16f-1`]: with the day-4 configuration on the bench Setup sits at its first screen for 55 minutes (about 50 min after it first
+appeared) with timer irqs and IPIs flowing, 8 vCPUs alive and no fault. No F-NN. What it does not show: the M1's AIC/FIQ path, real timing, anything
+needing input (no keyboard events were sent), and Setup beyond its first page.
+Evidence (not in the repo): `$WATARI_DATA/logs/winram/t16f-1/` (serial.log, pc.log, shot-NNNN.png), `$WATARI_DATA/logs/t16f-1.out`.
+
 ## Next step
 
 1. Rebuild the hardware bundle (production firmware, j293 model) with the new `PcdWatariRamDiskType` default (type 0); on the bench the j293 firmware
