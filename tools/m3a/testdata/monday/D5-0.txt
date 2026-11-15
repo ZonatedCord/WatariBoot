@@ -1,5 +1,5 @@
 DRY RUN: no device is opened; every proxy call is printed.
-bundle OK: 50 files match SHA256SUMS (<R>/day3/bundle)
+bundle OK: 52 files match SHA256SUMS (<R>/m-day3/bundle)
 rung D0: layer=- guest=- edk2=WATARI_M1_EFI.fd ramdisk=- step=- cpuif=trap fb=guest secondaries=False
 DTB    j293-minimal.dtb          2387 bytes at 0x840000000  sha256 03030dce3605896f
 BLOCK  layer 32 MB aligned block at 0x842000000 (not written)
@@ -8,7 +8,7 @@ BLOCK  edk2  32 MB aligned block at 0x846000000 (not written)
 boot arguments: none (rung L0)
 kboot_prepare_dt OK
   m1n1: FDT prepared at 0x840000000
-prepared FDT: 2387 bytes at 0x840000000, saved to <R>/day3/bundle/out/prepared-fdt.dtb (host folder only: it holds the board serial number;
+prepared FDT: 2387 bytes at 0x840000000, saved to <R>/m-day3/bundle/out/prepared-fdt.dtb (host folder only: it holds the board serial number;
 never commit it, never paste it). sha256 03030dce3605896f
 (dry run: the 'prepared' FDT is the unmodified DTB; on hardware m1n1 adds memory, cpus, framebuffer)
 == fdt_m1_dump (the layer's own FDT queries, nothing else of the blob) ==

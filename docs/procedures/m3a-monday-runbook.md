@@ -22,11 +22,11 @@ export MONDAY_OUT="$HOSTDIR/work/monday"            # one results folder shared 
 export M1N1DEVICE=$(ls /dev/cu.usbmodem*1)          # only after the target is in m1n1 proxy mode (day 3 section 4)
 cd "$HOSTDIR/work/m3a-payload"                      # day-3 bundle; later cd "$HOSTDIR/work/m3a-payload-w1" for day 4
 python3 monday.py preflight                         # read-only: sums, sidecar, manifest, tools run, USB device
-                                                    # the loader's `bundle OK: <n> files` reads 51 for a day-3 or day-4 bundle, 55 for a day-4 bundle with the declared fallbacks
+                                                    # the loader's `bundle OK: <n> files` reads 52 for a day-3 or day-4 bundle, 56 for a day-4 bundle with the declared fallbacks (T16j added `fdt-dump-src/wel2_pmlog.h`; what matters is OK)
 python3 monday.py next                              # what to do now; always run it between rungs
 ```
 
-`monday.py rung <ID>` replaces day 3's `wl` function: same command, same reduced `PATH` (F-32), log tee'd to `out/monday/<timestamp>-<ID>.log` (or `$MONDAY_OUT`), PASS/FAIL per expected line, the photo checklist, a record in `results.md`. `python3 monday.py list` prints every rung with its command and gate. Add `--dry-run` for a rehearsal with no device (records go to `results-dryrun.md`), `--quiet` to print only the important loader lines. A jump rung on a device needs `--marco-go` (Marco's "go" in chat for **this** jump), a fresh m1n1 boot and the camera running.
+`monday.py postmortem` reads the layer's post-mortem ring after a jump (section 3). `monday.py rung <ID>` replaces day 3's `wl` function: same command, same reduced `PATH` (F-32), log tee'd to `out/monday/<timestamp>-<ID>.log` (or `$MONDAY_OUT`), PASS/FAIL per expected line, the photo checklist, a record in `results.md`. `python3 monday.py list` prints every rung with its command and gate. Add `--dry-run` for a rehearsal with no device (records go to `results-dryrun.md`), `--quiet` to print only the important loader lines. A jump rung on a device needs `--marco-go` (Marco's "go" in chat for **this** jump), a fresh m1n1 boot and the camera running.
 
 ## 3. The sequence
 
@@ -39,12 +39,17 @@ Time = the procedures' estimates **[hypothesis until run]**. Every **jump** need
 | 2 | D0: preview, no jump | `rung D0` | 10 min | BLOCK CHECK, GUEST FDT CHECK, plan band 360/1240, 2560x1600 stride 10240 x2r10g10b10, 1 cpu, first `/memory` range, GIC, PSCI | none |
 | 3 | D1: hand-over with the test guest | `rung D1 --marco-go`, then `verdict D1 ...` | 15 min | boot arguments, kboot_boot, hand-over time | video + final photo |
 | 4 | D2+D3: EDK2 to the self-test | `rung D2 --marco-go`, then `verdict D2`, `verdict D3` | 20 min | as D0 on the real addresses, boot arguments | video + D2-1, D3-1, D3-2 |
+| 4b | **PM0 [check]**: did DRAM keep the post-mortem log? (after the D2/D3 verdicts) | Mac off (~10 s), tethered boot again, new `M1N1DEVICE`; `postmortem` (or `rung PM0`) | 5 min (the m1n1 boot D4 needs anyway) | exit 0 = log recovered (`RECOVERED`), 5 = no header (`NOLOG`), 6 = CRC bad (`UNVERIFIED`); last 40 lines + summary | none |
 | 5 | D4: `trap-notc`, `--smp` (also `rung D4-0` preview) | `rung D4 --marco-go`, `verdict D4` | 20 min (+20 split D4a/D4b) | 8 cpu nodes, boot arguments | video + final photo |
 | (6) | (opt.) D3b, D5 | `rung D3b` / `rung D5` | 10-20 min each | as above | as the procedure |
 | 7 | **switch to the day-4 bundle**: `cd` there, `confirm image-ok --by Marco`, `next` | | 5 min | | |
 | 8 | W1a: rate test (then `rung W1a2`) | `rung W1a` | 3 min + 5 min m1n1 boot | read-back identical, MB/s, **decision CONTINUE/ASK/STOP** | none |
 | 9 | W2+W3 in **one run** (`next` proposes it; `rung W1c` first only if Marco wants the plain-flags first look) | `rung W2 --marco-go`, then `verdict W2`, `verdict W3` (and `verdict W1c` from the same run) | transfer (min.: 713 MiB / rate) + up to 40 min | RAMDISK PLAN numbers vs the sidecar and the image size, block 714 MiB, `wel2.ramdisk=`, slice retries, crc32, BLOCK CHECK, GUEST FDT CHECK + ramdisk carve | continuous video with stopwatch; photos per `rung W2` checklist |
 | 10 | fallback if W2 fails (`W2-e4`, then `W2-e1`): only with Marco's "go e4" / "go e1", section 6 | `confirm fallback-e4 --by Marco`, `rung W2-e4 --marco-go`, `verdict W2-e4`, `verdict W3-e4` | transfer + up to 40 min | as W2, plus the fallback firmware's manifest | as W2 |
+
+**PM0 and the post-mortem log (T16j).** Every EDK2/Windows jump rung (D2, D3b, D4, D4a, D4b, D5, W1c, W2, W2g, W2-e4, W2-e1; not D1 and not the previews) carries `--pmlog`: the layer keeps its console text in a 1 MiB ring in RAM (at the start of the unwritten spacer block, so no block is added and the addresses D0 checked do not move) and the loader records the ring's base in the results (`pmlog-base`). `python3 monday.py postmortem` (alias `rung PM0`; `--rung <ID>` for an older run; `--pmlog-base 0x<addr>` by hand) reads the ring back **read-only** once the Mac is in m1n1 proxy mode again, saves `out/pmlog.txt` (and a stamped copy next to the rung's log), prints the last 40 lines and a summary (last checkpoint, FATAL lines, `CPU_ON` accepted/failed, stats lines) and records `PM0` (after D2) or `PM-<ID>` in `results.md`. `next` proposes PM0 once, right after the D2/D3 verdicts; it is not a gate (`confirm skip-pm0 --by Marco` waives it). **Whether the M1's DRAM keeps the ring is unknown until PM0** **[hypothesis]**: `RECOVERED` (loader exit 0) means yes, use it after every later failure; `NOLOG` (exit 5) means no, photos only from then on; `UNVERIFIED` (exit 6) = the header was torn, the text is a hint.
+
+**After a failure: postmortem first, then photos.** A FAIL, ABORT, freeze or surprise restart of a jump rung: (1) the abort photo of the held/frozen screen first (P-f), (2) power off ~10 s, tethered boot, (3) `python3 monday.py postmortem` **before the next rung** (the next `--pmlog` jump overwrites the ring), (4) then the photo transcriptions, with the ring's last checkpoint and last line beside them, (5) `verdict ... --note` quotes both. `next` says so after every FAIL/ABORT (it prints "FIRST the post-mortem log, THEN the photos"); with PM0 = `NOLOG` skip steps 2-3.
 
 Between rungs: `python3 monday.py next`. It applies the gates (`D0 PASS -> D1 -> D2 and D3 -> D4 -> day 4`; W1a PASS and the **rate decision** before any transfer; W2 needs D4 PASS) and stops at every recorded FAIL/ABORT until Marco says to go on (`confirm proceed:<ID>`). Day 3's own `D5` is not needed for Windows (band mode). `--force-gate "<reason>"` bypasses a **soft** gate only and is recorded; the backup and image confirmations cannot be bypassed.
 
@@ -89,6 +94,10 @@ Between rungs: `python3 monday.py next`. It applies the gates (`D0 PASS -> D1 ->
 | before a jump | "Marco, avvia il video con il cronometro nell'inquadratura e lascia il telefono fermo. Poi mi dici 'vai'." |
 | at `kboot_boot` | "Il Mac e' passato al layer: parte il cronometro. Guardate la striscia in alto e la riga di testo sotto." |
 | photo | "Foto adesso, prima di toccare qualsiasi cosa." |
+| PM0, before powering off | "Foto fatte? Allora spegni il Mac tenendo premuto il tasto di accensione per circa 10 secondi, poi riavvialo subito dal volume 'Tethered boot' come prima. Quando m1n1 e' pronto apri il terminale: leggo il registro che il layer ha lasciato in memoria (solo lettura, non scrive niente sul Mac)." |
+| PM0 recovered | "Il registro e' sopravvissuto: da adesso, dopo ogni prova fallita, leggiamo prima quello e poi guardiamo le foto." |
+| PM0 no log | "Il registro non e' sopravvissuto al riavvio: andiamo avanti solo con foto e video, come previsto." |
+| after a failure | "Prova fallita: foto dello schermo fermo, poi spegni e riavvia in m1n1 e leggiamo il registro prima di tutto il resto." |
 | nothing new | "Niente di nuovo da 60 secondi (o dal tempo di questo rung): foto di abort, poi teniamo premuto il tasto di accensione per circa 10 secondi." |
 | rung passed | "Rung superato; spegniamo, riavviamo m1n1 per il prossimo." |
 | slow transfer | "Il trasferimento e' lento: oltre 15 minuti ci fermiamo e ne parliamo. Marco, vuoi procedere comunque?" |
@@ -98,4 +107,5 @@ Between rungs: `python3 monday.py next`. It applies the gates (`D0 PASS -> D1 ->
 
 - The procedures count the stopwatch from `handed over.`; on a device that line comes after the loader's reply wait, so `monday.py` starts it at `kboot_boot(` **[hypothesis from the code, check on the day]**.
 - `test_monday.py` checks the fallback commands verbatim against day-4 section 6.3; the bundle's file count is in section 1 of `re/m3a-bundle-rehearsal-n5.md` (day-3 bundle, day-4 bundle, day-4 bundle with fallbacks).
+- PM0 is the first measurement of whether the M1's DRAM survives a power-off/reset with the ring in it; the bench (QEMU `system_reset`) only proves the ring and the reader. Whatever the answer, it costs nothing but the m1n1 boot D4 needs anyway.
 - The first proxy contact is D0 (RAM only): the loader offers no harmless probe, so `preflight` cannot test the link.
