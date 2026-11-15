@@ -199,10 +199,46 @@ appeared) with timer irqs and IPIs flowing, 8 vCPUs alive and no fault. No F-NN.
 needing input (no keyboard events were sent), and Setup beyond its first page.
 Evidence (not in the repo): `$WATARI_DATA/logs/winram/t16f-1/` (serial.log, pc.log, shot-NNNN.png), `$WATARI_DATA/logs/t16f-1.out`.
 
+## T16g: the fallback ladder for day 4 on the bench (2026-11-15)
+
+Question: if W2/W3 fail on the M1 in the multi-core description, can Ciani switch firmware without a rebuild, and does each fallback reach Setup on the bench?
+Answer: **yes, all three variants reach Setup's driver page** [verified: runs `t16g-j293`, `t16g-e4`, `t16g-e1`]. New: acpigen model **`j293-e1`** (the boot core only: one
+GICC and one PPTT entry, MPIDR 0, a GICR range of one frame; everything else as j293; host test `tools/acpigen/tests/test_models.c`), the build option
+`--model j293-e1`, and the bundle option `--fallback-efi e4=<fd> --fallback-efi e1=<fd>` (below).
+
+Firmware (all from the clean commit 58f104f, manifest `dirty=0`): `tools/build-edk2-m1.sh --bgr8` (j293), `WATARI_M1_BUILD_TAG=e4 ... --bgr8 --model j293-e4` ->
+`WATARI_M1_EFI-bgr8-e4.fd`, `WATARI_M1_BUILD_TAG=e1 ... --model j293-e1` -> `WATARI_M1_EFI-bgr8-e1.fd`. The tag only keeps names and workspaces apart; the manifest
+says `model=j293-e4` / `j293-e1` and `build_tag=e4` / `e1`.
+
+Common run line: `PANEL=8 MEM=3G RDBASE=0x80000000 CPUIF=trap-notc TIMEOUT=540 SHOT_EVERY=60 WEL2_ARGS="wel2.vgicipa=m1[ wel2.vmpidr=m1]" el2/boot/run-winram.sh` (day-4 W2 uses
+`trap-notc`; a screenshot every ~60 s, so "time to Setup" has that resolution).
+
+| Run | Firmware | `SMP` / layer options | Time to Setup (shots) | `CPU_ON` accepted | FATAL | After |
+|---|---|---|---|---|---|---|
+| t16g-j293 | j293 (8 cores) | 8, `vgicipa=m1 vmpidr=m1` | driver page on shot 6 (310 s) | cpu 1-7 (7) | 0 | `Setup` stable to 540 s, 149 500 layer lines at 499 s |
+| t16g-e4 | j293-e4 (4 E cores) | 4, `vgicipa=m1` | "Attendere" on shot 5 (247 s), driver page on shot 6 (310 s) | cpu 1-3 (3) | 0 | stable to 543 s, 158 600 layer lines |
+| t16g-e1 | j293-e1 (boot core) | 1, `vgicipa=m1` | driver page on shot 5 (245 s) | none (one core) | 0 | unchanged to 554 s, only 7 400 layer lines (almost no IPIs) |
+
+Evidence (not in the repo): `$WATARI_DATA/logs/winram/t16g-{j293,e4,e1}/` (serial.log, pc.log, shot-NNNN.png). For the hardware the matching loader options are: **e4** `--smp`
+(m1n1 starts all eight, the layer's `CPU_ON` path needs the spin-table secondaries; Windows only starts cpu 1-3, the P cores stay parked), **e1** `--no-smp` (m1n1 starts no
+secondary, its tree lists one cpu) [hypothesis on the M1: the loader's own comment on `dt_set_cpus`]. On the bench e1 runs with QEMU `-smp 1`, which is the same shape.
+
+**Guard** (`tools/m3a/build-m1-payload.sh`, test `tools/m3a/test_fallback_guard.sh`, 29 checks, all pass): the main `WATARI_M1_EFI.fd` is still the plain j293 (the T16e guard
+is unchanged); a fallback is accepted only when declared as `e4=` or `e1=` and its manifest says model `j293-e4` / `j293-e1`, `bgr8` equal to the main firmware, no
+bench, no RAM-disk stand-in, no PCD, build tag equal to its name, `dirty=0`, a commit, and the SHA-256 of the file; it lands as `WATARI_M1_EFI-e4.fd` / `-e1.fd` (+ `.build.txt`),
+both in `SHA256SUMS`. Refused (verified): another name (`e8=`), no `NAME=`, a name twice, a missing file or manifest, the wrong model in a slot, bench / stand-in / PCD /
+other tag / dirty / unknown commit / edited file, a fallback build as the MAIN firmware, a bench main firmware with fallbacks declared, `WATARI_M1_EFI_ALLOW_BENCH=1` or
+`WATARI_NO_EDK2=1` together with fallbacks. `watari-load.py --edk2 WATARI_M1_EFI-e1.fd` needs no change: any file listed in `SHA256SUMS` is accepted (new loader test: D2 with each
+fallback name, `--no-smp` starts no secondary). Rehearsal bundle `$WATARI_DATA/rehearsal-n5/day4-fb/bundle` (54 files in `SHA256SUMS`, `shasum -c` all OK, `--winram default`):
+dry runs of both fallbacks exit 0 (`docs/procedures/m3a-day4-windows-ramdisk.md` 2.3).
+
+Not shown: anything about the real M1 (AIC/FIQ, E/P-core differences, timing); the bench only proves that the machine descriptions with 1, 4 and 8 cores are accepted by the Windows kernel.
+Using a fallback on the hardware still needs Marco's decision (open question 4 below, Q-4D-8 in the procedure).
+
 ## Next step
 
 1. Rebuild the hardware bundle (production firmware, j293 model) with the new `PcdWatariRamDiskType` default (type 0); on the bench the j293 firmware
    stops in the HAL by design (wrong GIC addresses for QEMU), so the bench's `qemu-virt-bench` build is the one that carries the evidence.
 2. Day-4 rungs W1-W3 (T24): the expected screens are r14 `shot-0004.png` (logo, spinner), `shot-0009.png` (Setup).
 3. Open question for Marco: whether NFIT + NVDIMM SSDT on the real M1 is acceptable (it is what Windows needs here).
-4. Open question for Marco (T16b, not decided here): if Windows on the real M1 stops with INTERNAL_POWER_ERROR (0xA0) or similar with the eight-core j293 tables, should the model `j293-e4` (the four Icestorm cores only, MPIDR 0..3) be allowed as an explicit hardware fallback? It was built for the bench only; the production build and the day-4 bundle exclude it, and nothing selects it unless `--model j293-e4` is given. Using it on the M1 would run Windows on 4 of the 8 cores (the P cores stay parked) and needs Marco's decision plus a bundle gate update.
+4. Open question for Marco (T16b, not decided here): if Windows on the real M1 stops with INTERNAL_POWER_ERROR (0xA0) or similar with the eight-core j293 tables, should the models `j293-e4` (the four Icestorm cores only, MPIDR 0..3) and, since T16g, `j293-e1` (boot core only) be allowed as explicit hardware fallbacks? Since T16g both are built, benched to Setup and can be carried in the day-4 bundle as DECLARED fallbacks (`build-m1-payload.sh --fallback-efi e4=.. e1=..`, manifest-guarded, never the main firmware); nothing selects them unless declared. Using it on the M1 would run Windows on 4 of the 8 cores (the P cores stay parked) and needs Marco's decision plus a bundle gate update.

@@ -44,6 +44,8 @@ def make_bundle(tmp):
         "m1guest.bin": image(0x20000, b"GUEST"),
         "j293-minimal.dtb": b"\xd0\x0d\xfe\xed" + struct.pack(">I", 64) + b"\0" * 56,
         "WATARI_M1_EFI.fd": image(0x300000, b"EDK2"),
+        "WATARI_M1_EFI-e4.fd": image(0x300000, b"EDK2-E4"),       # T16g declared fallbacks (build-m1-payload.sh --fallback-efi)
+        "WATARI_M1_EFI-e1.fd": image(0x300000, b"EDK2-E1"),
     }
     for n, d in files.items():
         with open(os.path.join(tmp, n), "wb") as f:
@@ -248,6 +250,21 @@ with tempfile.TemporaryDirectory() as tmp:
           "D2: prepare_dt -> read-back of the FDT -> DAIF -> boot")
     check(n.index("kboot_boot") == len(n) - 1 and [c for c in t.calls if c[0] == "kboot_boot"][0][1] == layer_addr,
           "D2: kboot_boot(layer) is the last call")
+
+    # --- T16g: the declared fallback firmware of the bundle is selected by name, nothing else changes -----------------------
+    saved_g = open(gargs).read() if os.path.exists(gargs) else None
+    for fb_name in ("WATARI_M1_EFI-e4.fd", "WATARI_M1_EFI-e1.fd"):
+        t = Fake()
+        rc, out = run(["--rung", "D2", "--edk2", fb_name, "--fb", "band", "--cpuif", "trap-notc", "--go", "--no-smp",
+                       "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+        wr = [c for c in t.calls if c[0] == "writemem"]
+        check(rc == 0 and wr[2][2] == len(files[fb_name]), "D2 --edk2 %s: accepted as a bundle file, the fallback image is the third block" % fb_name)
+        check(rc == 0 and ("edk2=%s" % fb_name) in out, "D2 --edk2 %s: the rung line names the fallback image" % fb_name)
+        check(not [c for c in t.calls if c[0] == "smp_start_secondaries"], "D2 --edk2 %s --no-smp: no secondary is started by m1n1" % fb_name)
+    if os.path.exists(gargs):
+        os.remove(gargs)                       # the gfdt_dump call counts below are for the default run
+    if saved_g is not None:
+        open(gargs, "w").write(saved_g)
     check("smp_start_secondaries" not in n, "D2 starts no secondaries unless --smp")
     g = gfdt_calls()
     check(len(g) == 1 and ("--layer 0x%x" % layer_addr) in g[0] and ("--entry 0x%x" % edk2_addr) in g[0] and

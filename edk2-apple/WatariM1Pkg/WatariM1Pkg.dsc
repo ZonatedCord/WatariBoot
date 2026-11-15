@@ -14,7 +14,7 @@
 #    -D WATARI_M1_BENCH_PL011=TRUE   QEMU bench: serial and debug through the PL011 that QEMU's
 #                                    device tree describes (never in a production build). Without
 #                                    it the console is the hypercall of Watari EL2 (E8).
-#    -D WATARI_M1_ACPIGEN_MODEL=m    acpigen model of the ACPI tables: j293 (default), j293-e4 (T16b), qemu-virt or qemu-virt-bench (T22).
+#    -D WATARI_M1_ACPIGEN_MODEL=m    acpigen model of the ACPI tables: j293 (default), j293-e4 (T16b), j293-e1 (T16g), qemu-virt or qemu-virt-bench (T22).
 #    -D WATARI_M1_ACPIVIEW=TRUE      add the Shell's acpiview command (bench).
 #    -D WATARI_M1_SHELL_BOOT=TRUE    boot the UEFI Shell by default (bench). Without it the boot
 #                                    manager starts the built-in self-test when nothing is bootable.
@@ -553,6 +553,9 @@
 !if "$(WATARI_M1_ACPIGEN_MODEL)" == "qemu-virt"
     <BuildOptions>
       GCC:*_*_*_CC_FLAGS = -DWATARI_M1_MODEL_QEMU_VIRT=1
+!elseif "$(WATARI_M1_ACPIGEN_MODEL)" == "j293-e1"
+    <BuildOptions>
+      GCC:*_*_*_CC_FLAGS = -DWATARI_M1_MODEL_J293_E1=1
 !elseif "$(WATARI_M1_ACPIGEN_MODEL)" == "j293-e4"
     <BuildOptions>
       GCC:*_*_*_CC_FLAGS = -DWATARI_M1_MODEL_J293_E4=1
