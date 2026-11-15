@@ -57,6 +57,8 @@ Between rungs: `python3 monday.py next`. It applies the gates (`D0 PASS -> D1 ->
 
 **Rate decision (W1a).** Projected time of the 713 MiB image at the measured write rate: up to 5 min continue; 5-15 min only with Marco's yes (`confirm rate-ok --by Marco`) and W2/W3 as one run; over 15 min or under 0.5 MB/s stop and ask Marco (day 4 W1 (a) table). A dry run prints `DRY` (the MB/s are the host's memory speed).
 
+**RAM-disk reuse (T16l).** `monday.py rung` adds `--ramdisk-reuse` to a jump rung that carries the RAM disk only after an earlier rung of the session recorded a completed transfer (`transfer-seconds` in `results.md`); it prints `RIUSO DELL'IMMAGINE: ...` (Italian, with the reason) and records `ramdisk-reuse` (REUSED / requested, refused: <reason>). `--no-reuse` disables it. The loader reuses only if the block is at the recorded address and the trailer + three samples match; EDK2's CRC-32 on the screen is the real check, and if the RAM disk is then not registered, rerun with `--no-reuse`. Say (Italian): "Se la memoria ha ancora l'immagine dopo il riavvio la riuso e risparmiamo i minuti del trasferimento; altrimenti la rimando."
+
 ## 4. What you check automatically, and what only the photos tell
 
 - **Script (everything the Mac can see):** exit code with its meaning, bundle sums, `kboot_prepare_dt OK`, per-block and global `BLOCK CHECK`, `GUEST FDT CHECK` (privacy scan included), the framebuffer plan and panel geometry, cpu count, first `/memory` range >= 128 MiB containing the EDK2 block, GIC and PSCI nodes, the exact `boot arguments:` line (incl. `wel2.ramdisk=0x<base>,0x<size>` equal to the block), image size/sha/crc32 against the sidecar, transfer rate and slice retries, hand-over lines, no identifying text in the log.

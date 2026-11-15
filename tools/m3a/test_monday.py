@@ -177,6 +177,29 @@ check(run("W1a", t, dry=False)[0] == "FAIL", "'not compared' is not accepted on 
 check(run("W1a2", fixture("W1a-nocsum"))[0] == "PASS", "--no-data-csums output is accepted (the 'data checksums disabled' line)")
 check(run("W1a2", fixture("W1a"))[0] == "FAIL", "--no-data-csums needs its 'data checksums disabled' line")
 
+print("== RAM-disk reuse (T16l) ==")
+wr = re.sub(r"^RAMDISK written: .*$", "REUSING image in DRAM, not verified by the loader; EDK2's CRC-32 check will verify it (trailer ok)\n"
+            "RAMDISK reused: 747634688 bytes already at 0x842000000, trailer at 0x86e9ff000 (crc32 0xe3eb84c7), no transfer", fixture("W2"), flags=re.M)
+ov, res, f = run("W2", hardware(wr, cores=8), dry=False)
+check(ov == "PASS" and f.get("ramdisk_reuse", "").startswith("REUSED"), "W2 with a reused image: PASS, fact ramdisk_reuse=%r" % f.get("ramdisk_reuse"))
+for what, t in (("wrong crc", wr.replace("(crc32 0xe3eb84c7), no transfer", "(crc32 0xdeadbeef), no transfer")),
+                ("wrong address", wr.replace("already at 0x842000000", "already at 0x850000000")),
+                ("no REUSING banner", wr.replace("REUSING image in DRAM, not verified by the loader; EDK2's CRC-32 check will verify it", "x"))):
+    check(run("W2", t, dry=False)[0] == "FAIL", "reused image, %s -> FAIL" % what)
+rf = re.sub(r"^RAMDISK block (.*)$", r"RAMDISK block \1\nRAMDISK REUSE refused: no trailer magic at 0x86e9ff000 -> transferring the image normally", fixture("W2"), count=1, flags=re.M)
+ov, res, f = run("W2", hardware(rf, cores=8), dry=False)
+check(ov == "PASS" and f.get("ramdisk_reuse", "").startswith("requested, refused: no trailer magic"), "a refused reuse still PASSes and says why: %r" % f.get("ramdisk_reuse"))
+ns = type("A", (), {"no_reuse": False})()
+W2r = mo.RUNGS["W2"]
+check(mo.reuse_wanted([], W2r, ns)[0] is False, "first attempt of the session: no --ramdisk-reuse")
+rec1 = [dict(id="W1c", kind="auto", ts="t", f={"transfer-seconds": "400"})]
+check(mo.reuse_wanted(rec1, W2r, ns)[0] is True, "after a recorded transfer: --ramdisk-reuse")
+check(mo.reuse_wanted([dict(id="W1c", kind="auto", ts="t", f={})], W2r, ns)[0] is False, "a run without a completed transfer does not count")
+check(mo.reuse_wanted(rec1, W2r, type("A", (), {"no_reuse": True})())[0] is False, "--no-reuse switches it off")
+check(mo.reuse_wanted(rec1, mo.RUNGS["W1b"], ns)[0] is False and mo.reuse_wanted(rec1, mo.RUNGS["D2"], ns)[0] is False, "never for a preview or for a rung without the RAM disk")
+check(mo.build_loader_argv(W2r, type("A", (), {"loader": None, "m1n1": "/x", "dry_run": True})(), "/b", "py", reuse=True).count("--ramdisk-reuse") == 1, "build_loader_argv appends --ramdisk-reuse once")
+check("--ramdisk-reuse" not in mo.RUNGS["W2"]["args"], "the table's command stays verbatim (the flag is added at run time)")
+
 print("== --pmlog on the EDK2 jump rungs, PM0, the post-mortem reader (T16j) ==")
 jumps = [x for x in mo.ORDER if mo.RUNGS[x]["jump"]]
 for x in jumps:

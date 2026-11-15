@@ -336,6 +336,14 @@ wl W2-jump --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb ba
 
 Use the cpuif that D3/D4 settled (`trap` if only `trap` passed: `--cpuif trap` is the default, then drop the flag).
 
+**RAM-disk reuse across attempts (T16l).** After the first complete transfer of the session, every later jump with the RAM disk (a retry of W1c, W2, W2g, a fallback) can skip the ~700 MB transfer **if DRAM kept the image across the reset** (Monday's PM0/day-3 check says whether DRAM survives; if it does not, the loader finds no trailer and transfers normally, nothing is lost). Add `--ramdisk-reuse` to the same command (`monday.py` does it on its own from the second attempt, `--no-reuse` switches it off; the table commands above stay as written):
+
+```
+wl W2-retry --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --pmlog --ramdisk-reuse --args wel2.hold=1
+```
+
+The loader (fresh m1n1 boot, same heap order, so the block lands at the same address; it must equal `out/ramdisk-block.json`, written after every complete transfer) reads the 4 KiB trailer back over the proxy (magic, size, CRC-32, SHA-256 must equal the sidecar's) plus three 4 KiB samples (start, middle, end) and compares them with the file. All equal: it prints `REUSING image in DRAM, not verified by the loader; EDK2's CRC-32 check will verify it` and `RAMDISK reused: ...`, and writes nothing into the block. Any doubt (no record, another address, a trailer field, a sample): `RAMDISK REUSE refused: <reason> -> transferring the image normally`; the decision is in `out/ramdisk-reuse.json`. **The real guard is EDK2's CRC-32 over the whole image** (`WatariM1RamDiskDxe`): a bit flipped outside the samples is caught there (RAM disk not registered, bootmgr finds no disk): then retransfer **without** `--ramdisk-reuse`. A reuse run is not a speed measurement (`transfer-seconds` is absent). **Say to Ciani (Italian):** "Questa volta non rimando i 700 MB: se la memoria li ha ancora dopo il riavvio, il Mac riparte in pochi secondi invece di aspettare il trasferimento; se non li trova li rimando io."
+
 **If W2 fails in the multi-core description** (read the post-mortem ring first, section 4) (stop `0xA0`, a freeze after the `CPU_ON` of a P core, an IPI storm): section 6.3 maps the symptom to the declared fallback firmware (`e4`, then `e1`), which needs Marco's OK and a fresh transfer.
 
 **What to watch (continuous video, a photo every 2 minutes while the logo stays, the stopwatch in frame):**

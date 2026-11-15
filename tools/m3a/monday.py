@@ -564,8 +564,17 @@ def check_ramdisk_plan(ctx):
     if rb and ctx.facts.get("ramdisk_arg"):
         res.append(chk(ctx.facts["ramdisk_arg"] == "0x%x,0x%x" % (int(rb.group(1), 16), blk), "wel2.ramdisk equals the block",
                        "boot argument %s vs block 0x%s,0x%x" % (ctx.facts["ramdisk_arg"], rb.group(1), blk)))
+    ru = find(ctx, r"^RAMDISK reused: (\d+) bytes already at 0x([0-9a-f]+), trailer at 0x([0-9a-f]+) \(crc32 (0x[0-9a-f]{8})\), no transfer")
+    rf = find(ctx, r"^RAMDISK REUSE refused: (.*) -> transferring the image normally")
+    if ru or rf:
+        ctx.facts["ramdisk_reuse"] = "REUSED (not transferred; EDK2's CRC-32 verifies)" if ru else ("requested, refused: %s" % rf.group(1) if rf else "requested, no decision line")
     w = find(ctx, r"^RAMDISK written: (\d+) bytes in (\d+) s \(([\d.]+) MB/s\), trailer at 0x([0-9a-f]+) \(crc32 (0x[0-9a-f]{8})\)")
-    if not w:
+    if ru:
+        okr = int(ru.group(1)) == size and ru.group(4) == crc and rb is not None and int(ru.group(2), 16) == int(rb.group(1), 16) \
+            and int(ru.group(3), 16) == int(rb.group(1), 16) + blk - 4096 and find(ctx, r"^REUSING image in DRAM, not verified by the loader; EDK2's CRC-32 check will verify it") is not None
+        res.append(chk(okr, "RAMDISK reused", "%s bytes kept in DRAM at 0x%s, trailer 0x%s, crc32 %s equals the plan's; NOT verified by the loader: EDK2's CRC-32 line on the screen is the check" %
+                       (ru.group(1), ru.group(2), ru.group(3), ru.group(4))))
+    elif not w:
         res.append(("FAIL", "RAMDISK written", "no 'RAMDISK written: ... crc32 ...' line"))
     else:
         rate = float(w.group(3))
@@ -857,9 +866,28 @@ def host_env():
     return host, py, env
 
 
-def build_loader_argv(r, a, bundle, py):
+REUSE_SRC = ("W1b", "W1c", "W2", "W2g", "W2-e4", "W2-e1")
+
+
+def reuse_wanted(recs, r, a):
+    """T16l: --ramdisk-reuse is added only on attempts AFTER the first transfer of the image in this session (the results file):
+    a jump rung that carries the RAM disk, once an earlier rung (W1b preview or any W jump) recorded a completed transfer.
+    Never on the first attempt (nothing is in DRAM to reuse), never with --no-reuse. Returns (bool, why)."""
+    if getattr(a, "no_reuse", False):
+        return False, "--no-reuse given"
+    if not (r["jump"] and "--ramdisk " in r["args"]):
+        return False, "not a jump rung with the RAM disk"
+    prior = [x for x in recs if x["kind"] == "auto" and x["id"] in REUSE_SRC and "transfer-seconds" in x["f"]]
+    if not prior:
+        return False, "first attempt of the session: no earlier transfer recorded in the results file"
+    return True, "an earlier transfer is recorded (%s, %s s)" % (prior[-1]["id"], prior[-1]["f"]["transfer-seconds"])
+
+
+def build_loader_argv(r, a, bundle, py, reuse=False):
     args = r["args"]
     argv = [py, "-u", a.loader or os.path.join(bundle, "watari-load.py")] + shlex.split(args)
+    if reuse:
+        argv.append("--ramdisk-reuse")
     m1n1 = a.m1n1 or os.environ.get("M1N1_DIR") or (os.path.join(os.environ["HOSTDIR"], "work", "m1n1-main") if os.environ.get("HOSTDIR") else None)
     if m1n1:
         argv += ["--m1n1", m1n1]
@@ -1096,7 +1124,13 @@ def cmd_rung(a, bundle, outdir):
             m1 = a.m1n1 or os.environ.get("M1N1_DIR") or (os.path.join(host, "work", "m1n1-main") if host else "")
             env["PYTHONPATH"] = os.path.join(m1, "proxyclient")
     else:
-        argv = build_loader_argv(r, a, bundle, py)
+        reuse, why = reuse_wanted(recs, r, a)
+        argv = build_loader_argv(r, a, bundle, py, reuse)
+        if reuse:
+            say("RIUSO DELL'IMMAGINE: aggiungo --ramdisk-reuse (%s). Se l'immagine e' ancora nella RAM dopo il reset, il caricamento di ~700 MB viene saltato "
+                "(risparmio: i minuti del trasferimento); altrimenti il loader la ricarica da solo. La verifica vera la fa EDK2 con il CRC-32 (riga sullo schermo)." % why)
+        elif r["jump"] and "--ramdisk " in r["args"]:
+            say("RIUSO DELL'IMMAGINE: no (%s)." % why)
     say("ESEGUO: %s" % " ".join(shlex.quote(x) for x in argv))
     say("")
     text, code, interrupted, timeline = run_loader(argv, bundle, env, log_path, r["jump"] and not dry, a.boot_timeout, True, a.quiet)
@@ -1122,6 +1156,8 @@ def cmd_rung(a, bundle, outdir):
         say("STOP: non passare al rung successivo. Dire a Marco cosa e' successo e consultare la tabella FAIL di %s." % r["doc"])
     say("-" * 100)
     print_photos(rid)
+    if r["kind"] != "ehw2" and "--ramdisk-reuse" in argv:
+        facts.setdefault("ramdisk_reuse", "requested, no decision line")
     fields = [("result", overall), ("dry-run", "yes" if dry else "no"), ("command", cmdtxt), ("loader-exit", code),
               ("started", t_start), ("log", log_path), ("photos", "pending" if r["jump"] else "none")]
     if interrupted:
@@ -1129,7 +1165,7 @@ def cmd_rung(a, bundle, outdir):
     if a.force_gate:
         fields.append(("force-gate", a.force_gate))
     for k in ("boot_arguments", "ramdisk_arg", "fb_plan", "panel", "cores", "mem0", "image_bytes", "image_sha16", "image_crc32",
-              "transfer_seconds", "transfer_mbs", "slice_retries", "rate_write", "rate_read", "projected_seconds", "pmlog_base", "pmlog_size"):
+              "transfer_seconds", "transfer_mbs", "slice_retries", "rate_write", "rate_read", "projected_seconds", "pmlog_base", "pmlog_size", "ramdisk_reuse"):
         if k in facts and facts[k] is not None:
             fields.append((k.replace("_", "-"), facts[k]))
     if decision:
@@ -1417,6 +1453,7 @@ def build_parser():
     p.add_argument("--no-record", action="store_true")
     sub.add_parser("list")
     p = sub.add_parser("rung", parents=[common]); p.add_argument("rung_id")
+    p.add_argument("--no-reuse", action="store_true", help="never add --ramdisk-reuse (T16l), even after an earlier transfer")
     p.add_argument("--marco-go", action="store_true", help="Marco said go in chat for THIS jump (needed on a real device)")
     p.add_argument("--force-gate", metavar="REASON", help="bypass a failed gate (recorded); never bypasses the backup/image confirmations")
     p.add_argument("--force-bundle", action="store_true"); p.add_argument("--m1n1")

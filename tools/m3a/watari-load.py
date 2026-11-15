@@ -30,6 +30,10 @@ range, rounded to 1 MiB, 32 MB aligned) is allocated FIRST (before the layer blo
 retry, read-back), the trailer last, caches cleaned over the whole range, and `wel2.ramdisk=0x<base>,0x<size>` goes into the
 boot arguments. `--ramdisk-test <MiB>` is the proxy rate test: one block, write + read back, MB/s, no DTB, no layer, no jump.
 
+RAM-disk reuse (T16l): `--ramdisk-reuse` skips the transfer when the image is still in DRAM at the block just allocated (same address as
+<out>/ramdisk-block.json, written after every complete transfer; trailer magic/size/CRC/SHA-256 and three 4 KiB samples equal to the
+sidecar and the file); the decision is in <out>/ramdisk-reuse.json. Not a verification: EDK2's CRC-32 over the whole image is the guard.
+
 Post-mortem log (T16j, el2/include/wel2_pmlog.h): `--pmlog` (with any rung; `--pmlog-size KIB`, default 2048) with --edk2 puts the region at
 the start of the unwritten spacer block (D0's "guest" block: no extra allocation, all addresses as D0 checked them, and the range that
 holds EDK2's entry stays whole: the layer wants 64 MB of it above the FDT, so a ring cut out right after the EDK2 block is refused, placement
