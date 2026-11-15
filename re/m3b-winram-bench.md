@@ -242,3 +242,19 @@ Using a fallback on the hardware still needs Marco's decision (open question 4 b
 2. Day-4 rungs W1-W3 (T24): the expected screens are r14 `shot-0004.png` (logo, spinner), `shot-0009.png` (Setup).
 3. Open question for Marco: whether NFIT + NVDIMM SSDT on the real M1 is acceptable (it is what Windows needs here).
 4. Open question for Marco (T16b, not decided here): if Windows on the real M1 stops with INTERNAL_POWER_ERROR (0xA0) or similar with the eight-core j293 tables, should the models `j293-e4` (the four Icestorm cores only, MPIDR 0..3) and, since T16g, `j293-e1` (boot core only) be allowed as explicit hardware fallbacks? Since T16g both are built, benched to Setup and can be carried in the day-4 bundle as DECLARED fallbacks (`build-m1-payload.sh --fallback-efi e4=.. e1=..`, manifest-guarded, never the main firmware); nothing selects them unless declared. Using it on the M1 would run Windows on 4 of the 8 cores (the P cores stay parked) and needs Marco's decision plus a bundle gate update.
+
+## T16k: WinPE with all RAM above 4 GiB (M1 memory layout) on the bench (2026-11-15, audit item H3)
+
+Result: **Setup's first screen (driver page) is reached with all RAM at 0x8_0000_0000 and nothing below 4 GiB**, on the plain j293 `--bgr8` firmware (`WATARI_M1_EFI-bgr8.fd`, model j293, bench 0, ramdisk_standin 0, no tag, sha256 867ea800...), `-smp 8`, `wel2.vgicipa=m1 wel2.vmpidr=m1`, `trap-notc`, PANEL=8, MEM=3G (RAM 0x800000000..0x8C0000000). Seven `CPU_ON` accepted, no FATAL. [verified: runs below]
+
+New knob: `RAM_BASE=0x800000000 el2/boot/run-winram.sh` uses the patched QEMU (`/private/tmp/watari-qemu/build/qemu-system-aarch64`, `-M virt,...,ram-base=`), defaults `GUEST` (EDK2 load address) to RAM_BASE+0x280000 and `RDBASE` to RAM_BASE+0x42000000, and pads the RAM-disk range to 1 MiB with the trailer last (`RDPAD`). The default (RAM at 0x40000000) is unchanged. The fake panel and the pmemsave address come from the layer's own log line, so they follow the RAM base (panel at 0x8bfc18000). The layer stays where `-kernel` puts it (RAM_BASE+0x80000), not at the loader's 0x870000000 [not exercised: layer location].
+
+| Run | Config | Result |
+|---|---|---|
+| t16k-1 | `RAM_BASE=0x800000000`, EDK2 at 0x800280000, RAM disk 0x842000000 (exact size 0x2c901000) | CRC verified, registered; kernel on all 8 vCPUs at 71 s, **Setup driver page at 245 s** (`shot-0005.png`). EDK2 ran above 4 GiB: `ArmVirtGetMemoryMap` 0x800200000, drivers loaded at 0x840xxxxxx, GOP buffer 0x8BFD1C000. |
+| t16k-2 | hardware plan addresses: EDK2 at **0x874000000**, RAM disk 0x842000000, exact size 0x2c901000 | RAM disk NOT registered, EDK2 self-test, SYSTEM_RESET: our defect, F-38 (64 KiB claim rounding vs. an unpadded range). |
+| t16k-3 | same as t16k-2 but the range padded to **0x2ca00000** (the loader's size) | RAM disk registered (CRC E3EB84C7 verified), 7 `CPU_ON`, kernel on all 8 vCPUs at 257 s, **Setup driver page** (`shot-0005.png`). |
+
+So with the loader's address plan (EDK2 0x874000000, RAM disk 0x842000000 size 0x2ca00000) and no RAM below 4 GiB, EDK2 memory init, ACPI/SMBIOS installation (no allocation error), the RAM-disk driver, bootmgr, winload and the kernel all run [verified]. The mechanisms of H3: (1) 32-bit `CPU_ON`: all seven starts were accepted (the function id is still not logged) [hypothesis: Windows uses the 64-bit call]; (2) EDK2 below-4 GiB allocations: none failed; (3) Windows' own below-4 GiB needs: no device here, so not exposed, as on day 4. Not covered: the layer at 0x870000000, the real MMIO map, the 8 GB RAM extent.
+
+Evidence (not in the repo): `$WATARI_DATA/logs/winram/t16k-{1,2,3}/` (serial.log, pc.log, shot-NNNN.png). Run: `GUEST=0x874000000 RAM_BASE=0x800000000 PANEL=8 MEM=3G SMP=8 CPUIF=trap-notc QEMU_EXTRA=-no-shutdown WEL2_ARGS="wel2.vgicipa=m1 wel2.vmpidr=m1" el2/boot/run-winram.sh`.

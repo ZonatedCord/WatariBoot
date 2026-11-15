@@ -14,6 +14,14 @@
 #   PANEL=10|8       fake panel format: 10 = x2r10g10b10 (the M1's, wel2.fakefb), 8 = x8r8g8b8 (wel2.fakefb8)   default 10
 #   SIZE=WxH         fake panel size (default 1280x800)
 #   FB=band|guest    wel2.fb mode (default band: the layer keeps the top rows for its own log, like the hardware)
+#   RAM_BASE=0x800000000  (T16k) guest RAM base, a multiple of 1 GiB: runs the patched QEMU (QEMU default
+#                    /private/tmp/watari-qemu/build/qemu-system-aarch64, option ram-base=) so all RAM sits above 4 GiB like the M1's.
+#                    Then GUEST (EDK2 load address) defaults to RAM_BASE+0x280000 and RDBASE to RAM_BASE+0x42000000 (the loader's
+#                    0x842000000); the layer is still loaded by -kernel (RAM_BASE+0x80000; the loader puts it at 0x870000000).
+#                    Override with GUEST=0x874000000 RDBASE=0x842000000 for the hardware plan. Unset = unchanged (RAM at 0x40000000).
+#   RDPAD=1        pad the RAM-disk range to a 1 MiB multiple, the trailer in its last 4 KiB, like watari-load.py (the hardware
+#                    size is 0x2ca00000 for this image). Default on with RAM_BASE, else off (T16k: EDK2 claims the range in 64 KiB
+#                    pages; an unpadded size makes the claim cross into a neighbouring memory-map entry, F-38).
 #   SMP=8 MEM=4G     cores / guest RAM (the host has 8 GB: do not raise MEM; the image is 0.7 GB above 4 GB)
 #   CPUIF=hw|trap|trap-notc   virtual CPU interface (default trap, as the other TCG runs)
 #   TIMEOUT=3600 SHOT_EVERY=120   seconds;  STALL=N stop when the panel is unchanged for N shots (default 0 = never)
@@ -32,6 +40,16 @@ PANEL="${PANEL:-10}"; SIZE="${SIZE:-1280x800}"; FB="${FB:-band}"
 SMP="${SMP:-8}"; MEM="${MEM:-4G}"; CPUIF="${CPUIF:-trap}"
 TIMEOUT="${TIMEOUT:-3600}"; SHOT_EVERY="${SHOT_EVERY:-120}"
 W=${SIZE%x*}; H=${SIZE#*x}
+RAM_BASE="${RAM_BASE:-}"; MACHINE_EXTRA=""
+if [ -n "$RAM_BASE" ]; then
+    GUEST="${GUEST:-$(printf '0x%x' $((RAM_BASE + 0x280000)))}"
+    RDBASE="${RDBASE:-$(printf '0x%x' $((RAM_BASE + 0x42000000)))}"
+    MACHINE_EXTRA=",ram-base=$RAM_BASE"
+    QEMU="${QEMU:-/private/tmp/watari-qemu/build/qemu-system-aarch64}"
+    [ -x "$QEMU" ] || { echo "FAIL: no patched QEMU at $QEMU"; exit 2; }
+else
+    GUEST="${GUEST:-0x40280000}"
+fi
 RDBASE="${RDBASE:-0x100000000}"   # RDBASE=0x80000000 with MEM=3G keeps guest RAM below the layer's MSI frame (0xFFFFF000), F-35
 [ -f "$FD" ] || { echo "FAIL: $FD missing: run tools/build-edk2-m1.sh --bgr8 (WATARI_M1_BUILD_TAG=${WATARI_M1_BUILD_TAG:-})"; exit 2; }
 [ -f "$IMG" ] || { echo "FAIL: $IMG missing: tools/m3a/build-winram-image.sh"; exit 2; }
@@ -53,14 +71,26 @@ RD="$WATARI_DATA/winram/$(basename "$IMG").rd"       # image + trailer, cached; 
 if [ ! -f "$RD" ] || [ "$IMG" -nt "$RD" ]; then
     python3 -I ../../tools/m3a/winram_trailer.py append "$IMG" "$RD" || { echo "FAIL: trailer"; exit 2; }
 fi
+if [ "${RDPAD:-${RAM_BASE:+1}}" = 1 ]; then
+    RDP="$RD.pad1m"
+    if [ ! -f "$RDP" ] || [ "$RD" -nt "$RDP" ]; then
+        python3 -I - "$IMG" "$RD" "$RDP" <<'PYEOF' || { echo "FAIL: padding"; exit 2; }
+import sys
+img = sys.argv[1]; rd = open(sys.argv[2], "rb").read()
+n = (len(rd) + (1 << 20) - 1) & ~((1 << 20) - 1)
+open(sys.argv[3], "wb").write(rd[:-4096] + b"\0" * (n - len(rd)) + rd[-4096:])
+PYEOF
+    fi
+    RD="$RDP"
+fi
 RDSIZE=$(printf '0x%x' "$(stat -f %z "$RD")")
 SOCK="$(mktemp -d /tmp/wwr.XXXXXX)/mon.sock"
-ARGS="wel2.guest=0x40280000 wel2.abi=fdt wel2.gfdt=build wel2.cpuif=$CPUIF wel2.fb=$FB $FAKE wel2.ramdisk=$RDBASE,$RDSIZE ${WEL2_ARGS:-}"
+ARGS="wel2.guest=$GUEST wel2.abi=fdt wel2.gfdt=build wel2.cpuif=$CPUIF wel2.fb=$FB $FAKE wel2.ramdisk=$RDBASE,$RDSIZE ${WEL2_ARGS:-}"
 echo "layer args: $ARGS"; echo "smp=$SMP mem=$MEM fd=$FD out=$OUT"
 LOG="$OUT/serial.log"; : > "$LOG"
-"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu "${QEMU_CPU:-max}" -accel tcg,thread=multi \
+"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3$MACHINE_EXTRA -cpu "${QEMU_CPU:-max}" -accel tcg,thread=multi \
     -nographic -m "$MEM" -smp "$SMP" -nic none -no-reboot ${QEMU_EXTRA:-} -kernel build-chain/wel2.bin -append "$ARGS" \
-    -device loader,file="$FD",addr=0x40280000,force-raw=on \
+    -device loader,file="$FD",addr=$GUEST,force-raw=on \
     -device loader,file="$RD",addr=$RDBASE,force-raw=on \
     -serial "file:$LOG" -monitor "unix:$SOCK,server,nowait" >"$OUT/qemu.out" 2>&1 &
 QPID=$!
