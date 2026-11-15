@@ -26,6 +26,9 @@
 #   CPUIF=hw|trap|trap-notc   virtual CPU interface (default trap, as the other TCG runs)
 #   TIMEOUT=3600 SHOT_EVERY=120   seconds;  STALL=N stop when the panel is unchanged for N shots (default 0 = never)
 #   QEMU_EXTRA="-no-shutdown"  keep QEMU alive (paused) after the guest's SYSTEM_RESET: the panel and the registers can still be read
+#   PMLOG_READ=0x<base>,0x<size>  (T16l) after the run (TIMEOUT / STALL) and the last shot: monitor `system_reset` (needs QEMU_EXTRA=-no-shutdown:
+#                    with -no-reboot QEMU then stops with its RAM intact and the guest does not run again), `pmemsave` of the ring to a relative
+#                    path, tools/m3a/pmlog_read.py on it -> $OUT/pmlog.txt. Pass the same base,size as wel2.pmlog= in WEL2_ARGS.
 #   WEL2_ARGS="..."  extra layer arguments        TAG=name  run directory name
 # Output (data disk, never the repository): $WATARI_DATA/logs/winram/<TAG>/ serial.log, shot-NNNN.png, pc.log (PC of every vCPU per shot), qemu.out
 # Nothing is downloaded or installed; the Windows VM disk is not touched; QEMU is waited on by its own PID only.
@@ -157,7 +160,36 @@ while kill -0 "$QPID" 2>/dev/null; do
     fi
     sleep 5
 done
-if kill -0 "$QPID" 2>/dev/null; then N=$((N + 1)); shot "$N"; kill "$QPID" 2>/dev/null; fi
+if kill -0 "$QPID" 2>/dev/null; then N=$((N + 1)); shot "$N"; fi
+if [ -n "${PMLOG_READ:-}" ] && kill -0 "$QPID" 2>/dev/null; then
+    PMB=${PMLOG_READ%,*}; PMS=${PMLOG_READ#*,}
+    rm -f build-chain/pmlog-ring.bin
+    python3 -I - "$SOCK" "$PMB" "$PMS" build-chain/pmlog-ring.bin <<'PYEOF'
+import socket, sys, time
+sock, base, size, out = sys.argv[1:5]
+s = socket.socket(socket.AF_UNIX)
+s.connect(sock); s.settimeout(2)
+def rd():
+    d = b""
+    try:
+        while True:
+            c = s.recv(4096)
+            if not c: break
+            d += c
+    except OSError:
+        pass
+    return d
+rd()
+s.sendall(b"system_reset\n"); time.sleep(3); rd()
+s.sendall(("pmemsave %d %d %s\n" % (int(base, 16), int(size, 16), out)).encode()); time.sleep(4); rd()
+PYEOF
+    echo "---- post-reset ring read (T16l)"
+    if python3 -I ../../tools/m3a/pmlog_read.py build-chain/pmlog-ring.bin -o "$OUT/pmlog.txt" 2>"$OUT/pmlog-read.err"; then PMRC=0; else PMRC=$?; fi
+    cat "$OUT/pmlog-read.err"; echo "pmlog_read exit $PMRC"; cp build-chain/pmlog-ring.bin "$OUT/pmlog.bin" 2>/dev/null
+    echo "ring lines: $(wc -l < "$OUT/pmlog.txt" 2>/dev/null)   CPU_ON accepted: $(grep -ac 'PSCI CPU_ON cpu [0-9]* accepted' "$OUT/pmlog.txt" 2>/dev/null)   FATAL: $(grep -ac FATAL "$OUT/pmlog.txt" 2>/dev/null)"
+    echo "ring last 3 lines:"; tail -3 "$OUT/pmlog.txt" 2>/dev/null | cut -c1-140
+fi
+if kill -0 "$QPID" 2>/dev/null; then kill "$QPID" 2>/dev/null; fi
 wait "$QPID" 2>/dev/null
 tr -d '\r' < "$LOG" > "$OUT/serial.txt"
 echo "---- log highlights"
