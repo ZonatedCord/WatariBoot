@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<title>Watari Boot</title>
+  <path id="W" d="M119.789 265.866 L188.000 265.866 L404.000 639.989 L443.789 571.072 L477.895 630.144 L404.000 758.134 Z" fill="#0000AA" fill-rule="nonzero"/>
+  <path id="B" d="M335.789 265.866 L688.211 265.866 L580.211 452.928 L796.211 452.928 L620.000 758.134 Z M512.000 452.928 L585.895 324.939 L438.105 324.939 Z M620.000 639.989 L693.895 512.000 L546.105 512.000 Z" fill="#00AAAA" fill-rule="nonzero"/>
+  <path id="accent" d="M836.000 265.866 L904.211 265.866 L830.316 393.856 L762.105 393.856 Z" fill="#0000AA" fill-rule="nonzero"/>
+</svg>
