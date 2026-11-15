@@ -17,6 +17,7 @@
 #   j293-minimal.dtb/.dts minimal device tree for m1n1's kboot_prepare_dt
 #   watari-load.py       host loader (needs the m1n1 proxyclient of the host, never m1n1.setup)
 #   ehw2.py              optional read-only inherited-state inventory (docs/procedures/m3a-ehw2-rung.md)
+#   monday.py            Monday runner (T16i): rung commands, automatic checks, results, gates (docs/procedures/m3a-monday-runbook.md)
 #   WATARI_M1_EFI.fd     EDK2 for the M1 (tools/build-edk2-m1.sh), copied from $WATARI_DATA/build-m1 (day 3: rungs D0, D2)
 #   fdt_m1_dump          prebuilt arm64 host tool (no cc needed on the host)
 #   gfdt_dump            prebuilt arm64 host tool: the guest FDT the layer would build from m1n1's prepared FDT (rung D0)
@@ -215,6 +216,7 @@ sed -n '1,3p' "$WORK/gfdt-dump.txt" | sed 's/^/  /'
 
 cp "$HERE/watari-load.py" "$OUT/"
 cp "$HERE/ehw2.py" "$OUT/"
+cp "$HERE/monday.py" "$OUT/"
 cp "$HERE/README-m1-payload.md" "$OUT/"
 
 if [ -n "$WINRAM" ]; then
