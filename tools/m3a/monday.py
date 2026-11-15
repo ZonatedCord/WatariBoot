@@ -877,7 +877,7 @@ def reuse_wanted(recs, r, a):
         return False, "--no-reuse given"
     if not (r["jump"] and "--ramdisk " in r["args"]):
         return False, "not a jump rung with the RAM disk"
-    prior = [x for x in recs if x["kind"] == "auto" and x["id"] in REUSE_SRC and "transfer-seconds" in x["f"]]
+    prior = [x for x in recs if x["kind"] == "auto" and x["id"] in REUSE_SRC and "transfer-seconds" in x["f"] and x["f"].get("dry-run") != "yes"]
     if not prior:
         return False, "first attempt of the session: no earlier transfer recorded in the results file"
     return True, "an earlier transfer is recorded (%s, %s s)" % (prior[-1]["id"], prior[-1]["f"]["transfer-seconds"])

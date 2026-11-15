@@ -162,6 +162,21 @@ with tempfile.TemporaryDirectory() as tmp:
     t, rc, out = again(mem_after)
     check("no record of an earlier transfer" in out, "unreadable record -> refused")
 
+    # a transfer that dies mid-slices voids the record (the old trailer and samples would still vouch for a half-overwritten block)
+    open(REC, "w").write(json.dumps(dict(base="0x%x" % base_addr, range_size=RNG, size=N, sha256=hashlib.sha256(data).hexdigest(), crc32="0x0")))
+
+    class Dying(Fake):
+        def write(self, addr, d):
+            if base_addr <= addr < base_addr + RNG and len(d) >= MIB:
+                raise OSError("link lost")
+            super().write(addr, d)
+
+    try:
+        run(ARGS + ["--ramdisk-reuse"], Dying({}), tmp)
+    except BaseException:
+        pass
+    check(not os.path.exists(REC), "a transfer that died mid-slices leaves no block record")
+
     # usage error; a dry run never reuses and writes no block record
     try:
         with contextlib.redirect_stderr(io.StringIO()):
@@ -169,7 +184,7 @@ with tempfile.TemporaryDirectory() as tmp:
         check(False, "--ramdisk-reuse without --ramdisk is a usage error")
     except SystemExit as e:
         check(e.code == 2, "--ramdisk-reuse without --ramdisk is a usage error")
-    os.remove(REC)
+    if os.path.exists(REC): os.remove(REC)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         rc = wl.main(["--bundle", tmp, "--out", os.path.join(tmp, "out"), "--dry-run", "--rung", "D0", "--edk2", "WATARI_M1_EFI.fd",

@@ -1135,6 +1135,13 @@ def run(args, target):
             taddr = rd_addr + rd.range_size - RD_TRAILER
             say("RAMDISK reused: %d bytes already at 0x%x, trailer at 0x%x (crc32 0x%08x), no transfer" % (rd.size, rd_addr, taddr, rd.crc32))
         else:
+            # the old record is void from the first write on: a crash mid-slices must not leave a record that vouches for a block
+            # whose body is half another image (the trailer and three samples would not notice it)
+            if not target.dry_run:
+                try:
+                    os.unlink(os.path.join(args.out, RD_RECORD))
+                except FileNotFoundError:
+                    pass
             el = write_sliced(target, rd_addr, rd.read, rd.size, args.ramdisk_slice * MIB, "ramdisk", args.ramdisk_verify)
             rd.check_streamed()
             trailer = build_trailer(rd)
