@@ -22,6 +22,7 @@ export MONDAY_OUT="$HOSTDIR/work/monday"            # one results folder shared 
 export M1N1DEVICE=$(ls /dev/cu.usbmodem*1)          # only after the target is in m1n1 proxy mode (day 3 section 4)
 cd "$HOSTDIR/work/m3a-payload"                      # day-3 bundle; later cd "$HOSTDIR/work/m3a-payload-w1" for day 4
 python3 monday.py preflight                         # read-only: sums, sidecar, manifest, tools run, USB device
+                                                    # the loader's `bundle OK: <n> files` reads 51 for a day-3 or day-4 bundle, 55 for a day-4 bundle with the declared fallbacks
 python3 monday.py next                              # what to do now; always run it between rungs
 ```
 
@@ -43,7 +44,7 @@ Time = the procedures' estimates **[hypothesis until run]**. Every **jump** need
 | 7 | **switch to the day-4 bundle**: `cd` there, `confirm image-ok --by Marco`, `next` | | 5 min | | |
 | 8 | W1a: rate test (then `rung W1a2`) | `rung W1a` | 3 min + 5 min m1n1 boot | read-back identical, MB/s, **decision CONTINUE/ASK/STOP** | none |
 | 9 | W2+W3 in **one run** (`next` proposes it; `rung W1c` first only if Marco wants the plain-flags first look) | `rung W2 --marco-go`, then `verdict W2`, `verdict W3` (and `verdict W1c` from the same run) | transfer (min.: 713 MiB / rate) + up to 40 min | RAMDISK PLAN numbers vs the sidecar and the image size, block 714 MiB, `wel2.ramdisk=`, slice retries, crc32, BLOCK CHECK, GUEST FDT CHECK + ramdisk carve | continuous video with stopwatch; photos per `rung W2` checklist |
-| 10 | fallback if W2 fails (`W2-e4`, `W2-e1`) | **provisional**: see 6 | | | |
+| 10 | fallback if W2 fails (`W2-e4`, then `W2-e1`): only with Marco's "go e4" / "go e1", section 6 | `confirm fallback-e4 --by Marco`, `rung W2-e4 --marco-go`, `verdict W2-e4`, `verdict W3-e4` | transfer + up to 40 min | as W2, plus the fallback firmware's manifest | as W2 |
 
 Between rungs: `python3 monday.py next`. It applies the gates (`D0 PASS -> D1 -> D2 and D3 -> D4 -> day 4`; W1a PASS and the **rate decision** before any transfer; W2 needs D4 PASS) and stops at every recorded FAIL/ABORT until Marco says to go on (`confirm proceed:<ID>`). Day 3's own `D5` is not needed for Windows (band mode). `--force-gate "<reason>"` bypasses a **soft** gate only and is recorded; the backup and image confirmations cannot be bypassed.
 
@@ -64,9 +65,15 @@ Between rungs: `python3 monday.py next`. It applies the gates (`D0 PASS -> D1 ->
 - **Always take the abort photo first**, then hold the power button ~10 s until the screen is dark. macOS and recovery are never touched; nothing persistent was written. Boot macOS once between sessions and after two or three forced power-offs (F-29). Recovery or a boot loop: day 3 section 7; DFU Restore only with Marco's explicit consent.
 - You never type on Marco's Mac and never run anything not in `monday.py list` or the procedures without asking. No `p.write*`, `u.msr`, `shell.py`, `m1n1.setup`.
 
-## 6. Fallbacks (day 4, T16g)
+## 6. Fallbacks (day 4, T16g, section 6.3 and Q-4D-8)
 
-`W2-e4` (j293-e4, 4 E cores) and `W2-e1` (j293-e1, boot core only) are **provisional** in `monday.py`: the firmware file names and layer options of the decision tree are not fixed in the procedures yet. They need `--fw <file of the bundle> --confirm-provisional` after you compared the printed command with the decision tree of day 4 (which symptom -> which fallback), and they open only after a recorded W2 FAIL/ABORT. `--fb guest` repeat: `W2g`. Each costs a full image transfer and a fresh m1n1 boot.
+`W2-e4` (j293-e4, the four E cores in the ACPI tables, `--smp`) and `W2-e1` (j293-e1, the boot core only, `--no-smp`) are the commands of day 4 section 6.3, verbatim, with the bundle's own files `WATARI_M1_EFI-e4.fd` / `-e1.fd` (present only if the bundle was built with `--fallback-efi`; `preflight` lists them and re-checks their manifests; `monday.py rung` refuses a fallback whose manifest is not `model=j293-e4|e1`, the matching tag, `bench=0`, `dirty=0`, SHA-256 equal). **Reading the symptom is yours; choosing the fallback is Marco's** (Q-4D-8: no answer, no fallback run):
+
+1. After a recorded W2 FAIL/ABORT, read the symptom off the photos and take the row of the section 6.3 table: bugcheck `0xA0`, frozen logo after `PSCI CPU_ON cpu 4..7 accepted`, an IPI storm, `0x101`/`0x133` -> **e4**; the same symptom again with e4 -> **e1**. Stops that are not about the core count (`0x5C`, `0x7B`, `0x1A`, black panel, bootmgr errors, loader exit codes) get **no fallback**: tell Marco and stop.
+2. Tell Marco (Italian): *"Marco, il sintomo e' <...>: la tabella 6.3 propone il firmware con i soli quattro core efficienti (e4); Windows girerebbe su 4 core invece di 8. Dai il 'go e4'?"* Only his "go e4" / "go e1" in chat, then `python3 monday.py confirm fallback-e4 --by Marco` (or `fallback-e1`). That confirmation cannot be bypassed, not even with `--force-gate`.
+3. The gate also needs W2 FAIL/ABORT (for e1: W2-e4 FAIL/ABORT too), the image and backup confirmations and the rate. Fresh m1n1 boot, new image transfer, `rung W2-e4 --marco-go` (or `W2-e1`), photos as W2, `verdict W2-e4|W2-e1`, `verdict W3-e4|W3-e1`. A fallback PASS does not erase the W2 FAIL: record it, tell Marco, he decides about M3b with 4 or 1 core.
+
+`--fb guest` repeat: `W2g`, only after a rung reached the kernel in band mode and only if Marco decides.
 
 ## 7. What to send back to Marco, and cleanup
 
@@ -90,5 +97,5 @@ Between rungs: `python3 monday.py next`. It applies the gates (`D0 PASS -> D1 ->
 ## 9. Open points
 
 - The procedures count the stopwatch from `handed over.`; on a device that line comes after the loader's reply wait, so `monday.py` starts it at `kboot_boot(` **[hypothesis from the code, check on the day]**.
-- The fallback commands wait for the decision tree (T16g); `test_monday.py` only checks that they are W2 with another firmware file.
+- `test_monday.py` checks the fallback commands verbatim against day-4 section 6.3; the bundle's file count is in section 1 of `re/m3a-bundle-rehearsal-n5.md` (day-3 bundle, day-4 bundle, day-4 bundle with fallbacks).
 - The first proxy contact is D0 (RAM only): the loader offers no harmless probe, so `preflight` cannot test the link.
