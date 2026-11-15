@@ -89,6 +89,8 @@ it lives only under `$WATARI_DATA/winram/` and in the bundle folder, never in th
 | Option | Meaning |
 |---|---|
 | `--ramdisk <image>` | with `--edk2` on D0 or D2 (other rungs: refused, exit 2). A path, or a name relative to the bundle folder (`winram/winram.img`). A **fourth block** |
+| `--pmlog` [`--pmlog-size <KiB>`, `--pmlog-base 0x..`] | T16j, any rung: the **post-mortem log**. Allocates the ring (an own 32 MB block, LAST, so the other blocks keep their addresses; or the fixed `--pmlog-base`, 16 KB aligned), zeroes `--pmlog-size` KiB (default 1024), passes `wel2.pmlog=0x<base>,0x<size>`, writes `<out>/pmlog-base.json` at the jump (not in `--dry-run`); BLOCK CHECK covers the region |
+| `--postmortem` [`--pmlog-base 0x..`] | after the Mac is back in m1n1 proxy mode (the reset, then the m1n1 boot): reads the ring back (**reads only**), validates magic and CRC, writes `<out>/pmlog.txt` and `pmlog.bin`, prints the header and the last 30 lines. Exit 0 ok, 5 no valid header (DRAM did not keep it or wrong base), 6 CRC bad / inconsistent (text kept, UNVERIFIED). **Whether DRAM survives the reset is unknown [hypothesis]: a Monday check** |
 | `--ramdisk-test <MiB>` | the **rate test**, no `--rung`: one 32 MB aligned block, `<MiB>` of a test pattern written in slices, read back and compared, MB/s each way, an estimate for a 704 MiB image. No DTB, no layer, no boot arguments, no jump, no write outside its block |
 | `--ramdisk-slice <MiB>` | slice size (default 16) |
 | `--ramdisk-verify sample\|full\|none` | read-back per slice: first and last 4 KiB (default), the whole slice, or none |

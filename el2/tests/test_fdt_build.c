@@ -579,6 +579,51 @@ static void t_ramdisk(void)
 	}
 }
 
+/* T16j: /reserved-memory/pmlog@<base>, alone and next to a RAM disk; size 0 = byte-identical to before. */
+static void t_pmlog(void)
+{
+	static uint8_t B0[WEL2_GFDT_MAX + 64];
+	struct wel2_gfdt_in in;
+	uint32_t size = 0, size0 = 0;
+	struct col c;
+	const struct pr *p;
+	const uint64_t pb = 0x9e0000000ULL, ps = 0x100000ULL;
+
+	fill_j293(&in, J293, 5);
+	CHECK_EQ(guest_fdt_build(B0, sizeof(B0), &in, &size0), 0);
+	in.pmlog_base = pb; in.pmlog_size = 0;
+	CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), 0);
+	CHECK_EQ(size, size0);
+	CHECK(!memcmp(B, B0, size));
+	in.pmlog_size = ps;
+	CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), 0);
+	CHECK_EQ(fdt_check(B), 0);
+	CHECK_EQ(collect(B, &c), 0);
+	CHECK((p = find(&c, "reserved-memory", "ranges", 0)) && p->len == 0);
+	CHECK((p = find(&c, "pmlog@9e0000000", "compatible", 0)) && !strcmp((const char *)p->val, "watari,pmlog"));
+	CHECK((p = find(&c, "pmlog@9e0000000", "reg", 0)) && p->len == 16 && be64(p->val) == pb && be64(p->val + 8) == ps);
+	CHECK((p = find(&c, "pmlog@9e0000000", "no-map", 0)) && p->len == 0);
+	CHECK(!contains(B, size, "watari,ramdisk"));
+	/* with a RAM disk: one reserved-memory node, both children */
+	in.ramdisk_base = 0x840000000ULL; in.ramdisk_size = 0x1001000;
+	CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), 0);
+	CHECK_EQ(collect(B, &c), 0);
+	CHECK(find(&c, "ramdisk@840000000", "reg", 0) && find(&c, "pmlog@9e0000000", "reg", 0));
+	{
+		unsigned k = 0;
+
+		for (unsigned i = 0; i < c.n; i++)
+			if (!strcmp(c.p[i].node, "reserved-memory") && !strcmp(c.p[i].name, "ranges"))
+				k++;
+		CHECK_EQ(k, 1);
+	}
+	in.ramdisk_size = 0;
+	in.pmlog_base = 0; in.pmlog_size = ps;               /* a base of zero is refused */
+	CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), -1);
+	in.pmlog_base = 0xfffffffffffff000ULL; in.pmlog_size = 0x2000;
+	CHECK_EQ(guest_fdt_build(B, sizeof(B), &in, &size), -1);
+}
+
 /* T21: wel2_gfdt_place_ramdisk, the validation + carve + placement the layer and the host preview share. */
 #define FDTMAX WEL2_GFDT_MAX
 
@@ -836,6 +881,7 @@ int main(void)
 	RUN(t_guest_bounds);
 	RUN(t_guest_bad_input);
 	RUN(t_ramdisk);
+	RUN(t_pmlog);
 	RUN(t_place_ramdisk);
 	RUN(t_dtc);
 	RUN(t_place_qemu_bench);
