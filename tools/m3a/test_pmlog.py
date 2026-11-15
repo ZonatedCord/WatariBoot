@@ -9,6 +9,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import struct
 import sys
 import tempfile
@@ -119,11 +120,13 @@ with tempfile.TemporaryDirectory() as tmp:
     n = names(t)
     check(rc == 0, "D2 --pmlog hands over")
     allocs = [c for c in t.calls if c[0] == "memalign"]
-    check(len(allocs) == 4 and all(c[1] == wl.BLOCK for c in allocs), "D2 --pmlog: four 32 MB aligned blocks (layer, spacer, edk2, pmlog)")
+    check(len(allocs) == 3 and all(c[1] == wl.BLOCK for c in allocs), "D2 --pmlog: still three 32 MB aligned blocks (layer, spacer, edk2): the ring takes no block of its own")
     pm = [c for c in t.calls if c[0] == "writemem" and c[2] == 1024 * 1024]
     check(len(pm) == 1 and pm[0][1] % wl.BLOCK == 0, "the region is written once, 1 MiB, at its block")
-    check(max(i for i, c in enumerate(t.calls) if c[0] == "memalign") == t.calls.index(pm[0]) - 1,
-          "the pmlog block is allocated LAST (right before its zeroing write)")
+    spacer_addr = int(re.search(r"^SPACER 32 MB aligned block at 0x([0-9a-f]+)", out, re.M).group(1), 16)
+    edk2_addr = int(re.search(r"^EDK2 .* bytes at 0x([0-9a-f]+)", out, re.M).group(1), 16)
+    check(pm[0][1] == spacer_addr and spacer_addr + wl.BLOCK == edk2_addr,
+          "the ring sits at the start of the SPACER block, below EDK2: the range that holds EDK2's entry stays whole (placement rule: 64 MB above the FDT)")
     check(t.mem[pm[0][1]] == b"\0" * 1024 * 1024, "the region is zeroed")
     ba = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
     check("wel2.pmlog=0x%x,0x100000" % pm[0][1] in ba.split(), "boot arguments carry wel2.pmlog=0x<base>,0x100000: %r" % ba)
@@ -141,6 +144,14 @@ with tempfile.TemporaryDirectory() as tmp:
     ba = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
     check(rc == 0 and "pmlog" not in ba and t.calls.count(("memalign", wl.BLOCK, wl.BLOCK)) == 3 and not os.path.exists(os.path.join(tmp, "out", wl.PM_RECORD)),
           "no --pmlog: no pmlog argument, three blocks, no record")
+    t = Fake()
+    rc, out = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    d0_blocks = re.findall(r"^BLOCK  (layer|guest|edk2) .*at (0x[0-9a-f]+)", out, re.M)
+    t = Fake()
+    rc, out = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd", "--pmlog", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    pm_blocks = re.findall(r"^BLOCK  (layer|guest|edk2) .*at (0x[0-9a-f]+)", out, re.M)
+    pmr = re.search(r"^PMLOG  region (0x[0-9a-f]+)", out, re.M).group(1)
+    check(d0_blocks == pm_blocks and len(pm_blocks) == 3 and pmr == dict(pm_blocks)["guest"], "D0 --pmlog: the same three block addresses as D0 without it; the ring is in the 'guest' (spacer) block")
 
     # D0 previews: the region is allocated and checked, not written, not recorded, not passed
     t = Fake()

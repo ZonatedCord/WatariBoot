@@ -30,8 +30,10 @@ range, rounded to 1 MiB, 32 MB aligned) is allocated FIRST (before the layer blo
 retry, read-back), the trailer last, caches cleaned over the whole range, and `wel2.ramdisk=0x<base>,0x<size>` goes into the
 boot arguments. `--ramdisk-test <MiB>` is the proxy rate test: one block, write + read back, MB/s, no DTB, no layer, no jump.
 
-Post-mortem log (T16j, el2/include/wel2_pmlog.h): `--pmlog` (with any rung; `--pmlog-size KIB`, default 1024) allocates a 32 MB aligned block
-from the proxy heap LAST (after every other block, so their addresses do not move), zeroes the first KIB of it before the jump (the
+Post-mortem log (T16j, el2/include/wel2_pmlog.h): `--pmlog` (with any rung; `--pmlog-size KIB`, default 1024) with --edk2 puts the region at
+the start of the unwritten spacer block (D0's "guest" block: no extra allocation, all addresses as D0 checked them, and the range that
+holds EDK2's entry stays whole: the layer wants 64 MB of it above the FDT, so a ring cut out right after the EDK2 block is refused, placement
+code 5); without --edk2 it allocates a 32 MB aligned block from the proxy heap LAST. It zeroes the first KIB of it before the jump (the
 region the layer cuts out of guest RAM and fills with its console lines) and passes `wel2.pmlog=0x<base>,0x<size>`; `--pmlog-base 0x..`
 uses a fixed 16 KB aligned address instead (BLOCK CHECK covers either). At the jump the base is recorded in <out>/pmlog-base.json.
 `--postmortem` (no rung, no jump, writes nothing on the target) reads the region back after the Mac is in m1n1 proxy mode again,
@@ -922,15 +924,28 @@ def run_gfdt(tool, blob_path, layer_addr, entry, image_size, fb, gran=None, ramd
     return r.returncode, r.stdout
 
 
-def pmlog_place(args, target):
-    """The post-mortem region's address: the fixed --pmlog-base, else a 32 MB aligned block from the proxy heap (the region sits at its
-    start; the rest of the block is ordinary guest RAM again)."""
+def pmlog_place(args, target, spacer=None):
+    """The post-mortem region's address: the fixed --pmlog-base; else, with --edk2, the start of the unwritten SPACER block (D0's "guest"
+    block: no extra allocation, the layer and EDK2 blocks keep D0's addresses, and the range that holds EDK2's entry stays whole above
+    it: the layer's placement rule wants 64 MB of that range above the FDT, so a ring cut out right AFTER the EDK2 block would be
+    refused with wel2_gfdt_place code 5, found 2026-11-15 by the dry-run of the Monday rungs); else a 32 MB aligned block from the proxy
+    heap. The region sits at the start of its block; the rest of the block is ordinary guest RAM again."""
     if args.pmlog_base is not None:
         return args.pmlog_base
+    if spacer is not None:
+        if spacer % BLOCK:
+            raise LoadError("the pmlog spacer block is not 32 MB aligned (0x%x)" % spacer)
+        return spacer
     a = target.memalign(BLOCK, BLOCK)
     if a % BLOCK:
         raise LoadError("the pmlog block is not 32 MB aligned (0x%x)" % a)
     return a
+
+
+def pmlog_where(args, with_edk2):
+    if args.pmlog_base is not None:
+        return "fixed --pmlog-base"
+    return "start of the spacer block: D0's addresses unchanged, EDK2's range whole" if with_edk2 else "own block, allocated last"
 
 
 def run(args, target):
@@ -982,7 +997,7 @@ def run(args, target):
             rd = load_ramdisk(args)
         path = rd.path
         sl = args.ramdisk_slice * MIB
-        if pm_size and args.pmlog_base is None and heap_need(rd.range_size) + BLOCK > HEAP_BYTES:
+        if pm_size and args.pmlog_base is None and not args.edk2 and heap_need(rd.range_size) + BLOCK > HEAP_BYTES:
             raise LoadError("--pmlog needs its own 32 MB block after the ramdisk's blocks: %.0f MiB + 32 MiB exceed m1n1's %d MiB proxy heap "
                             "(use a smaller image or --pmlog-base 0x<addr>)" % (heap_need(rd.range_size) / MIB, HEAP_BYTES // MIB), 2)
         say("RAMDISK PLAN: %s: %d bytes (%.1f MiB), sha256 %s (matches its sidecar), crc32 0x%08x" %
@@ -1046,9 +1061,9 @@ def run(args, target):
         for k, v in l0_blocks.items():
             say("BLOCK  %-5s 32 MB aligned block at 0x%x (not written)" % (k, v))
         if pm_size:
-            pm_addr = pmlog_place(args, target)
+            pm_addr = pmlog_place(args, target, l0_blocks["guest"] if edk2_name else None)
             say("PMLOG  region 0x%x..0x%x (%d KiB, %s; not written)" %
-                (pm_addr, pm_addr + pm_size, pm_size // 1024, "fixed --pmlog-base" if args.pmlog_base is not None else "own block, allocated last"))
+                (pm_addr, pm_addr + pm_size, pm_size // 1024, pmlog_where(args, edk2_name)))
     if layer is not None:
         layer_addr = target.memalign(BLOCK, BLOCK)
         if layer_addr % BLOCK:
@@ -1070,12 +1085,12 @@ def run(args, target):
         target.write(edk2_addr, edk2)
         say("EDK2   %-22s %7d bytes at 0x%x  sha256 %s" % (edk2_name, len(edk2), edk2_addr, sha256(edk2)[:16]))
     if pm_size and not preview:
-        pm_addr = pmlog_place(args, target)                # LAST: the other blocks keep the addresses D0 checked
+        pm_addr = pmlog_place(args, target, spacer if edk2 is not None else None)    # in the spacer block (EDK2) or an own block LAST
         target.write(pm_addr, b"\0" * pm_size)               # the layer starts a fresh ring (it keeps a valid old header's counter)
         if not target.dry_run and target.read(pm_addr, PM_HDR) != b"\0" * PM_HDR:
             raise LoadError("pmlog region 0x%x: read-back after zeroing differs" % pm_addr)
         say("PMLOG  region 0x%x..0x%x (%d KiB, zeroed, %s)" %
-            (pm_addr, pm_addr + pm_size, pm_size // 1024, "fixed --pmlog-base" if args.pmlog_base is not None else "own block, allocated last"))
+            (pm_addr, pm_addr + pm_size, pm_size // 1024, pmlog_where(args, edk2 is not None)))
 
     # --- 3. cache maintenance ----------------------------------------------------------------------------------------
     for addr, length in ((rd_addr, rd.range_size if rd else 0), (layer_addr, len(layer) if layer else 0),
@@ -1174,6 +1189,8 @@ def run(args, target):
             else:
                 blocks.update({"layer": layer_addr, "edk2": edk2_addr})      # the spacer is never used
             if pm_size:
+                if preview and edk2_name and args.pmlog_base is None:
+                    blocks.pop("guest", None)                                  # the ring lives in D0's "guest" (spacer) block: checked as the region
                 blocks["pmlog"] = (pm_addr, pm_size, PM_ALIGN)                  # the region only, not its 32 MB block
             if rd is None and not pm_size:
                 say("== block placement check (host side): are the layer/%s blocks wholly inside usable RAM? ==" %

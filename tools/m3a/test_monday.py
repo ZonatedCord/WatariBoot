@@ -74,7 +74,7 @@ for rid in mo.ORDER:
         check(bool(r["note"]), "%s: derived command has a note: %s" % (rid, r["note"][:70]))
 a = lambda x: mo.RUNGS[x]["args"]
 check(a("D3b") + " --args wel2.hold=1" == a("D2"), "D3b is D2 minus the hold")
-check(a("D4a") == "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --cpuif trap-notc --args wel2.hold=1" and "--smp" not in a("D4a"), "D4a is trap-notc without --smp")
+check(a("D4a") == "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --cpuif trap-notc --pmlog --args wel2.hold=1" and "--smp" not in a("D4a"), "D4a is trap-notc without --smp")
 check("--smp" in a("D4b") and "trap-notc" not in a("D4b"), "D4b is --smp with trap")
 check(a("D5b") == a("D5") and mo.RUNGS["D5b"]["bundle"] == "bgr8", "D5b is D5 from the BGR8 bundle")
 check(a("W2g") == a("W2").replace("--fb band", "--fb guest"), "W2g is W2 with --fb guest")
@@ -137,7 +137,7 @@ for what, t, expect in (
     ("no kboot_boot line", base.replace("kboot_boot(0x842000000) ...", "kboot_prepared"), "kboot_boot sent"),
     ("identifying text", base + "serial-number = <0x1>\n", "log hygiene"),
     ("GIC address wrong", base.replace("0xf 0x0 0x0 0x10000", "0x0 0x8000000 0x0 0x10000"), "GIC node"),
-    ("first memory range too small", re.sub(r"reg = <0x8 0x44000000 0x1 0xbc000000>", "reg = <0x8 0x44000000 0x0 0x4000000>", base), "first /memory range holds the EDK2 block"),
+    ("first memory range too small", re.sub(r"reg = <0x8 0x44100000 0x1 0xbbf00000>", "reg = <0x8 0x44100000 0x0 0x4000000>", base), "first /memory range holds the EDK2 block"),
 ):
     ov, res, _ = run("D2", t, dry=False)
     check(ov == "FAIL" and expect in failing(res), "D2 %s -> FAIL (%s)" % (what, expect))
@@ -177,9 +177,92 @@ check(run("W1a", t, dry=False)[0] == "FAIL", "'not compared' is not accepted on 
 check(run("W1a2", fixture("W1a-nocsum"))[0] == "PASS", "--no-data-csums output is accepted (the 'data checksums disabled' line)")
 check(run("W1a2", fixture("W1a"))[0] == "FAIL", "--no-data-csums needs its 'data checksums disabled' line")
 
+print("== --pmlog on the EDK2 jump rungs, PM0, the post-mortem reader (T16j) ==")
+jumps = [x for x in mo.ORDER if mo.RUNGS[x]["jump"]]
+for x in jumps:
+    has = "--pmlog" in mo.RUNGS[x]["args"].split()
+    want = "--edk2" in mo.RUNGS[x]["args"] or "--rung D2" in mo.RUNGS[x]["args"]
+    check(has == want, "%s: --pmlog %s (every EDK2 jump rung, not D1's test-guest L5)" % (x, "present" if has else "absent"))
+check(all("--pmlog --args wel2.hold=1" in mo.RUNGS[x]["args"] for x in ("D2", "D4", "D5", "W1c", "W2", "W2g", "W2-e4", "W2-e1")), "the ring flag sits right before --args wel2.hold=1 (as in the procedures)")
+check("--pmlog" not in a("D0") and "--pmlog" not in a("W1b") and "--pmlog" not in a("D1"), "previews and D1 do not set up a ring")
+check(mo.RUNGS["PM0"]["kind"] == "postmortem" and not mo.RUNGS["PM0"]["jump"] and mo.RUNGS["PM0"]["args"] == "--postmortem", "PM0 is a read-only [check] rung (loader --postmortem)")
+check(mo.rung_command_text(mo.RUNGS["PM0"]) in docs[3], "PM0 command appears in the day-3 procedure: %s" % mo.rung_command_text(mo.RUNGS["PM0"]))
+d0, d2 = fixture("D0"), fixture("D2")
+d0_addr = {k: v for k, v in re.findall(r"^BLOCK  (layer|edk2) .* at (0x[0-9a-f]+)", d0, re.M)}
+d2_addr = {"layer": re.search(r"^LAYER  .* at (0x[0-9a-f]+)", d2, re.M).group(1), "edk2": re.search(r"^EDK2   .* at (0x[0-9a-f]+)", d2, re.M).group(1)}
+check(d0_addr == d2_addr and len(d0_addr) == 2, "D2 --pmlog keeps D0's layer and EDK2 block addresses %s (the ring takes no block of its own)" % d0_addr)
+pmm = re.search(r"^PMLOG  region 0x([0-9a-f]+)\.\.0x([0-9a-f]+) \(1024 KiB, zeroed, start of the spacer block", d2, re.M)
+spc = re.search(r"^SPACER 32 MB aligned block at 0x([0-9a-f]+)", d2, re.M)
+edk = re.search(r"^EDK2   \S+ +\d+ bytes at 0x([0-9a-f]+)", d2, re.M)
+d0g = re.search(r"^BLOCK  guest .* at 0x([0-9a-f]+)", d0, re.M)
+check(bool(pmm and spc and edk and d0g) and int(pmm.group(1), 16) == int(spc.group(1), 16) == int(d0g.group(1), 16) and int(spc.group(1), 16) + (32 << 20) == int(edk.group(1), 16),
+      "D2 --pmlog: the ring is at the start of the spacer block (= D0's 'guest' block), right below EDK2: the entry's range stays whole (the 64 MB placement rule; a ring above EDK2 is refused, code 5)")
+check("GUEST FDT CHECK: PASS" in d2, "D2 --pmlog dry run: GUEST FDT CHECK still PASS (gfdt_dump --pmlog accepted the placement)")
+w1c = fixture("W1c")
+rdb = re.search(r"wel2\.ramdisk=0x([0-9a-f]+),", w1c)
+pmw = re.search(r"wel2\.pmlog=0x([0-9a-f]+),0x100000", w1c)
+check(bool(rdb) and bool(pmw) and int(pmw.group(1), 16) % (32 << 20) == 0 and int(pmw.group(1), 16) > int(rdb.group(1), 16), "W1c: wel2.pmlog=<32 MB aligned>,0x100000 after wel2.ramdisk in the boot arguments")
+for fx, rid in (("D2", "D2"), ("D4", "D4"), ("D5", "D5"), ("W1c", "W1c"), ("W2", "W2")):
+    ov, res, facts = run(rid, fixture(fx))
+    check(ov == "PASS" and facts.get("pmlog_base") and facts.get("pmlog_size") == 1 << 20 and facts.get("pmlog_arg"), "%s: PMLOG/POSTMORTEM lines checked, base %s recorded as a fact" % (rid, facts.get("pmlog_base")))
+base2 = hardware(fixture("D2"))
+for what, t, expect in (
+    ("no PMLOG line", re.sub(r"^PMLOG  region.*$", "", base2, flags=re.M), "PMLOG region"),
+    ("no POSTMORTEM line", re.sub(r"^POSTMORTEM base.*$", "", base2, flags=re.M), "POSTMORTEM base recorded"),
+    ("pmlog argument missing", re.sub(r" wel2\.pmlog=0x[0-9a-f]+,0x[0-9a-f]+", "", base2), "boot arguments"),
+    ("pmlog base differs from the region", re.sub(r"wel2\.pmlog=0x[0-9a-f]+,", "wel2.pmlog=0x10000000,", base2), "pmlog base agrees everywhere"),
+):
+    ov, res, _ = run("D2", t, dry=False)
+    check(ov == "FAIL" and expect in failing(res), "D2 %s -> FAIL (%s)" % (what, expect))
+
+import struct
+import zlib
+def ring(text, size=0x4000, boots=1, seal=True):
+    cap = size - 64
+    data = bytearray(size)
+    body = text.encode()
+    data[64:64 + len(body)] = body
+    hdr = struct.pack("<8sIIIIQII20s", b"WEL2PMLG", 1, 64, cap, boots, len(body), len(body) // cap, 0, b"\0" * 20)
+    crc = zlib.crc32(hdr) & 0xffffffff
+    data[:64] = hdr + struct.pack("<I", crc if seal else crc ^ 1)
+    return bytes(data)
+PM_TEXT = ("Watari EL2: post-mortem log ring at 0x0000000840000000\n"
+           "Watari EL2: checkpoint 7 BOOT_GUEST\n"
+           "Watari EL2: PSCI CPU_ON cpu 1 accepted\nWatari EL2: PSCI CPU_ON cpu 2 accepted\nWatari EL2: PSCI CPU_ON cpu 1 accepted\n"
+           "Watari EL2: M1 CPU_ON failed: no usable release address or already released, ret = 0xfffffffffffffffd\n"
+           "Watari EL2: checkpoint 8 ENTER_GUEST\n"
+           "Watari EL2: stats: guest ICC_SGI*R writes trapped = 0x000000000006540\n"
+           "Watari EL2: stats: LR injections    = 0x0000000000000011\n"
+           "Watari EL2: FATAL: unhandled guest abort, halted\n")
+sm = mo.pm_summary(PM_TEXT)
+check(sm["last_checkpoint"] == "8 ENTER_GUEST" and sm["cpu_on_ok"] == [1, 2] and len(sm["cpu_on_failed"]) == 1 and len(sm["fatal"]) == 1
+      and sm["stats"] == 2 and "ICC_SGI*R" in sm["sgi_line"] and not sm["hold"] and sm["lines"] == 10, "pm_summary: last checkpoint, CPU_ON (unique + failed), FATAL, stats, hold: %s" % {k: sm[k] for k in ("last_checkpoint", "cpu_on_ok", "stats")})
+check(mo.pm_summary("")["last_checkpoint"] is None and mo.pm_summary("")["fatal"] == [], "pm_summary of an empty log")
+check(all(l for l in mo.pm_summary_lines(sm)) and any("FATAL" in l for l in mo.pm_summary_lines(sm)), "the summary lines print")
+
+
 print("== results file and gate logic ==")
 fake = os.path.join(tempfile.mkdtemp(), "fake_loader.py")
 open(fake, "w").write('import os, sys\nsys.stdout.write(open(os.environ["FAKE_FIXTURE"]).read().rsplit("exit=", 1)[0])\nsys.exit(int(os.environ.get("FAKE_EXIT", "0")))\n')
+tmpd = tempfile.mkdtemp()
+PM_GOOD, PM_TORN, PM_NONE = (os.path.join(tmpd, n) for n in ("good.bin", "torn.bin", "none.bin"))
+open(PM_GOOD, "wb").write(ring(PM_TEXT, boots=2))
+open(PM_TORN, "wb").write(ring(PM_TEXT, seal=False))
+open(PM_NONE, "wb").write(b"\0" * 0x4000)
+# a loader for `postmortem`: the REAL watari-load.py run_postmortem on a fake proxy that serves a synthetic ring (FAKE_PM_REGION) at the base it was given
+fake_pm = os.path.join(tmpd, "fake_pm_loader.py")
+open(fake_pm, "w").write("""import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("wl", %r)
+wl = importlib.util.module_from_spec(spec); spec.loader.exec_module(wl)
+class T:
+    dry_run = False
+    def read(self, addr, n):
+        i = sys.argv.index("--pmlog-base"); base = int(sys.argv[i + 1], 0)
+        data = open(os.environ["FAKE_PM_REGION"], "rb").read()
+        off = addr - base
+        return (data[off:off + n] + b"\\0" * n)[:n]
+sys.exit(wl.main(sys.argv[1:] + ["--bundle", os.getcwd()], T()))
+""" % os.path.join(HERE, "watari-load.py"))
 
 
 def mon(bundle, out, *args, fixture_name=None, exit_code=0):
@@ -237,12 +320,18 @@ code, txt = mon(b3, out, "next", "--dry-run")
 check("verdict D3" in txt, "next: D3 verdict still missing after D2 PASS")
 check(V("D3", "PASS") == 0, "verdict D3 PASS")
 code, txt = mon(b3, out, "next", "--dry-run")
-check("RUN:  python3 monday.py rung D4 --marco-go" in txt and "Italiano" in txt, "next: D4 is the next rung (jump, so --marco-go)")
+check("RUN:  python3 monday.py postmortem" in txt and "PM0" in txt and "rung D4" not in txt, "next: PM0 (post-mortem check) comes right after the D2/D3 verdicts, before D4")
+os.environ["FAKE_PM_REGION"] = PM_GOOD
+code, txt = mon(b3, out, "postmortem", "--dry-run", "--loader", fake_pm)
+check(code == 0 and "RESULT PM0: RECOVERED" in txt, "PM0 through the real loader's --postmortem on a synthetic ring: RECOVERED")
+code, txt = mon(b3, out, "next", "--dry-run")
+check("RUN:  python3 monday.py rung D4 --marco-go" in txt and "Italiano" in txt, "next: D4 is the next rung once PM0 is recorded (jump, so --marco-go)")
 code, txt = R("D4", "D4")
 check(code == 0, "D4 runs")
 check(V("D4", "ABORT") == 0, "verdict D4 ABORT")
 code, txt = mon(b3, out, "next", "--dry-run")
 check("STOP" in txt and "D4" in txt and "RUN:" not in txt, "next after an ABORT: stop and ask Marco, no rung offered")
+check("FIRST the post-mortem log, THEN the photos" in txt and "python3 monday.py postmortem" in txt, "next after an ABORT of a ring-carrying jump: postmortem first, then photos")
 code, txt = R("D5", "D5")
 check(code == mo.EX_GATE and "Marco has not said to proceed" in txt, "an unresolved ABORT blocks the next jump rung")
 code, txt = R("D4a", "D4", "--force-gate", "x")
@@ -279,6 +368,75 @@ code, txt = mon(b4, out, "next", "--dry-run")
 check("W3 =" in txt or "W3" in txt, "next: W3 verdict pending")
 code, txt = mon(b4, out, "rung", "W2-e4", "--dry-run", "--quiet", "--loader", fake, "--force-bundle", fixture_name="W2")
 check(code == mo.EX_GATE and "confirm:fallback-e4" in txt and "not bypassable" in txt, "the fallback is refused without Marco's 'go e4' (also with --force-gate)")
+# --- postmortem command: no source, NOLOG, UNVERIFIED, RECOVERED, ids, next logic ---
+pd = tempfile.mkdtemp()
+PMR = lambda *extra: mon(b3, pd, "postmortem", "--dry-run", "--loader", fake_pm, *extra)
+code, txt = PMR()
+check(code == mo.EX_PRECOND and "no recorded jump run" in txt, "postmortem without a recorded ring-carrying jump run is refused")
+mo.append_record(os.path.join(pd, "results-dryrun.md"), "W2", "auto", [("result", "PASS"), ("pmlog-base", "0x844000000")])
+os.environ["FAKE_PM_REGION"] = PM_NONE
+code, txt = PMR()
+rec = open(os.path.join(pd, "results-dryrun.md")).read()
+check(code == 0 and "RESULT PM-W2: NOLOG" in txt and "solo foto" in txt and "### PM-W2 auto" in rec and "- dram-kept: no" in rec and "- loader-exit: 5" in rec,
+      "exit 5 (no header): NOLOG recorded as PM-W2 (source W2), dram-kept no, 'photos only' said in Italian")
+check(not os.path.exists(os.path.join(pd, "pmlog.txt")), "NOLOG leaves no pmlog.txt behind")
+os.environ["FAKE_PM_REGION"] = PM_TORN
+code, txt = PMR()
+check(code == 0 and "RESULT PM-W2: UNVERIFIED" in txt and "FATAL: unhandled guest abort" in txt and "header CRC BAD" in txt, "exit 6 (CRC bad): the text is still shown, flagged UNVERIFIED")
+os.environ["FAKE_PM_REGION"] = PM_GOOD
+code, txt = PMR()
+rec = open(os.path.join(pd, "results-dryrun.md")).read()
+check(code == 0 and "RESULT PM-W2: RECOVERED" in txt and "last 40 lines of 10" in txt and "SUMMARY (verified)" in txt and "last checkpoint : 8 ENTER_GUEST" in txt, "RECOVERED: last lines and summary printed")
+check("- last-checkpoint: 8 ENTER_GUEST" in rec and "- fatal-lines: 1" in rec and "- cpu-on-accepted: 2 [1, 2]" in rec and "- cpu-on-failed: 1" in rec and "- stats-lines: 2" in rec
+      and "- dram-kept: yes" in rec and "- source: W2" in rec and "boot counter 2" in rec and "- pmlog-base: 0x844000000" in rec, "the record: checkpoint, FATAL count, CPU_ON counts, stats lines, boot counter, base")
+check(os.path.exists(os.path.join(pd, "pmlog.txt")) and "FATAL" in open(os.path.join(pd, "pmlog.txt")).read()
+      and any(f.endswith("-PM-W2-pmlog.txt") for f in os.listdir(pd)) and any(f.endswith("-PM-W2.log") for f in os.listdir(pd)), "out/pmlog.txt, a stamped copy and the loader log are saved next to the rung logs")
+os.environ["FAKE_PM_REGION"] = PM_NONE
+code, txt = PMR()
+check("RESULT PM-W2: NOLOG" in txt and "SUMMARY" not in txt, "a stale pmlog.txt from an earlier run is not re-read after a NOLOG run")
+code, txt = mon(b3, pd, "postmortem", "--dry-run", "--loader", fake_pm, "--rung", "D4")
+check(code == mo.EX_PRECOND, "--rung D4 without a recorded D4 ring: refused")
+# next logic on records
+rp = tempfile.mkdtemp()
+RP = os.path.join(rp, "results.md")
+for fid in ("backup",):
+    mo.append_record(RP, fid, "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+for fid in ("D0", "D1"):
+    mo.append_record(RP, fid, "verdict", [("result", "PASS")])
+mo.append_record(RP, "D2", "auto", [("result", "PASS"), ("pmlog-base", "0x846000000")])
+mo.append_record(RP, "D2", "verdict", [("result", "PASS")])
+mo.append_record(RP, "D3", "verdict", [("result", "PASS")])
+recs = mo.parse_results(RP)
+rid, lines, _ = mo.next_step(recs, "day3")
+check(rid == "PM0" and "post-mortem" in " ".join(lines) and "monday.py postmortem" in " ".join(lines), "next: after D2/D3 PASS with a ring, PM0 is proposed first")
+check(mo.gate_check(recs, mo.RUNGS["D4"])[0] is True, "PM0 is a [check], not a gate: D4 stays open")
+mo.append_record(RP, "confirm-skip", "note", [("x", "1")])
+mo.append_record(RP, "skip-pm0", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+rid, lines, _ = mo.next_step(mo.parse_results(RP), "day3")
+check(rid == "D4", "confirm skip-pm0 waives PM0: next is D4")
+mo.append_record(RP, "PM0", "auto", [("result", "NOLOG"), ("source", "D2"), ("pmlog-base", "0x846000000")])
+rid, lines, _ = mo.next_step(mo.parse_results(RP), "day3")
+check(rid == "D4", "PM0 recorded (also NOLOG): next is D4")
+mo.append_record(RP, "D4", "auto", [("result", "PASS"), ("pmlog-base", "0x846000000")])
+mo.append_record(RP, "D4", "verdict", [("result", "FAIL"), ("note", "frozen")])
+rid, lines, _ = mo.next_step(mo.parse_results(RP), "day3")
+check(rid is None and "FIRST the post-mortem log, THEN the photos" in " ".join(lines) and "FAIL/ABORT" in " ".join(lines), "next after a D4 FAIL with a ring: postmortem first, then the photos")
+mo.append_record(RP, "PM-D4", "auto", [("result", "RECOVERED"), ("source", "D4"), ("pmlog-base", "0x846000000")])
+rid, lines, _ = mo.next_step(mo.parse_results(RP), "day3")
+check("FIRST the post-mortem log" not in " ".join(lines), "after the postmortem of the failed run, next no longer asks for it")
+check(mo.pm_pending(mo.parse_results(RP)) is None, "pm_pending is None once read back")
+rn = tempfile.mkdtemp()
+mo.append_record(os.path.join(rn, "results.md"), "backup", "confirm", [("result", "CONFIRMED")])
+mo.append_record(os.path.join(rn, "results.md"), "D0", "verdict", [("result", "PASS")])
+mo.append_record(os.path.join(rn, "results.md"), "D1", "verdict", [("result", "PASS")])
+mo.append_record(os.path.join(rn, "results.md"), "D2", "auto", [("result", "PASS")])
+mo.append_record(os.path.join(rn, "results.md"), "D2", "verdict", [("result", "PASS")])
+mo.append_record(os.path.join(rn, "results.md"), "D3", "verdict", [("result", "PASS")])
+check(mo.next_step(mo.parse_results(os.path.join(rn, "results.md")), "day3")[0] == "D4", "a D2 run without a ring (older records): no PM0 prompt")
+code, txt = mon(b3, pd, "rung", "PM0", "--dry-run", "--loader", fake_pm)
+check(code == 0 and "post-mortem log of the W2 run" in txt, "`rung PM0` is an alias of `postmortem`")
+check(mon(b3, pd, "confirm", "skip-pm0", "--by", "Marco", "--dry-run")[0] == 0, "confirm skip-pm0 is a known key")
+
 # rate gating from records (device case)
 rd = tempfile.mkdtemp()
 mo.append_record(os.path.join(rd, "results.md"), "confirm-dummy", "note", [("x", "1")])
