@@ -119,11 +119,11 @@
     "6d68f8a2d89e": {
       "models": {
         "claude-opus-5-5": {
-          "cache_read": 52219896,
-          "cache_write_1h": 1215829,
+          "cache_read": 58368925,
+          "cache_write_1h": 1231351,
           "cache_write_5m": 0,
-          "input": 520,
-          "output": 110244
+          "input": 558,
+          "output": 128809
         },
         "claude-sonnet-5-5": {
           "cache_read": 216406299,
@@ -142,6 +142,31 @@
           "cache_write_5m": 0,
           "input": 8,
           "output": 1153
+        }
+      }
+    },
+    "768e8450860a": {
+      "models": {
+        "claude-haiku-5-5": {
+          "cache_read": 125271,
+          "cache_write_1h": 0,
+          "cache_write_5m": 77393,
+          "input": 6,
+          "output": 4016
+        },
+        "claude-opus-5-5": {
+          "cache_read": 61295319,
+          "cache_write_1h": 736968,
+          "cache_write_5m": 0,
+          "input": 626,
+          "output": 141205
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 281458765,
+          "cache_write_1h": 0,
+          "cache_write_5m": 6505316,
+          "input": 3812,
+          "output": 1470489
         }
       }
     },
