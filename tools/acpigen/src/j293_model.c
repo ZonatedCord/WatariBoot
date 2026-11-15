@@ -70,7 +70,7 @@ const acpigen_model j293_model = {
     .gtdt = &j293_gtdt, .csrt = 0, .dbg2 = 0, .fadt = &j293_fadt,
 };
 
-/* T16b (bench only, NOT for the real M1): the j293 machine description with only the four Icestorm cores (MPIDR 0..3,
+/* T16b (bench experiment; T16g: also a declared day-4 fallback for the real M1, see j293-e1 below): the j293 machine description with only the four Icestorm cores (MPIDR 0..3,
  * the same values QEMU's first four cores have), everything else as j293 (GIC at 0xF_xxxx_xxxx, MSI frame, GTDT, FADT).
  * It isolates the 8-core topology (four cores that a QEMU bench does not have, two efficiency classes) from the other
  * j293 assumptions when WinPE stops on the bench with the plain j293 tables [hypothesis: see re/m3b-winram-bench.md T16b]. */
@@ -79,6 +79,18 @@ const acpigen_model j293_e4_model = {
     .gicd = &j293_gicd,
     .madt_opts = { .boot_index = 0, .gicc_gicr_base = 0, .gicd_first = 1,
                    .gicr_range_base = 0xF10000000ull, .gicr_range_length = 4 * 0x20000,
+                   .msi_base = 0xFFFFF000ull, .msi_flags = 1, .msi_spi_count = 32, .msi_spi_base = 928 },
+    .gtdt = &j293_gtdt, .csrt = 0, .dbg2 = 0, .fadt = &j293_fadt,
+};
+
+/* T16g (day-4 fallback, usable on the real M1): the j293 machine description with the boot core only (one GICC / PPTT
+ * entry, MPIDR 0x0 = Icestorm 0, physical 0x80000000), everything else as j293 (GIC at 0xF_xxxx_xxxx with one redistributor
+ * frame, MSI frame, GTDT, FADT). For the symptom "Windows stops as soon as a second core or an IPI is involved" [hypothesis]. */
+const acpigen_model j293_e1_model = {
+    .name = "j293-e1", .cpus = j293_cpus, .ncpus = 1,
+    .gicd = &j293_gicd,
+    .madt_opts = { .boot_index = 0, .gicc_gicr_base = 0, .gicd_first = 1,
+                   .gicr_range_base = 0xF10000000ull, .gicr_range_length = 1 * 0x20000,
                    .msi_base = 0xFFFFF000ull, .msi_flags = 1, .msi_spi_count = 32, .msi_spi_base = 928 },
     .gtdt = &j293_gtdt, .csrt = 0, .dbg2 = 0, .fadt = &j293_fadt,
 };
