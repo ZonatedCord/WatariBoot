@@ -34,8 +34,8 @@
    "note": "VGA cyan (3): blue + white (Apple)"
   },
   "accent": {
-   "hex": "#00AAAA",
-   "note": "VGA cyan (3), same band as the B"
+   "hex": "#0000AA",
+   "note": "VGA blue (1), same colour as the W"
   },
   "background": {
    "hex": "#000000",

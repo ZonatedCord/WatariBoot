@@ -38,7 +38,7 @@ COLORS = {
     "plate": ("#AAAAAA", "VGA light grey (7)"),
     "W": ("#0000AA", "VGA blue (1): Windows"),
     "B": ("#00AAAA", "VGA cyan (3): blue + white (Apple)"),
-    "accent": ("#00AAAA", "VGA cyan (3), same band as the B"),
+    "accent": ("#0000AA", "VGA blue (1), same colour as the W"),
     "background": ("#000000", "VGA black (0)"),
     "light cyan": ("#55FFFF", "VGA light cyan (11), spare"),
     "white": ("#FFFFFF", "VGA white (15), spare"),

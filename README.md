@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/brand/watari-boot-icon.svg" alt="Watari Boot logo: the letters W and B built from equilateral triangles, blue and cyan on a grey plate" width="240"></p>
+<p align="center"><img src="docs/brand/watari-boot-icon.svg" alt="Watari Boot logo: the letters W and B built from equilateral triangles, W and accent in blue, B in cyan, on a grey plate" width="240"></p>
 
 # Watari Boot
 
