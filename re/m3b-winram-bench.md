@@ -233,15 +233,15 @@ fallback name, `--no-smp` starts no secondary). Rehearsal bundle `$WATARI_DATA/r
 dry runs of both fallbacks exit 0 (`docs/procedures/m3a-day4-windows-ramdisk.md` 2.3).
 
 Not shown: anything about the real M1 (AIC/FIQ, E/P-core differences, timing); the bench only proves that the machine descriptions with 1, 4 and 8 cores are accepted by the Windows kernel.
-Using a fallback on the hardware still needs Marco's decision (open question 4 below, Q-4D-8 in the procedure).
+Using a fallback on the hardware: Marco approved e4 and then e1 in advance on 2026-11-15 (`docs/decisions/2026-11-15-marco-monday.md`; open question 4 below, Q-4D-8 in the procedure).
 
 ## Next step
 
 1. Rebuild the hardware bundle (production firmware, j293 model) with the new `PcdWatariRamDiskType` default (type 0); on the bench the j293 firmware
    stops in the HAL by design (wrong GIC addresses for QEMU), so the bench's `qemu-virt-bench` build is the one that carries the evidence.
 2. Day-4 rungs W1-W3 (T24): the expected screens are r14 `shot-0004.png` (logo, spinner), `shot-0009.png` (Setup).
-3. Open question for Marco: whether NFIT + NVDIMM SSDT on the real M1 is acceptable (it is what Windows needs here).
-4. Open question for Marco (T16b, not decided here): if Windows on the real M1 stops with INTERNAL_POWER_ERROR (0xA0) or similar with the eight-core j293 tables, should the models `j293-e4` (the four Icestorm cores only, MPIDR 0..3) and, since T16g, `j293-e1` (boot core only) be allowed as explicit hardware fallbacks? Since T16g both are built, benched to Setup and can be carried in the day-4 bundle as DECLARED fallbacks (`build-m1-payload.sh --fallback-efi e4=.. e1=..`, manifest-guarded, never the main firmware); nothing selects them unless declared. Using it on the M1 would run Windows on 4 of the 8 cores (the P cores stay parked) and needs Marco's decision plus a bundle gate update.
+3. ~~Open question for Marco: whether NFIT + NVDIMM SSDT on the real M1 is acceptable.~~ **Answered: ACCEPTED** (2026-11-15, `docs/decisions/2026-11-15-marco-monday.md`).
+4. ~~Open question for Marco~~ **Answered: both fallbacks e4 then e1 approved in advance** (2026-11-15, `%s`; each use still needs the table-6.3 symptom and the recorded W2 FAIL/ABORT). Original question (T16b): if Windows on the real M1 stops with INTERNAL_POWER_ERROR (0xA0) or similar with the eight-core j293 tables, should the models `j293-e4` (the four Icestorm cores only, MPIDR 0..3) and, since T16g, `j293-e1` (boot core only) be allowed as explicit hardware fallbacks? Since T16g both are built, benched to Setup and can be carried in the day-4 bundle as DECLARED fallbacks (`build-m1-payload.sh --fallback-efi e4=.. e1=..`, manifest-guarded, never the main firmware); nothing selects them unless declared. Using it on the M1 would run Windows on 4 of the 8 cores (the P cores stay parked) and needs Marco's decision plus a bundle gate update.
 
 ## T16k: WinPE with all RAM above 4 GiB (M1 memory layout) on the bench (2026-11-15, audit item H3)
 

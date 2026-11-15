@@ -51,3 +51,7 @@ flowchart TD
 ## Status of the evidence
 
 Read on 2026-11-14: the repository, the EDK2 tree on the data disk (`edk2-stable202608`), m1n1 v1.6.1 `proxy.py` and `proxyutils.py` (GitHub raw), Microsoft Learn (WinPE intro, UEFI requirements, the UEFI WinPE walkthrough), the iPXE wimboot architecture page, and the ISO's **file names and sizes** (read-only mount, detached afterwards). No Microsoft binary was opened or analysed; the BCD in the ISO was not read. uefi.org answered 403 to the automated fetch, so UEFI-spec statements are verified against the EDK2 headers and sources that implement them, and marked so. Nothing here was built or run.
+
+## Open questions
+
+Answered on 2026-11-15: see `docs/decisions/2026-11-15-marco-monday.md` (ADR approved, 15 min transfer limit, M1 has 8 GB, image copy to Ciani's Mac approved, NFIT + NVDIMM SSDT accepted, fallbacks e4/e1 approved, rung E mandatory before W1). The risk-level questions Q-W1..Q-W10 stay in `RISKS.md`.

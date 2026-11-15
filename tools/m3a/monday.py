@@ -136,13 +136,16 @@ def rung(rid, day, name, args, title, jump=False, verdicts=(), gate=(), minutes=
 
 G_BACKUP = ("confirm:backup", {"CONFIRMED"})
 G_IMAGE = ("confirm:image-ok", {"CONFIRMED"})
+# Marco, 2026-11-15 (docs/decisions/2026-11-15-marco-monday.md, decision 6): rung E (read-only coprocessor buffer probe) is MANDATORY before any W rung.
+# PASS recorded, or an E FAIL/ABORT that Marco explicitly waived with `confirm proceed:E --by Marco`. Never bypassable (not even --force-gate).
+G_E = ("e-gate", {"PASS", "PROCEEDED"})
 PASS = {"PASS"}
 D3_FAMILY = {"D2", "D3"}
 
-rung("E", 3, "ehw2", 'python3 ehw2.py --out "$HOSTDIR/work/photos/ehw2-out.txt"', "ehw2 (optional, read-only inventory)",
-     kind="ehw2", gate=[G_BACKUP], minutes="5 min", bundle="any",
+rung("E", 3, "ehw2", 'python3 ehw2.py --out "$HOSTDIR/work/photos/ehw2-out.txt"', "ehw2 (MANDATORY before W1, read-only inventory + coprocessor buffer probe)",
+     kind="ehw2", gate=[G_BACKUP], minutes="5 min", bundle="any", verdicts=["E"],
      abort="the proxy stops answering: power-cycle, nothing was written",
-     intro="Rung E (opzionale): legge soltanto lo stato ereditato dal Mac (ANS/SART, DART, PMGR). Non carica nulla di nostro. "
+     intro="Rung E (OBBLIGATORIO prima di W1, decisione di Marco 2026-11-15): legge soltanto lo stato ereditato dal Mac (ANS/SART, DART, PMGR). Non carica nulla di nostro. "
            "Serve il Mac di Marco in modalita' proxy m1n1 (sezione 4 della procedura).", photos="E")
 rung("D0", 3, "D0", "--rung D0 --edk2 WATARI_M1_EFI.fd --fb band --no-smp", "D0: dry run and preview, no jump",
      gate=[G_BACKUP], minutes="10 min", abort="any error; nothing of ours has run",
@@ -193,26 +196,26 @@ rung("D5b", 3, "D5", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb guest --go --pmlog 
      note="same command as D5, run from the second bundle (EDK2 built with --bgr8, no winram folder)",
      intro="D5 con il secondo bundle (EDK2 BGR8): misura i colori di un'immagine a 8 bit sul pannello a 10 bit. Si lancia dalla cartella del secondo bundle.")
 rung("W1a", 4, "W1a-rate", "--ramdisk-test 64", "W1 (a): proxy transfer rate test, 64 MiB, no jump",
-     gate=[G_BACKUP, G_IMAGE, ("D3", PASS)], minutes="3 min (+5 min m1n1 boot)", abort="read-back differs, proxy silent", bundle="day4",
+     gate=[G_BACKUP, G_IMAGE, G_E, ("D3", PASS)], minutes="3 min (+5 min m1n1 boot)", abort="read-back differs, proxy silent", bundle="day4",
      intro="Misuriamo la velocita' del cavo con 64 MB: non parte nulla, non si salta. Il numero decide se vale la pena trasferire i 713 MB di Windows.")
 rung("W1a2", 4, "W1a-rate-nocsum", "--ramdisk-test 64 --no-data-csums", "W1 (a), second measurement without data checksums",
-     gate=[G_BACKUP, G_IMAGE, ("D3", PASS)], minutes="3 min", abort="read-back differs", bundle="day4",
+     gate=[G_BACKUP, G_IMAGE, G_E, ("D3", PASS)], minutes="3 min", abort="read-back differs", bundle="day4",
      intro="Seconda misura senza i checksum dei dati (solo informativa).")
 rung("W1b", 4, "W1b-d0", "--rung D0 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --no-smp",
-     "W1 (b) (optional): preview with the real image, writes the whole image to RAM, no jump", gate=[G_BACKUP, G_IMAGE, ("W1a", PASS)],
+     "W1 (b) (optional): preview with the real image, writes the whole image to RAM, no jump", gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS)],
      minutes="transfer time + 3 min", abort="exit 2 or 4, checksum error twice", bundle="day4",
      intro="Anteprima con l'immagine vera: trasferisce tutta l'immagine in RAM e controlla i blocchi, ma non salta. "
            "Conviene solo se il trasferimento e' sotto circa 3 minuti.")
 rung("W1c", 4, "W1c-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --pmlog --args wel2.hold=1",
      "W1 (c): transfer, jump, EDK2 with the RAM disk, bootmgr (S1-S2)", jump=True, verdicts=["W1c"],
-     gate=[G_BACKUP, G_IMAGE, ("W1a", PASS), ("rate", {"OK"})], minutes="transfer + up to 5 min from the jump", fresh=True,
+     gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("rate", {"OK"})], minutes="transfer + up to 5 min from the jump", fresh=True,
      abort="no bootmgr screen 5 min after the jump; 60 s without change (except the CRC pause up to 120 s); red square; layer panic text",
      photos="W1c", bundle="day4",
      intro="W1c: trasferisce l'immagine di Windows in RAM (minuti) e poi SALTA nel layer: EDK2 registra il RAM disk e deve partire bootmgr. "
            "Il cronometro parte quando il Mac passa al layer. Video acceso PRIMA, cronometro nell'inquadratura.")
 rung("W2", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --pmlog --args wel2.hold=1",
      "W2+W3: kernel, HAL, WinPE, Setup first screen (one run, D4 flags)", jump=True, verdicts=["W2", "W3"],
-     gate=[G_BACKUP, G_IMAGE, ("W1a", PASS), ("D4", PASS), ("W1c", {"PASS", "NONE"}), ("rate", {"OK"})],
+     gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("D4", PASS), ("W1c", {"PASS", "NONE"}), ("rate", {"OK"})],
      minutes="transfer + 20-40 min from the jump", fresh=True,
      abort="10 min with NO change at all (spinner, ticker, squares); 20 min to a changed screen at W2 / 40 min to Setup at W3 -> stop and ask Marco; red square; heat",
      photos="W2", bundle="day4",
@@ -220,7 +223,7 @@ rung("W2", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/win
            "Puo' durare 40 minuti dopo il salto: telefono su un supporto e in carica, cronometro in vista, una foto ogni 2 minuti.")
 rung("W2g", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb guest --go --cpuif trap-notc --smp --pmlog --args wel2.hold=1",
      "W2 repeat with --fb guest (optional)", jump=True, verdicts=["W2g"],
-     gate=[G_BACKUP, G_IMAGE, ("W1a", PASS), ("D4", PASS), ("rate", {"OK"})], minutes="transfer + 20-40 min", fresh=True, verbatim=False,
+     gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("D4", PASS), ("rate", {"OK"})], minutes="transfer + 20-40 min", fresh=True, verbatim=False,
      note="derived from W2: 'Optional: --fb guest repeat: the same command with --fb guest'", photos="W2", bundle="day4",
      abort="as W2 (no ticker and no band in this mode: the picture is the only evidence)",
      intro="Ripetizione opzionale di W2 con --fb guest (tutto il pannello, niente ticker). Solo dopo che un rung ha raggiunto S3 in modalita' band, e solo se Marco lo decide.")
@@ -229,14 +232,14 @@ rung("W2g", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/wi
 FALLBACKS = {"e4": ("--cpuif trap-notc --smp", "j293-e4"), "e1": ("--cpuif trap-notc --no-smp", "j293-e1")}
 rung("W2-e4", 4, "W2-e4", "--rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go %s --pmlog --args wel2.hold=1" % FALLBACKS["e4"][0],
      "W2 fallback j293-e4 (four E cores in the tables; section 6.3)", jump=True, verdicts=["W2-e4", "W3-e4"],
-     gate=[G_BACKUP, G_IMAGE, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e4", {"CONFIRMED"})],
+     gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e4", {"CONFIRMED"})],
      minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4",
      abort="as W2",
      intro="Fallback W2 con il firmware j293-e4 (Windows vede solo i quattro core efficienti): si usa solo dopo un sintomo di W2 che la tabella 6.3 "
            "assegna a e4 e solo se Marco dice 'go e4' in chat. Nuovo avvio di m1n1 e nuovo trasferimento dell'immagine.")
 rung("W2-e1", 4, "W2-e1", "--rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go %s --pmlog --args wel2.hold=1" % FALLBACKS["e1"][0],
      "W2 fallback j293-e1 (boot core only; section 6.3)", jump=True, verdicts=["W2-e1", "W3-e1"],
-     gate=[G_BACKUP, G_IMAGE, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("W2-e4", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e1", {"CONFIRMED"})],
+     gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("W2-e4", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e1", {"CONFIRMED"})],
      minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4",
      abort="as W2",
      intro="Fallback W2 con il firmware j293-e1 (Windows vede un solo core, senza core secondari): si usa solo se e4 ha mostrato lo stesso sintomo "
@@ -740,11 +743,21 @@ def rate_state(recs):
     return "OK" if confirm_state(recs, "rate-ok") == "CONFIRMED" else "WAIT"
 
 
+def e_state(recs):
+    """Rung E (read-only coprocessor buffer probe, audit H4) before the W rungs: PASS | PROCEEDED (E FAIL/ABORT waived by `confirm proceed:E --by Marco`) | FAIL | NONE."""
+    st = effective(recs, "E")
+    if st in ("FAIL", "ABORT"):
+        return "PROCEEDED" if confirm_state(recs, "proceed:E") == "CONFIRMED" else "FAIL"
+    return st
+
+
 def state_of(recs, spec_id):
     if spec_id.startswith("confirm:"):
         return confirm_state(recs, spec_id.split(":", 1)[1])
     if spec_id == "rate":
         return rate_state(recs)
+    if spec_id == "e-gate":
+        return e_state(recs)
     return effective(recs, spec_id)
 
 
@@ -770,7 +783,7 @@ def gate_check(recs, r):
         if st in allowed or ("NONE" in allowed and st == "NONE"):
             continue
         msg = "%s is %s (needs %s)" % (sid, st, "/".join(sorted(allowed)))
-        (hard if sid in ("confirm:backup", "confirm:image-ok", "confirm:fallback-e4", "confirm:fallback-e1") else soft).append(msg)
+        (hard if sid in ("confirm:backup", "confirm:image-ok", "confirm:fallback-e4", "confirm:fallback-e1", "e-gate") else soft).append(msg)
     if r["jump"]:
         mine = GROUP.get(r["id"], r["id"])
         fam = {mine, r["id"]}
@@ -1337,12 +1350,29 @@ def cmd_verdict(a, bundle, outdir):
     return EX_OK
 
 
+PREAPPROVED_DOC = "docs/decisions/2026-11-15-marco-monday.md"
+PREAPPROVED_NOTE = "pre-approved 2026-11-15, " + PREAPPROVED_DOC
+PREAPPROVED = ("image-ok", "fallback-e4", "fallback-e1")      # decisions 2 and 5; the backup is NOT pre-approved (confirm it on the day)
+
+
 def cmd_confirm(a, bundle, outdir):
     key = a.key
     if key not in ("backup", "image-ok", "rate-ok", "fallback-e4", "fallback-e1", "skip-pm0") and not key.startswith("proceed:"):
         say("known keys: backup, image-ok, rate-ok, fallback-e4, fallback-e1, skip-pm0, proceed:<ID>")
         return EX_USAGE
-    append_record(results_path(outdir, a.dry_run), key, "confirm", [("result", "CONFIRMED"), ("by", a.by), ("note", a.note or "")])
+    if key == "proceed:E" and a.by.strip().lower() != "marco":
+        say("proceed:E (waiving a rung E FAIL/ABORT) is Marco's decision only: confirm proceed:E --by Marco, after he said so in chat")
+        return EX_USAGE
+    note = a.note or ""
+    if key in PREAPPROVED:
+        if PREAPPROVED_DOC in note:
+            say("PRE-APPROVED by Marco on 2026-11-15 (%s). Recorded as such; the other gate conditions still apply." % PREAPPROVED_DOC)
+        else:
+            say("note: Marco pre-approved %s on 2026-11-15; record it with --by Marco --note \"%s\" (or ask him again today)." % (key, PREAPPROVED_NOTE))
+    if key == "backup" and PREAPPROVED_DOC in note:
+        say("the backup is NOT pre-approved: it must be confirmed by Marco in chat TODAY. Not recorded.")
+        return EX_USAGE
+    append_record(results_path(outdir, a.dry_run), key, "confirm", [("result", "CONFIRMED"), ("by", a.by), ("note", note)])
     say("recorded: %s confirmed by %s" % (key, a.by))
     return EX_OK
 
@@ -1360,6 +1390,9 @@ def next_step(recs, kind):
         if pm:
             hint += (" FIRST the post-mortem log, THEN the photos: if the Mac is back in m1n1 (fresh boot), `python3 monday.py postmortem` reads the layer's ring of the %s run "
                      "(read-only) and prints the last 40 lines + a summary; if PM0 said NOLOG the ring is gone: photos only." % pm["id"])
+        if "E" in un:
+            hint += (" Rung E (read-only coprocessor buffer probe, audit H4) found a problem: it BLOCKS day 4 (an overlap with the RAM-disk/ring/layer/EDK2 plan). "
+                     "Only Marco's explicit word allows going on: `confirm proceed:E --by Marco` (no --force-gate).")
         if "W2" in un:
             hint += (" For a W2 failure that points at the core description or IPIs, day 4 section 6.3 maps the symptom to the declared fallback (W2-e4, then W2-e1); "
                     "it needs Marco's 'go e4' / 'go e1' in chat (`confirm fallback-e4|fallback-e1`). Stops not about cores (0x5C, 0x7B, 0x1A, black panel, bootmgr errors): no fallback.")
@@ -1383,12 +1416,20 @@ def next_step(recs, kind):
                 "Aspetto le foto: mandatemi il video e la foto finale."
         if st != "PASS":
             return rid, ["next: %s (%s)" % (rid, RUNGS[rid]["title"])], RUNGS[rid]["intro"].split(". ")[0] + "."
+    # rung E (read-only buffer probe, audit H4) is mandatory before any W rung (Marco, 2026-11-15, decision 6)
+    es = e_state(recs)
+    if es == "PENDING":
+        return None, ["Rung E ran: read the report (ehw2-out.txt; audit H4: do any SART/coprocessor buffer ranges overlap the RAM-disk, ring, layer or EDK2 blocks? 'OVERLAPS guest RAM' marks) "
+                      "and record: monday.py verdict E PASS|FAIL --note \"...\". An overlap is a FAIL: stop and tell Marco."], "Aspetto che legga il rapporto del rung E."
+    if es not in ("PASS", "PROCEEDED"):
+        return "E", ["next: E (read-only coprocessor buffer probe, ehw2): MANDATORY before W1a / any W rung (Marco, 2026-11-15). Needs the Mac in m1n1 proxy mode, writes nothing. "
+                     "If it finds an overlap with the RAM-disk/ring/layer/EDK2 plan: stop."], RUNGS["E"]["intro"]
     # day 3 gate passed (D0-D4): day 4 only with the image OK from Marco
     if kind != "day4":
         return None, ["D0-D4 are PASS: the day-3 gate for Windows is open. Switch to the day-4 bundle folder (the one with winram/), `confirm image-ok` (WG-2), then `next` again. "
                       "Optional before: E, D3b, D5 (not needed for Windows band mode)."], "Il gate del giorno 3 e' passato. Passiamo alla cartella del bundle del giorno 4."
     if confirm_state(recs, "image-ok") != "CONFIRMED":
-        return None, ["Day 4 needs Marco's explicit OK (WG-2) that the Microsoft-derived image sits on Ciani's Mac inside the bundle folder and is deleted at the end: monday.py confirm image-ok --by Marco"], \
+        return None, ["Day 4 needs Marco's OK (WG-2) that the Microsoft-derived image sits on Ciani's Mac inside the bundle folder and is deleted at the end. Marco approved it on 2026-11-15 (docs/decisions/2026-11-15-marco-monday.md): record it as `monday.py confirm image-ok --by Marco --note \"pre-approved 2026-11-15, docs/decisions/2026-11-15-marco-monday.md\"`"], \
             "Questa immagine contiene file Microsoft: la copiamo sul Mac di Ciani solo dentro la cartella del bundle e a fine giornata la cancelliamo. Marco, sei d'accordo?"
     st = effective(recs, "W1a")
     if st != "PASS":
@@ -1424,7 +1465,7 @@ def cmd_next(a, bundle, outdir):
             r = RUNGS[x]
             sts = "/".join("%s=%s" % (v, effective(recs, v)) for v in (r["verdicts"] or [x]))
             say("%-6s %-24s %s" % (x, sts, r["title"][:60]))
-        say("backup=%s image-ok=%s rate=%s" % (confirm_state(recs, "backup"), confirm_state(recs, "image-ok"), rate_state(recs)))
+        say("backup=%s image-ok=%s rate=%s E=%s" % (confirm_state(recs, "backup"), confirm_state(recs, "image-ok"), rate_state(recs), e_state(recs)))
     for l in lines:
         say("NEXT: " + l)
     if rid == "PM0":

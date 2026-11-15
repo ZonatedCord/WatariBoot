@@ -1,6 +1,6 @@
 # Draft ADR: Windows from a RAM disk on the M1 (image, transfer, guest FDT node, EDK2 driver)
 
-- Status: **draft** (proposed 2026-11-14 by Ralph task T20; to be numbered at merge; independently reviewed once on 2026-11-14 (fixes applied). The work of T21-T24 proceeds on the ralph branch on the strength of this draft; Marco reviews decisions 3 and 4 in the PR and may ask for changes, see the open questions)
+- Status: **Accepted by Marco on 2026-11-15** (decisions: `docs/decisions/2026-11-15-marco-monday.md`); the file stays `draft-winram.md` until the PR merge, where it gets its number. Earlier: **draft** (proposed 2026-11-14 by Ralph task T20; to be numbered at merge; independently reviewed once on 2026-11-14 (fixes applied). The work of T21-T24 proceeds on the ralph branch on the strength of this draft; Marco reviews decisions 3 and 4 in the PR and may ask for changes, see the open questions)
 - Design: `docs/design/watari-winram/` (README, DESIGN, RISKS, PLAN)
 - Related: `docs/adr/draft-edk2-m1-platform.md` (decision 9: the first Windows attempt is a RAM-disk boot), ADR-0005 (no Microsoft binaries in the repository), `docs/adr/draft-phase0-experimental.md`, `re/m3b-usb-display-windows.md`
 - Short source names as in DESIGN section 0.
@@ -27,6 +27,8 @@ The M1 has no storage driver in the layer, in EDK2 or in m1n1's hands for us; st
 - **Not solved:** Windows Setup cannot install (no `install.wim`, no disk); no keyboard, so the first Setup screen is where it stops; no persistent anything.
 
 ## Open questions for Marco
+
+**Answered on 2026-11-15: see `docs/decisions/2026-11-15-marco-monday.md`** (1 approved; 2 up to 15 min per attempt, rate test first; 3 8 GB; 5 image copy approved). Question 4 (GOP default) stays as decided in the ADR (`--bgr8`).
 
 1. Confirm (or change) decisions 3 and 4, already being implemented on the ralph branch as a draft (the `wel2.ramdisk=` argument, the FDT node and carve in the layer; the production RAM-disk DXE driver)?
 2. What transfer time is acceptable per attempt (proposal: 15 minutes), and may the rate test be the first thing run on the next hardware day?
