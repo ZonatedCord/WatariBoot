@@ -466,6 +466,13 @@ static void stage2_init(void)
             fatal_msg("stage-2 holes: wel2.split gap does not fit");
     }
 
+    /* T16j: QEMU without wel2.split: the post-mortem ring is a hole too (the M1 and the split cut g_guest_ram[] in stage1.c). If the
+     * hole cannot be added the ring is dropped, never the boot: it stops filling and the guest could reach it, so say it. */
+    if (g_pmlog_hole && wel2_s2_add_hole(holes, &nholes, HOLES_MAX, g_pmlog_base, g_pmlog_size, g_gran)) {
+        g_pmlog_on = false;
+        puts_("Watari EL2: WARNING: wel2.pmlog: the stage-2 hole does not fit: the log is stopped here, boot continues\n");
+    }
+
 #ifdef WEL2_CHAIN
     uint64_t hide_lo = (uint64_t)(uintptr_t)__image_start & ~((1ULL << g_gran) - 1);
 
@@ -959,6 +966,10 @@ static void __attribute__((noreturn)) chain_fdt(void)
         gi.ramdisk_base = g_ramdisk_base;
         gi.ramdisk_size = g_ramdisk_size;
     }
+    if (g_pmlog_status == PMLOG_OK) {                        /* T16j: the ring is not memory: /reserved-memory/pmlog@<base>, no-map */
+        gi.pmlog_base = g_pmlog_base;
+        gi.pmlog_size = g_pmlog_size;
+    }
     gi.fb_mode = "none";                                     /* wel2.fb=layer: the framebuffer stays the layer's */
     if (g_fb.fmt && g_fb_plan.mode != WEL2_FBM_LAYER) {      /* E9: a simple-framebuffer node for the guest's part */
         gfb.base = g_fb_plan.guest_base;
@@ -1098,6 +1109,9 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
  *   wel2.cpuif=hw|trap|trap-notc   mode of the virtual CPU interface (build default WEL2_CPUIF_TRAP_DEFAULT);
  *                        trap-notc = trap without ICH_HCR_EL2.TC (T6g). The M1 accepts trap and trap-notc only.
  *   wel2.ramdisk=0x<base>,0x<size>   (WEL2_CHAIN, needs wel2.abi=fdt) T21: a RAM disk image in guest RAM: guest FDT node + /memory cut-out
+ *   wel2.pmlog=0x<base>,0x<size>   T16j: post-mortem log ring (el2/include/wel2_pmlog.h): 16 KB .. 64 MB inside guest RAM, 16 KB aligned; every console
+ *                        line is also kept there and cleaned to memory; the range is cut out of the guest's RAM (stage 2 unmapped, /memory,
+ *                        /reserved-memory/pmlog@<base>). Bad value: a WARNING line, no log, the boot goes on. Read back by watari-load.py --postmortem.
  *   wel2.vgicipa=m1|native   (QEMU bench, needs wel2.abi=fdt wel2.gfdt=build) T16b: the guest's vGIC distributor/redistributors at the M1
  *                        addresses (GICD 0xF_0000_0000, GICR 0xF_1000_0000: what the j293 ACPI tables say); QEMU's physical GIC is hidden by
  *                        stage-2 holes; every guest access traps to the vGIC model. No-op on the M1. Default native.
@@ -1291,6 +1305,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     __asm__ volatile("mrs %0, vbar_el2" : "=r"(vbar));
 
     checkpoint(WEL2_LCHK_STAGE1_ON);    /* checkpoint 1: s1_enable returned, the MMU and caches are on (before any text) */
+    pmlog_start();                      /* T16j: wel2.pmlog=: from here on every line is also kept in the ring (no-op without it) */
     puts_("Watari EL2: hello from EL2\n");
     if (g_con_s5l_base) {
         put_kv("Watari EL2: console = Apple S5L UART at ", g_con_s5l_base);

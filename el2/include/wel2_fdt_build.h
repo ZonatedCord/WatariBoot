@@ -93,6 +93,8 @@ struct wel2_gfdt_in {
 	uint64_t ramdisk_base, ramdisk_size;           /* T21: size 0 = none (the blob is then byte-identical to the one without these
 							* fields); else /reserved-memory/ramdisk@<base> (DESIGN watari-winram 3.2). The caller has
 							* already cut the range out of `ranges` (wel2_ranges_carve) */
+	uint64_t pmlog_base, pmlog_size;               /* T16j: size 0 = none (blob byte-identical); else /reserved-memory/pmlog@<base>
+							* (compatible watari,pmlog, no-map); cut out of `ranges` by the caller as well */
 };
 
 /* Builds the guest FDT into buf (cap bytes). 0 and *size, or -1: bad input, buffer too small, or the result would

@@ -30,8 +30,19 @@ range, rounded to 1 MiB, 32 MB aligned) is allocated FIRST (before the layer blo
 retry, read-back), the trailer last, caches cleaned over the whole range, and `wel2.ramdisk=0x<base>,0x<size>` goes into the
 boot arguments. `--ramdisk-test <MiB>` is the proxy rate test: one block, write + read back, MB/s, no DTB, no layer, no jump.
 
+Post-mortem log (T16j, el2/include/wel2_pmlog.h): `--pmlog` (with any rung; `--pmlog-size KIB`, default 1024) allocates a 32 MB aligned block
+from the proxy heap LAST (after every other block, so their addresses do not move), zeroes the first KIB of it before the jump (the
+region the layer cuts out of guest RAM and fills with its console lines) and passes `wel2.pmlog=0x<base>,0x<size>`; `--pmlog-base 0x..`
+uses a fixed 16 KB aligned address instead (BLOCK CHECK covers either). At the jump the base is recorded in <out>/pmlog-base.json.
+`--postmortem` (no rung, no jump, writes nothing on the target) reads the region back after the Mac is in m1n1 proxy mode again,
+validates magic and CRC and writes <out>/pmlog.txt (the text) and pmlog.bin (the raw region); base from --pmlog-base or that record.
+Whether DRAM survives the reset between the two is UNKNOWN [hypothesis, Monday check]. The Python heap of ProxyUtils starts 128 MB
+above m1n1's own heap [verified: m1n1 v1.6.1 proxyclient/m1n1/proxyutils.py, src/heapblock.c: heap_base = top_of_kernel_data], so
+m1n1's own allocations at its next boot do not reach it; its load area (below top_of_kernel_data) is far below.
+
 Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0/D0: prepared but cannot read the FDT back,
-4 L0/D0/D2: a heap block is not wholly inside usable RAM, or the layer's placement rule would refuse the EDK2 block.
+4 L0/D0/D2: a heap block is not wholly inside usable RAM, or the layer's placement rule would refuse the EDK2 block,
+5 --postmortem: no valid log header at the base (DRAM did not keep it, or wrong base), 6 --postmortem: header CRC bad (text salvaged, UNVERIFIED).
 """
 import argparse
 import hashlib
@@ -149,7 +160,7 @@ def check_dtb(data):
 # Boot arguments
 # ----------------------------------------------------------------------------------------------------------------------
 
-def build_bootargs(step, cpuif, guest_addr, extra, edk2=False, fb="layer", ramdisk=None):
+def build_bootargs(step, cpuif, guest_addr, extra, edk2=False, fb="layer", ramdisk=None, pmlog=None):
     """wel2.* arguments (el2/boot/README.md). Built only after the guest block exists (its address is in them).
     edk2: the guest is EDK2: wel2.abi=fdt wel2.gfdt=build (the layer builds the guest FDT) and always wel2.fb=<mode>.
     The mode is passed through as given; nothing here depends on which modes the layer knows. Without edk2, wel2.fb is
@@ -163,6 +174,8 @@ def build_bootargs(step, cpuif, guest_addr, extra, edk2=False, fb="layer", ramdi
         parts.append("wel2.guest=0x%x" % guest_addr)
     if ramdisk is not None:
         parts.append("wel2.ramdisk=0x%x,0x%x" % ramdisk)         # (base, size); size includes the 4 KiB trailer
+    if pmlog is not None:
+        parts.append("wel2.pmlog=0x%x,0x%x" % pmlog)             # (base, size): the post-mortem ring (T16j)
     if edk2:
         parts.append("wel2.abi=fdt")
         parts.append("wel2.gfdt=build")
@@ -753,7 +766,135 @@ def tool_has_option(tool, opt):
         return False
 
 
-def run_gfdt(tool, blob_path, layer_addr, entry, image_size, fb, gran=None, ramdisk=None):
+# ----------------------------------------------------------------------------------------------------------------------
+# Post-mortem log ring (T16j): the layout of el2/include/wel2_pmlog.h and the reader (also used by the QEMU bench test)
+# ----------------------------------------------------------------------------------------------------------------------
+
+PM_MAGIC = b"WEL2PMLG"
+PM_HDR = 64
+PM_VERSION = 1
+PM_MIN = 0x4000
+PM_MAX = 0x4000000
+PM_ALIGN = 16384
+PM_DEFAULT_KIB = 1024
+PM_RECORD = "pmlog-base.json"
+_PM_FMT = "<8sIIIIQII20sI"        # magic, version, hdr_size, capacity, boots, total, wraps, dropped, reserved, crc (64 bytes)
+
+
+def pmlog_parse_region(data):
+    """Parse a region read back from DRAM. Returns a dict: status "ok" | "short" | "nomagic" | "crc" | "inconsistent", and when the
+    header could be read: hdr (fields), text (bytes, oldest first). A bad CRC with otherwise sane fields (a header torn by the
+    reset: data is stored and cleaned before the header) still yields text, flagged by status "crc" = UNVERIFIED."""
+    res = {"status": "short", "hdr": None, "text": b""}
+    if len(data) < PM_MIN:
+        return res
+    magic, ver, hsz, cap, boots, total, wraps, dropped, _res, crc = struct.unpack_from(_PM_FMT, data, 0)
+    if magic != PM_MAGIC:
+        res["status"] = "nomagic"
+        return res
+    res["hdr"] = {"version": ver, "hdr_size": hsz, "capacity": cap, "boots": boots, "total": total, "wraps": wraps,
+                  "dropped": dropped, "crc": crc, "crc_ok": crc == (zlib.crc32(data[:PM_HDR - 4]) & 0xffffffff)}
+    sane = ver == PM_VERSION and hsz == PM_HDR and cap == len(data) - PM_HDR and cap > 0 and wraps == total // cap
+    if not sane:
+        res["status"] = "inconsistent"
+        return res
+    body = data[PM_HDR:PM_HDR + cap]
+    res["text"] = body[:total] if total <= cap else body[total % cap:] + body[:total % cap]
+    res["status"] = "ok" if res["hdr"]["crc_ok"] else "crc"
+    return res
+
+
+def pmlog_record_path(out):
+    return os.path.join(out, PM_RECORD)
+
+
+def write_pmlog_record(out, base, size, rung, bootargs):
+    import json
+    os.makedirs(out, exist_ok=True)
+    with open(pmlog_record_path(out), "w") as f:
+        json.dump({"base": "0x%x" % base, "size": size, "rung": rung, "written": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "bootargs": bootargs}, f, indent=1)
+        f.write("\n")
+
+
+def read_pmlog_record(out):
+    import json
+    try:
+        with open(pmlog_record_path(out)) as f:
+            d = json.load(f)
+        return int(d["base"], 0), int(d["size"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def check_pmlog_args(args):
+    """The static part of --pmlog / --pmlog-base / --pmlog-size, before any proxy call. Returns the region size or None."""
+    if args.postmortem:
+        if args.pmlog or args.ramdisk or args.ramdisk_test is not None or args.rung:
+            raise LoadError("--postmortem is a mode of its own: no --rung, --pmlog, --ramdisk", 2)
+        if args.pmlog_base is not None and args.pmlog_base % PM_ALIGN:
+            raise LoadError("--pmlog-base 0x%x is not 16 KB aligned" % args.pmlog_base, 2)
+        return None
+    if not (args.pmlog or args.pmlog_base is not None):
+        return None
+    if args.ramdisk_test is not None:
+        raise LoadError("--pmlog goes with a rung, not with --ramdisk-test", 2)
+    size = args.pmlog_size * 1024
+    if not PM_MIN <= size <= PM_MAX or size % PM_ALIGN:
+        raise LoadError("--pmlog-size %d KiB: a multiple of 16 KiB between 16 KiB and 65536 KiB" % args.pmlog_size, 2)
+    if args.pmlog_base is not None and args.pmlog_base % PM_ALIGN:
+        raise LoadError("--pmlog-base 0x%x is not 16 KB aligned" % args.pmlog_base, 2)
+    return size
+
+
+def run_postmortem(args, target):
+    """--postmortem: read the ring back over the proxy (reads only), validate, save. Exit 0 / 5 / 6 (see the module docstring)."""
+    rec = read_pmlog_record(args.out)
+    base = args.pmlog_base if args.pmlog_base is not None else (rec[0] if rec else None)
+    if base is None:
+        raise LoadError("--postmortem: no base: pass --pmlog-base 0x<addr> (the jump run printed it and wrote %s)" %
+                        pmlog_record_path(args.out), 2)
+    size = args.pmlog_size * 1024 if args.pmlog_size_given else (rec[1] if rec and rec[0] == base else PM_DEFAULT_KIB * 1024)
+    say("POSTMORTEM: reading the ring at 0x%x (%d bytes, %s). Nothing is written on the target." %
+        (base, size, "base from --pmlog-base" if args.pmlog_base is not None else "base from " + pmlog_record_path(args.out)))
+    head = target.read(base, PM_HDR)
+    if len(head) >= PM_HDR and head[:8] == PM_MAGIC:           # the header knows the true size: read exactly that
+        cap = struct.unpack_from("<I", head, 16)[0]
+        if PM_MIN <= cap + PM_HDR <= PM_MAX and (cap + PM_HDR) % PM_ALIGN == 0:
+            size = cap + PM_HDR
+    data = b"".join(target.read(base + off, min(MIB, size - off)) for off in range(0, size, MIB))
+    os.makedirs(args.out, exist_ok=True)
+    binp, txtp = os.path.join(args.out, "pmlog.bin"), os.path.join(args.out, "pmlog.txt")
+    with open(binp, "wb") as f:
+        f.write(data)
+    res = pmlog_parse_region(data)
+    h = res["hdr"]
+    if res["status"] in ("short", "nomagic"):
+        say("POSTMORTEM: no log header at 0x%x (%s). Either DRAM did not keep it across the reset [hypothesis: unknown on the M1], "
+            "or the base is wrong, or the layer never started the ring (no 'post-mortem log ring' line on the panel). The raw region "
+            "is in %s." % (base, "region too short" if res["status"] == "short" else "no magic", binp))
+        return 5
+    say("POSTMORTEM: header: version %d, capacity %d, boot counter %d, %d bytes ever written, %d wraps, %d dropped, CRC %s" %
+        (h["version"], h["capacity"], h["boots"], h["total"], h["wraps"], h["dropped"], "ok" if h["crc_ok"] else "BAD"))
+    if res["status"] == "inconsistent":
+        say("POSTMORTEM: the header fields do not agree with each other (version, size, wraps): the text is NOT trusted; the raw "
+            "region is in %s." % binp)
+        return 6
+    with open(txtp, "wb") as f:
+        f.write(res["text"])
+    lines = res["text"].decode("utf-8", "replace").splitlines()
+    say("POSTMORTEM: %d bytes of log (%d lines) written to %s; the last lines:" % (len(res["text"]), len(lines), txtp))
+    for ln in lines[-30:]:
+        say("  | " + ln)
+    if res["status"] == "crc":
+        say("POSTMORTEM: header CRC BAD: the reset probably tore the header write; the text above is UNVERIFIED (the newest line may be missing).")
+        return 6
+    if h["total"] > h["capacity"]:
+        say("POSTMORTEM: the ring wrapped %d time(s): the oldest %d bytes are gone." % (h["wraps"], h["total"] - h["capacity"]))
+    return 0
+
+
+def run_gfdt(tool, blob_path, layer_addr, entry, image_size, fb, gran=None, ramdisk=None, pmlog=None):
     """gfdt_dump on the prepared FDT: the guest FDT the layer would build. Returns (rc, stdout). Prints the tool's stdout;
     its stderr lines (NOTE / PRIVACY / refusal reasons) are echoed. Output is the guest tree, never the prepared FDT."""
     out = os.path.join(os.path.dirname(blob_path), "guest-fdt.dtb")
@@ -765,6 +906,8 @@ def run_gfdt(tool, blob_path, layer_addr, entry, image_size, fb, gran=None, ramd
         cmd += ["--gran", gran]
     if ramdisk is not None:
         cmd += ["--ramdisk", "0x%x,0x%x" % ramdisk]
+    if pmlog is not None:
+        cmd += ["--pmlog", "0x%x,0x%x" % pmlog]
     cmd += ["-o", out]
     r = subprocess.run(cmd, capture_output=True, text=True)
     say("== gfdt_dump (the guest FDT the layer would build; no serial number, MAC or seed can appear) ==")
@@ -777,6 +920,17 @@ def run_gfdt(tool, blob_path, layer_addr, entry, image_size, fb, gran=None, ramd
             say("== the same guest FDT through dtc ==")
             sys.stdout.write(d.stdout)
     return r.returncode, r.stdout
+
+
+def pmlog_place(args, target):
+    """The post-mortem region's address: the fixed --pmlog-base, else a 32 MB aligned block from the proxy heap (the region sits at its
+    start; the rest of the block is ordinary guest RAM again)."""
+    if args.pmlog_base is not None:
+        return args.pmlog_base
+    a = target.memalign(BLOCK, BLOCK)
+    if a % BLOCK:
+        raise LoadError("the pmlog block is not 32 MB aligned (0x%x)" % a)
+    return a
 
 
 def run(args, target):
@@ -802,6 +956,9 @@ def run(args, target):
         raise LoadError("--ramdisk goes with --edk2 on rung D0 (preview) or D2 (jump): the layer needs wel2.abi=fdt for it", 2)
     if not 1 <= args.ramdisk_slice <= 64:
         raise LoadError("--ramdisk-slice must be 1..64 MiB", 2)
+    pm_size = getattr(args, "_pm_size", None)
+    if pm_size is None:
+        pm_size = check_pmlog_args(args)
     required = [x for x in (layer_name, guest_name, edk2_name) if x]
     if not args.dtb:
         required.append("j293-minimal.dtb")
@@ -855,7 +1012,7 @@ def run(args, target):
     dtb_addr = target.malloc(len(dtb))
     target.write(dtb_addr, dtb)
     say("DTB    %-22s %7d bytes at 0x%x  sha256 %s" % (dtb_name, len(dtb), dtb_addr, sha256(dtb)[:16]))
-    layer_addr = guest_addr = edk2_addr = rd_addr = None
+    layer_addr = guest_addr = edk2_addr = rd_addr = pm_addr = None
     l0_blocks = {}
     if rd is not None:
         # FIRST block: the heap is first-fit from the low end, so the range above the image stays one large /memory piece for EDK2
@@ -885,6 +1042,10 @@ def run(args, target):
             l0_blocks["edk2"] = target.memalign(BLOCK, BLOCK)
         for k, v in l0_blocks.items():
             say("BLOCK  %-5s 32 MB aligned block at 0x%x (not written)" % (k, v))
+        if pm_size:
+            pm_addr = pmlog_place(args, target)
+            say("PMLOG  region 0x%x..0x%x (%d KiB, %s; not written)" %
+                (pm_addr, pm_addr + pm_size, pm_size // 1024, "fixed --pmlog-base" if args.pmlog_base is not None else "own block, allocated last"))
     if layer is not None:
         layer_addr = target.memalign(BLOCK, BLOCK)
         if layer_addr % BLOCK:
@@ -905,10 +1066,18 @@ def run(args, target):
             raise LoadError("the EDK2 block is not 32 MB aligned (0x%x)" % edk2_addr)
         target.write(edk2_addr, edk2)
         say("EDK2   %-22s %7d bytes at 0x%x  sha256 %s" % (edk2_name, len(edk2), edk2_addr, sha256(edk2)[:16]))
+    if pm_size and not preview:
+        pm_addr = pmlog_place(args, target)                # LAST: the other blocks keep the addresses D0 checked
+        target.write(pm_addr, b"\0" * pm_size)               # the layer starts a fresh ring (it keeps a valid old header's counter)
+        if not target.dry_run and target.read(pm_addr, PM_HDR) != b"\0" * PM_HDR:
+            raise LoadError("pmlog region 0x%x: read-back after zeroing differs" % pm_addr)
+        say("PMLOG  region 0x%x..0x%x (%d KiB, zeroed, %s)" %
+            (pm_addr, pm_addr + pm_size, pm_size // 1024, "fixed --pmlog-base" if args.pmlog_base is not None else "own block, allocated last"))
 
     # --- 3. cache maintenance ----------------------------------------------------------------------------------------
     for addr, length in ((rd_addr, rd.range_size if rd else 0), (layer_addr, len(layer) if layer else 0),
-                         (guest_addr, len(guest) if guest else 0), (edk2_addr, len(edk2) if edk2 and not preview else 0)):
+                         (guest_addr, len(guest) if guest else 0), (edk2_addr, len(edk2) if edk2 and not preview else 0),
+                         (pm_addr, pm_size if pm_size and not preview else 0)):
         for off in range(0, length, 32 * MIB):    # chunks: one proxy request per 32 MiB stays far below the reply timeout
             n = min(32 * MIB, length - off)
             target.dc_cvau(addr + off, n)
@@ -918,7 +1087,15 @@ def run(args, target):
     # --- 4. boot arguments, after the allocations --------------------------------------------------------------------
     bootargs = build_bootargs(step, args.cpuif, edk2_addr if edk2_addr is not None else guest_addr, args.args,
                               edk2=edk2_addr is not None, fb="layer" if preview else args.fb,
-                              ramdisk=(rd_addr, rd.range_size) if rd is not None and not preview else None)
+                              ramdisk=(rd_addr, rd.range_size) if rd is not None and not preview else None,
+                              pmlog=(pm_addr, pm_size) if pm_size and not preview else None)
+    if pm_size and not preview:
+        if target.dry_run:
+            say("POSTMORTEM base 0x%x (dry run: not recorded in %s)" % (pm_addr, pmlog_record_path(args.out)))
+        else:
+            write_pmlog_record(args.out, pm_addr, pm_size, args.rung, bootargs)
+            say("POSTMORTEM base 0x%x recorded in %s; after the reset and the reboot into m1n1: watari-load.py --postmortem" %
+                (pm_addr, pmlog_record_path(args.out)))
     if bootargs:
         say('boot arguments: "%s"' % bootargs)
         target.set_chosen("bootargs", bootargs)
@@ -993,14 +1170,16 @@ def run(args, target):
                 blocks.update(l0_blocks)
             else:
                 blocks.update({"layer": layer_addr, "edk2": edk2_addr})      # the spacer is never used
-            if rd is None:
+            if pm_size:
+                blocks["pmlog"] = (pm_addr, pm_size, PM_ALIGN)                  # the region only, not its 32 MB block
+            if rd is None and not pm_size:
                 say("== block placement check (host side): are the layer/%s blocks wholly inside usable RAM? ==" %
                     ("guest/edk2" if preview and edk2_name else "guest" if preview else "edk2"))
             else:
                 say("== block placement check (host side): are the %s blocks wholly inside usable RAM, apart from each other, "
                     "the prepared FDT and the framebuffer? ==" % "/".join(blocks))
-            avoid = [("prepared FDT", fdt_addr, fdt_addr + total)] if rd is not None else []
-            fbr = parse_fb_range(dump_text) if rd is not None else None
+            avoid = [("prepared FDT", fdt_addr, fdt_addr + total)] if rd is not None or pm_size else []
+            fbr = parse_fb_range(dump_text) if rd is not None or pm_size else None
             if fbr:
                 avoid.append(("framebuffer", fbr[0], fbr[1]))
             ok, lines = check_blocks(dump_text, blocks, avoid)
@@ -1022,9 +1201,14 @@ def run(args, target):
                     say("NOTE: this gfdt_dump has no --ramdisk option (T21a adds it): the carve of the ramdisk out of /memory is "
                         "NOT previewed here; the layer's own FATAL line is the backstop. The check below covers the EDK2 placement only.")
                     rdopt = None
+                pmopt = (pm_addr, pm_size) if pm_size else None
+                if pmopt and not tool_has_option(gtool, "--pmlog"):
+                    say("NOTE: this gfdt_dump has no --pmlog option: the cut of the post-mortem region out of /memory is NOT previewed here; "
+                        "the layer's own WARNING line is the backstop (the log is then off, the boot goes on).")
+                    pmopt = None
                 try:
                     grc, _ = run_gfdt(gtool, path, laddr, gaddr,
-                                      struct.unpack_from("<Q", edk2, 16)[0], args.fb, gran_from_args(args.args), rdopt)
+                                      struct.unpack_from("<Q", edk2, 16)[0], args.fb, gran_from_args(args.args), rdopt, pmopt)
                 except OSError as e:
                     say("gfdt_dump could not be run (%s: %s): NOT jumping." % (type(e).__name__, e))
                     return 1
@@ -1096,12 +1280,22 @@ def parse_args(argv):
     ap.add_argument("--fb", choices=FB_MODES, default="layer",
                     help="wel2.fb=<mode>: passed through as given (layer = the layer keeps the panel; band and guest are for "
                     "the EDK2 rungs). Without --edk2, wel2.fb is added only when not 'layer'")
+    ap.add_argument("--pmlog", action="store_true", help="post-mortem log (T16j): reserve a ring in RAM (own 32 MB block, allocated last), "
+                    "zero it, pass wel2.pmlog=0x<base>,0x<size>; the base is recorded in <out>/pmlog-base.json at the jump")
+    ap.add_argument("--pmlog-size", type=int, default=None, metavar="KIB", help="ring size in KiB (default 1024; a multiple of 16)")
+    ap.add_argument("--pmlog-base", type=lambda s: int(s, 0), default=None, metavar="ADDR",
+                    help="fixed 16 KB aligned base instead of an allocated block (with --pmlog), or the base to read with --postmortem")
+    ap.add_argument("--postmortem", action="store_true", help="read the post-mortem ring back over the proxy (the Mac is in m1n1 proxy "
+                    "mode again after the reset), validate it and write <out>/pmlog.txt and pmlog.bin; writes nothing on the target")
     ap.add_argument("--boot-timeout", type=float, default=40.0, help="seconds to wait for kboot_boot's reply (default 40, as linux.py)")
     ap.add_argument("--dry-run", action="store_true", help="no device: print every proxy call (the 'prepared' FDT is the DTB itself)")
     ap.add_argument("--go", action="store_true", help="required for rungs L1-L5 on a real device (they jump)")
     a = ap.parse_args(argv)
-    if a.rung is None and a.ramdisk_test is None:
-        ap.error("--rung is required (except with --ramdisk-test)")
+    if a.rung is None and a.ramdisk_test is None and not a.postmortem:
+        ap.error("--rung is required (except with --ramdisk-test or --postmortem)")
+    a.pmlog_size_given = a.pmlog_size is not None
+    if a.pmlog_size is None:
+        a.pmlog_size = PM_DEFAULT_KIB
     if a.ramdisk_test is not None and (a.ramdisk or a.rung):
         ap.error("--ramdisk-test is a mode of its own: no --rung, no --ramdisk")
     a.bundle = os.path.abspath(a.bundle)
@@ -1112,6 +1306,7 @@ def parse_args(argv):
 def main(argv=None, target=None):
     args = parse_args(argv if argv is not None else sys.argv[1:])
     try:
+        args._pm_size = check_pmlog_args(args)          # static checks first, before any device is opened
         if target is None:
             if args.dry_run:
                 say("DRY RUN: no device is opened; every proxy call is printed.")
@@ -1124,6 +1319,8 @@ def main(argv=None, target=None):
                     raise LoadError("no m1n1 proxyclient: pass --m1n1 <checkout> or set M1N1_DIR", 2)
                 prevalidate(args)                       # the ramdisk sidecar check comes BEFORE the first proxy request
                 target = connect(args.m1n1, args.device)
+        if args.postmortem:
+            return run_postmortem(args, target)
         return run_ramdisk_test(args, target) if args.ramdisk_test is not None else run(args, target)
     except LoadError as e:
         say("ERROR: %s" % e)

@@ -146,6 +146,26 @@ with tempfile.TemporaryDirectory() as tmp:
     r = sh(base_args + ["--ramdisk", "0x810000000"])
     check(r.returncode == 2, "--ramdisk without a size is a usage error")
 
+    # T16j: --pmlog = the ring cut out of /memory before the placement, /reserved-memory/pmlog@<base>
+    r = sh(base_args + ["--pmlog", "0x810000000,0x100000"])
+    o = r.stdout
+    check(r.returncode == 0 and "// pmlog at 0x810000000, 0x100000 bytes" in o, "--pmlog exits 0 and prints its line: %s" % r.stderr[-200:])
+    check(re.search(r"^    pmlog@810000000:", o, re.M) and 'compatible = "watari,pmlog"' in o and "reg = <0x8 0x10000000 0x0 0x100000>" in o
+          and re.search(r"^      no-map;", o, re.M), "the /reserved-memory/pmlog node")
+    mems = re.findall(r"^  memory@([0-9a-f]+):\n    device_type = \"memory\";\n    reg = <0x(\w+) 0x(\w+) 0x(\w+) 0x(\w+)>", o, re.M)
+    spans = [((int(a, 16) << 32) | int(b, 16), (int(c, 16) << 32) | int(d, 16)) for _, a, b, c, d in mems]
+    check(all(b + s <= 0x810000000 or b >= 0x810100000 for b, s in spans) and any(b == 0x810100000 for b, s in spans),
+          "no /memory piece overlaps the ring, the rest above it is kept: %s" % spans)
+    r = sh(base_args + ["--pmlog", "0x810000000,0x100000", "--ramdisk", "0x811000000,0x1000000"])
+    check(r.returncode == 0 and "pmlog@810000000" in r.stdout and "ramdisk@811000000" in r.stdout and r.stdout.count("reserved-memory:") == 1,
+          "ring and RAM disk together: one /reserved-memory node with both children")
+    for arg, why in (("0x810000400,0x100000", "base not 16 KB aligned"), ("0x810000000,0x100400", "size not 16 KB aligned"),
+                     ("0x810000000,0x1000", "size under 16 KB"), ("0x900000000,0x100000", "outside the guest RAM")):
+        r = sh(base_args + ["--pmlog", arg])
+        check(r.returncode == 1 and "wel2.pmlog refused" in r.stderr, "--pmlog %s is refused: %s" % (arg, why))
+    r = sh(base_args)
+    check("pmlog" not in r.stdout, "without --pmlog no node and no line")
+
     # input errors
     r = sh([tool, os.path.join(tmp, "nonexistent.dtb")])
     check(r.returncode == 2, "a missing file exits 2")

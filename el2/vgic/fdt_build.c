@@ -358,6 +358,8 @@ int guest_fdt_build(void *buf, uint32_t cap, const struct wel2_gfdt_in *in, uint
 		return -1;
 	if (in->ramdisk_size && (!in->ramdisk_base || in->ramdisk_base + in->ramdisk_size < in->ramdisk_base))
 		return -1;
+	if (in->pmlog_size && (!in->pmlog_base || in->pmlog_base + in->pmlog_size < in->pmlog_base))
+		return -1;
 	if (in->fb && (!in->fb->format || !str_in(in->fb->format, fb_formats, 2) || !in->fb->width || !in->fb->height ||
 		       !in->fb->stride || !in->fb->size || in->fb->base + in->fb->size < in->fb->base))
 		return -1;
@@ -387,21 +389,36 @@ int guest_fdt_build(void *buf, uint32_t cap, const struct wel2_gfdt_in *in, uint
 
 	/* T21: the RAM disk the loader put into guest RAM (DESIGN watari-winram 3.2): a standard reserved-memory child, private to
 	 * the firmware's WatariM1RamDiskDxe (nothing else in EDK2 reads /reserved-memory). The range is not in any /memory node. */
-	if (in->ramdisk_size) {
-		uint32_t reg[4] = { (uint32_t)(in->ramdisk_base >> 32), (uint32_t)in->ramdisk_base,
-				    (uint32_t)(in->ramdisk_size >> 32), (uint32_t)in->ramdisk_size };
-
+	if (in->ramdisk_size || in->pmlog_size) {
 		wel2_fdtw_begin(&w, "reserved-memory");
 		wel2_fdtw_prop_u32(&w, "#address-cells", 2);
 		wel2_fdtw_prop_u32(&w, "#size-cells", 2);
 		wel2_fdtw_prop_empty(&w, "ranges");
-		unit_name(name, sizeof(name), "ramdisk@", in->ramdisk_base);
-		wel2_fdtw_begin(&w, name);
-		wel2_fdtw_prop_str(&w, "compatible", "watari,ramdisk");
-		wel2_fdtw_prop_cells(&w, "reg", reg, 4);
-		wel2_fdtw_prop_empty(&w, "no-map");
-		wel2_fdtw_prop_str(&w, "watari,format", "disk-image");
-		wel2_fdtw_end(&w);
+		if (in->ramdisk_size) {
+			uint32_t reg[4] = { (uint32_t)(in->ramdisk_base >> 32), (uint32_t)in->ramdisk_base,
+					    (uint32_t)(in->ramdisk_size >> 32), (uint32_t)in->ramdisk_size };
+
+			unit_name(name, sizeof(name), "ramdisk@", in->ramdisk_base);
+			wel2_fdtw_begin(&w, name);
+			wel2_fdtw_prop_str(&w, "compatible", "watari,ramdisk");
+			wel2_fdtw_prop_cells(&w, "reg", reg, 4);
+			wel2_fdtw_prop_empty(&w, "no-map");
+			wel2_fdtw_prop_str(&w, "watari,format", "disk-image");
+			wel2_fdtw_end(&w);
+		}
+		/* T16j: the layer's post-mortem log ring. Nobody in the guest reads it; the node only tells firmware and OS that the
+		 * range is not memory (no-map), and /memory has been cut by the same amount. Stage 2 leaves it unmapped. */
+		if (in->pmlog_size) {
+			uint32_t reg[4] = { (uint32_t)(in->pmlog_base >> 32), (uint32_t)in->pmlog_base,
+					    (uint32_t)(in->pmlog_size >> 32), (uint32_t)in->pmlog_size };
+
+			unit_name(name, sizeof(name), "pmlog@", in->pmlog_base);
+			wel2_fdtw_begin(&w, name);
+			wel2_fdtw_prop_str(&w, "compatible", "watari,pmlog");
+			wel2_fdtw_prop_cells(&w, "reg", reg, 4);
+			wel2_fdtw_prop_empty(&w, "no-map");
+			wel2_fdtw_end(&w);
+		}
 		wel2_fdtw_end(&w);
 	}
 
