@@ -271,3 +271,8 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 ### 2026-11-15 02:30 - T16f Setup soak with the day-4 configuration: done
 - Commits: ba17ec1, e2d1d1a (`re/m3b-winram-bench.md` "T16f soak"). Run t16f-1: plain j293 `--bgr8` firmware (manifest: model j293, no tag, commit 87eba25, clean), SMP 8 with `wel2.vgicipa=m1 wel2.vmpidr=m1`, trap-notc, PANEL 8, 3 GB, RAM disk, `-no-shutdown`, 3716 s. Setup's driver page from ~300 s to the end (~55 min); 7 CPU_ON accepted; ICC_SGI1R writes 414 896 (~110/s), cpu0 timer IRQs growing (~65/s); no FATAL/abort/stop code; all 8 vCPUs alive in pc.log.
 - Opus checked the evidence directly: CPU_ON accepted = 7, FATAL/abort = 0, SGI1R writes = 414 896, 31 screenshots, the last one (shot-0032) is the Setup driver page with the layer band "LAST ERROR: NONE". Not covered: AIC/FIQ path, real timing, input.
+
+### 2026-11-15 - Night 5 stop
+- Done: T19, T20, T21, T22, T23, T24, T16b-T16f (WinPE from a RAM disk reaches Setup first screen on the M1-shaped bench, production j293 tables with 8 cores, 55-minute soak clean; run-all 46/46 both configs; F-35, F-36, F-37). Diary: `docs/sessions/2026-11-15-ralph-01.md`.
+- Open: T16 stays repeatable; nothing more useful identified without hardware tonight.
+- Next: Marco rebuilds firmware and bundles from the final merged commit (G-5/WG-5) and answers the open questions; Monday with Ciani day 3 D0-D3 as the gate, then day 4 W1-W3.
