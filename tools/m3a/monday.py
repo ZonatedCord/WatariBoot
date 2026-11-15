@@ -341,7 +341,7 @@ def rate_decision(write_mbs, image_bytes):
     if sec <= 300:
         return "CONTINUE", sec, "at or under 5 min: continue"
     if sec <= 900:
-        return "ASK", sec, "5 to 15 min: continue only if Marco says yes in chat (confirm rate-ok); plan W2 and W3 as ONE run"
+        return "PREAPPROVED", sec, "5 to 15 min: accepted in advance by Marco (2026-11-15, docs/decisions/2026-11-15-marco-monday.md); plan W2 and W3 as ONE run"
     return "STOP", sec, "over 15 min: stop the Windows rungs and ask Marco (accept more, or a hand-trimmed image); the 15 min is the design's proposal, not a measurement"
 
 
@@ -738,7 +738,7 @@ def rate_state(recs):
     dec = w[-1]["f"].get("decision", "")
     if dec == "CONTINUE":
         return "OK"
-    if dec == "DRY":
+    if dec in ("DRY", "PREAPPROVED"):
         return "OK"
     return "OK" if confirm_state(recs, "rate-ok") == "CONFIRMED" else "WAIT"
 
@@ -1186,6 +1186,11 @@ def cmd_rung(a, bundle, outdir):
     if timeline:
         fields.append(("milestones", "; ".join("%s %s" % t for t in timeline)))
     append_record(results_path(outdir, dry), rid, "auto", fields, checks)
+    if rid == "W1a" and overall == "PASS" and decision == "PREAPPROVED":
+        append_record(results_path(outdir, dry), "rate-ok", "confirm", [("result", "CONFIRMED"), ("by", "Marco"), ("note", RATE_NOTE)])
+        say("TRASFERIMENTO LENTO MA ENTRO IL LIMITE: il trasferimento previsto e' di circa %s (tra 5 e 15 minuti). Marco ha gia' approvato fino a 15 minuti per tentativo "
+            "(15 novembre): lo registro in automatico (%s) e si procede, con W2 e W3 in una sola corsa. Oltre 15 minuti ci fermiamo e chiediamo a Marco." %
+            (human_eta(facts.get("projected_seconds") or 0), RATE_NOTE))
     return EX_OK if overall == "PASS" else EX_FAIL
 
 
@@ -1351,6 +1356,7 @@ def cmd_verdict(a, bundle, outdir):
 
 
 PREAPPROVED_DOC = "docs/decisions/2026-11-15-marco-monday.md"
+RATE_NOTE = "rate-ok pre-approved by Marco 2026-11-15, " + PREAPPROVED_DOC
 PREAPPROVED_NOTE = "pre-approved 2026-11-15, " + PREAPPROVED_DOC
 PREAPPROVED = ("image-ok", "fallback-e4", "fallback-e1")      # decisions 2 and 5; the backup is NOT pre-approved (confirm it on the day)
 

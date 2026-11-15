@@ -284,7 +284,7 @@ It writes 64 MiB of a test pattern in 16 MiB slices into one 32 MB-aligned block
 | Projected transfer of the 713 MiB image (write rate) | Decision |
 |---|---|
 | at or under 5 min (about 2.5 MB/s or more) | continue |
-| 5 to 15 min (about 0.83 to 2.5 MB/s) | continue only if Marco says yes in chat; **plan W2 and W3 as one run** |
+| 5 to 15 min (about 0.83 to 2.5 MB/s) | continue: **pre-approved by Marco on 2026-11-15** (up to 15 min per attempt); `monday.py` records `rate-ok pre-approved by Marco 2026-11-15, docs/decisions/2026-11-15-marco-monday.md` itself; **plan W2 and W3 as one run** |
 | **over 15 min** (below about 0.83 MB/s, i.e. 747.6 MB in 900 s) | **stop** the Windows rungs; ask Marco: the limit of 15 min is the proposal of the design (ADR open question), **not** a measurement; he may accept more, or choose a hand-trimmed image (DESIGN 2.3) |
 | below 0.5 MB/s | stop; the design's own floor (24 min) |
 

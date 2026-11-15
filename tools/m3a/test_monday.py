@@ -164,9 +164,9 @@ ov, res, f = run("W1c", w + "  ramdisk slice 3/45: checksum error, retrying this
 check(ov == "PASS" and f["slice_retries"] == 1, "one slice retry is tolerated and recorded")
 
 print("== the rate test and its decision ==")
-for wr, want in ((7.0, "CONTINUE"), (2.5, "CONTINUE"), (2.0, "ASK"), (0.9, "ASK"), (0.8, "STOP"), (0.4, "STOP"), (0.0, "STOP")):
+for wr, want in ((7.0, "CONTINUE"), (2.5, "CONTINUE"), (2.0, "PREAPPROVED"), (0.9, "PREAPPROVED"), (0.8, "STOP"), (0.4, "STOP"), (0.0, "STOP")):
     check(mo.rate_decision(wr, SIZE)[0] == want, "%.1f MB/s -> %s" % (wr, want))
-for wr, want in ((3.1, "CONTINUE"), (1.3, "ASK"), (0.6, "STOP"), (0.3, "STOP")):
+for wr, want in ((3.1, "CONTINUE"), (1.3, "PREAPPROVED"), (0.6, "STOP"), (0.3, "STOP")):
     t = re.sub(r"^RATE TEST: .*$", "RATE TEST: write %.2f MB/s, read 9.00 MB/s, read-back identical" % wr, fixture("W1a"), flags=re.M)
     ov, res, f = run("W1a", t, dry=False)
     check(ov == "PASS" and f["rate_decision"] == want, "W1a on a device at %.1f MB/s: decision %s" % (wr, want))
@@ -486,9 +486,9 @@ for fid in ("D0", "D1", "D2", "D3", "D4"):
     mo.append_record(os.path.join(rd, "results.md"), fid, "verdict", [("result", "PASS")])
 mo.append_record(os.path.join(rd, "results.md"), "E", "auto", [("result", "PASS")])
 mo.append_record(os.path.join(rd, "results.md"), "E", "verdict", [("result", "PASS")])
-mo.append_record(os.path.join(rd, "results.md"), "W1a", "auto", [("result", "PASS"), ("decision", "ASK"), ("rate-write", "1.5"), ("projected-seconds", "498")])
+mo.append_record(os.path.join(rd, "results.md"), "W1a", "auto", [("result", "PASS"), ("decision", "STOP"), ("rate-write", "0.4"), ("projected-seconds", "1900")])
 recs = mo.parse_results(os.path.join(rd, "results.md"))
-check(mo.gate_check(recs, mo.RUNGS["W2"])[0] is False and "rate is WAIT" in " ".join(mo.gate_check(recs, mo.RUNGS["W2"])[2]), "rate ASK without Marco's rate-ok: W2 gate closed")
+check(mo.gate_check(recs, mo.RUNGS["W2"])[0] is False and "rate is WAIT" in " ".join(mo.gate_check(recs, mo.RUNGS["W2"])[2]), "rate STOP without Marco's rate-ok: W2 gate closed")
 rid, lines, _ = mo.next_step(recs, "day4")
 check(rid is None and "ask Marco" in " ".join(lines), "next asks Marco about the slow rate")
 mo.append_record(os.path.join(rd, "results.md"), "rate-ok", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
@@ -527,7 +527,7 @@ check(code == 0 and "pre-approved %s on 2026-11-15" % "image-ok" in txt and note
 code, txt = mon(b3, pa, "confirm", "backup", "--by", "Marco", "--note", note, "--dry-run")
 check(code == mo.EX_USAGE and "NOT pre-approved" in txt, "the backup is never pre-approved")
 check(mo.confirm_state(mo.parse_results(os.path.join(pa, "results-dryrun.md")), "backup") == "NONE", "a refused pre-approved backup is not recorded")
-check(mo.rate_decision(0.8, SIZE)[0] == "STOP" and mo.rate_decision(0.9, SIZE)[0] == "ASK", "the 15 min limit (900 s): above it STOP, up to it ASK")
+check(mo.rate_decision(0.8, SIZE)[0] == "STOP" and mo.rate_decision(0.9, SIZE)[0] == "PREAPPROVED", "the 15 min limit (900 s): above it STOP, up to it pre-approved")
 
 print("== hardening: stale backup, verdict without a run, fallback manifest ==")
 sd = tempfile.mkdtemp()
