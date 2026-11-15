@@ -11,7 +11,7 @@ nothing is installed, nothing is downloaded, nothing is written outside <bundle>
                                            pre-jump line (PASS/FAIL), print the PHOTO CHECKLIST, append a record
   monday.py photos <ID>                    print the PHOTO CHECKLIST again
   monday.py verdict <ID> PASS|FAIL|ABORT|UNREADABLE --note TEXT     Claude's verdict after reading the photos
-  monday.py confirm <key> --by NAME        record a confirmation from the chat (backup, image-ok, rate-ok, proceed:<ID>)
+  monday.py confirm <key> --by NAME        record a confirmation from the chat (backup, image-ok, rate-ok, fallback-e4, fallback-e1, proceed:<ID>)
   monday.py next [--all]                   which rung comes next given the recorded results (gates, abort criteria)
 
 The command of each rung is the one in docs/procedures/m3a-day3-hardware.md or m3a-day4-windows-ramdisk.md; the table
@@ -125,10 +125,10 @@ RUNGS = {}
 
 
 def rung(rid, day, name, args, title, jump=False, verdicts=(), gate=(), minutes="", abort="", intro="", photos="none",
-         verbatim=True, kind="loader", note="", provisional=False, bundle="day3", fresh=False):
+         verbatim=True, kind="loader", note="", bundle="day3", fresh=False):
     RUNGS[rid] = dict(id=rid, day=day, name=name, args=args, title=title, jump=jump, verdicts=list(verdicts or ()),
                       gate=list(gate), minutes=minutes, abort=abort, intro=intro, photos=photos, verbatim=verbatim,
-                      kind=kind, note=note, provisional=provisional, bundle=bundle, fresh=fresh,
+                      kind=kind, note=note, bundle=bundle, fresh=fresh,
                       doc=PROC3 if day == 3 else PROC4)
 
 
@@ -222,16 +222,23 @@ rung("W2g", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/wi
      note="derived from W2: 'Optional: --fb guest repeat: the same command with --fb guest'", photos="W2", bundle="day4",
      abort="as W2 (no ticker and no band in this mode: the picture is the only evidence)",
      intro="Ripetizione opzionale di W2 con --fb guest (tutto il pannello, niente ticker). Solo dopo che un rung ha raggiunto S3 in modalita' band, e solo se Marco lo decide.")
-# Provisional fallbacks (T16g is being written in parallel: the firmware file names and layer options of the decision tree
-# are not in the procedure yet). They need --fw FILE (a file of the bundle) and --confirm-provisional.
-for _v, _cpu in (("e4", "--cpuif trap-notc --smp"), ("e1", "--cpuif trap-notc --no-smp")):
-    rung("W2-" + _v, 4, "W2-jump", "--rung D2 --edk2 {FW} --ramdisk winram/winram.img --fb band --go %s --args wel2.hold=1" % _cpu,
-         "W2 fallback j293-%s (PROVISIONAL, see the day-4 decision tree)" % _v, jump=True, verdicts=["W2-" + _v, "W3-" + _v],
-         gate=[G_BACKUP, G_IMAGE, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("rate", {"OK"})], minutes="transfer + 20-40 min", fresh=True,
-         verbatim=False, provisional=True, photos="W2", bundle="day4",
-         note="PROVISIONAL: firmware variant %s; take the exact command from the day-4 decision tree (T16g) when it is merged" % _v,
-         abort="as W2",
-         intro="Fallback W2 con il firmware j293-%s (variante con meno core): si usa solo se W2 e' fallito e Marco decide di provare questa variante." % _v)
+# Declared fallbacks (T16g, day-4 section 6.3 and Q-4D-8). Commands are the procedure's `wl W2-e4` / `wl W2-e1` lines verbatim.
+# Marco's "go e4" / "go e1" in chat is recorded as `confirm fallback-e4|fallback-e1`; that confirmation is never bypassable.
+FALLBACKS = {"e4": ("--cpuif trap-notc --smp", "j293-e4"), "e1": ("--cpuif trap-notc --no-smp", "j293-e1")}
+rung("W2-e4", 4, "W2-e4", "--rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go %s --args wel2.hold=1" % FALLBACKS["e4"][0],
+     "W2 fallback j293-e4 (four E cores in the tables; section 6.3)", jump=True, verdicts=["W2-e4", "W3-e4"],
+     gate=[G_BACKUP, G_IMAGE, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e4", {"CONFIRMED"})],
+     minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4",
+     abort="as W2",
+     intro="Fallback W2 con il firmware j293-e4 (Windows vede solo i quattro core efficienti): si usa solo dopo un sintomo di W2 che la tabella 6.3 "
+           "assegna a e4 e solo se Marco dice 'go e4' in chat. Nuovo avvio di m1n1 e nuovo trasferimento dell'immagine.")
+rung("W2-e1", 4, "W2-e1", "--rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go %s --args wel2.hold=1" % FALLBACKS["e1"][0],
+     "W2 fallback j293-e1 (boot core only; section 6.3)", jump=True, verdicts=["W2-e1", "W3-e1"],
+     gate=[G_BACKUP, G_IMAGE, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("W2-e4", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e1", {"CONFIRMED"})],
+     minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4",
+     abort="as W2",
+     intro="Fallback W2 con il firmware j293-e1 (Windows vede un solo core, senza core secondari): si usa solo se e4 ha mostrato lo stesso sintomo "
+           "e solo se Marco dice 'go e1' in chat. Nuovo avvio di m1n1 e nuovo trasferimento dell'immagine.")
 
 # which rung owns which verdict id; groups for the "unresolved FAIL" rule
 VERDICT_OWNER = {}
@@ -263,7 +270,7 @@ def hhmmss():
 
 def args_info(args):
     """What a rung's loader arguments imply: rung name, fb, smp, cpuif, ramdisk, hold."""
-    t = shlex.split(args.replace("{FW}", "FW.fd"))
+    t = shlex.split(args)
     info = dict(rung=None, fb="layer", smp=None, cpuif="trap", ramdisk=None, edk2=None, hold=False, test=None, extra="")
     i = 0
     while i < len(t):
@@ -321,14 +328,13 @@ def rate_decision(write_mbs, image_bytes):
 # The check engine: every function returns a list of (status, name, detail); status PASS / FAIL / INFO.
 # ---------------------------------------------------------------------------------------------------------------------
 class Ctx:
-    def __init__(self, r, text, exit_code, dry, interrupted=False, ramdisk_size=None, ramdisk_sha16=None, fw=None):
+    def __init__(self, r, text, exit_code, dry, interrupted=False, ramdisk_size=None, ramdisk_sha16=None):
         self.r, self.text, self.exit, self.dry = r, text, exit_code, dry
         self.interrupted = interrupted
         self.info = args_info(r["args"])
         self.lines = text.splitlines()
         self.ramdisk_size, self.ramdisk_sha16 = ramdisk_size, ramdisk_sha16
         self.facts = {}           # numbers extracted for the results file
-        self.fw = fw
 
 
 def find(ctx, pattern, flags=0):
@@ -567,9 +573,9 @@ def check_handover(ctx):
     return res
 
 
-def run_checks(r, text, exit_code, dry, interrupted=False, ramdisk_size=None, ramdisk_sha16=None, fw=None):
+def run_checks(r, text, exit_code, dry, interrupted=False, ramdisk_size=None, ramdisk_sha16=None):
     """All automatic checks of one rung. Returns (overall, results, facts)."""
-    c = Ctx(r, text, exit_code, dry, interrupted, ramdisk_size, ramdisk_sha16, fw)
+    c = Ctx(r, text, exit_code, dry, interrupted, ramdisk_size, ramdisk_sha16)
     res = []
     res += check_exit(c)
     i = c.info
@@ -658,6 +664,8 @@ def effective(recs, vid):
 
 def confirm_state(recs, key):
     c = [r for r in recs if r["kind"] == "confirm" and r["id"] == key]
+    if c and key == "backup" and c[-1]["ts"][:10] != datetime.date.today().isoformat():
+        return "STALE"            # "the backup of TODAY": a record of an earlier day (a reused results folder) does not count
     return c[-1]["f"].get("result", "NONE") if c else "NONE"
 
 
@@ -704,7 +712,7 @@ def gate_check(recs, r):
         if st in allowed or ("NONE" in allowed and st == "NONE"):
             continue
         msg = "%s is %s (needs %s)" % (sid, st, "/".join(sorted(allowed)))
-        (hard if sid in ("confirm:backup", "confirm:image-ok") else soft).append(msg)
+        (hard if sid in ("confirm:backup", "confirm:image-ok", "confirm:fallback-e4", "confirm:fallback-e1") else soft).append(msg)
     if r["jump"]:
         mine = GROUP.get(r["id"], r["id"])
         fam = {mine, r["id"]}
@@ -746,6 +754,27 @@ def read_manifest(bundle):
     return d
 
 
+def check_fallback_fw(bundle, v):
+    """None when the declared fallback firmware of the bundle is what the guard promises, else the reason."""
+    fd = os.path.join(bundle, "WATARI_M1_EFI-%s.fd" % v)
+    mp = fd + ".build.txt"
+    if not os.path.exists(fd) or not os.path.exists(mp):
+        return "WATARI_M1_EFI-%s.fd (+ .build.txt) is not in this bundle (built without --fallback-efi %s=...)" % (v, v)
+    man = {}
+    for line in open(mp):
+        if "=" in line:
+            k, x = line.rstrip("\n").split("=", 1)
+            man[k] = x
+    main = read_manifest(bundle)
+    want = FALLBACKS[v][1]
+    if (man.get("model") != want or man.get("build_tag") != v or man.get("bench") != "0" or man.get("ramdisk_standin") != "0"
+            or man.get("build_pcd") or man.get("dirty") not in (None, "0") or man.get("bgr8") != main.get("bgr8")):
+        return "manifest of %s does not say model=%s tag=%s bench=0 ramdisk_standin=0 no PCD dirty=0 same bgr8 as the main firmware (%r)" % (os.path.basename(fd), want, v, man)
+    if sha256_file(fd) != man.get("fd_sha256"):
+        return "SHA-256 of %s differs from its manifest" % os.path.basename(fd)
+    return None
+
+
 def bundle_kind(bundle):
     man = read_manifest(bundle)
     has_win = os.path.isdir(os.path.join(bundle, "winram")) and bool(glob.glob(os.path.join(bundle, "winram", "*.img")))
@@ -781,8 +810,6 @@ def host_env():
 
 def build_loader_argv(r, a, bundle, py):
     args = r["args"]
-    if "{FW}" in args:
-        args = args.replace("{FW}", a.fw)
     argv = [py, "-u", a.loader or os.path.join(bundle, "watari-load.py")] + shlex.split(args)
     m1n1 = a.m1n1 or os.environ.get("M1N1_DIR") or (os.path.join(os.environ["HOSTDIR"], "work", "m1n1-main") if os.environ.get("HOSTDIR") else None)
     if m1n1:
@@ -860,6 +887,10 @@ def cmd_preflight(a, bundle, outdir):
             add(man.get("bgr8") == "1", "day-4 firmware is BGR8", "bgr8=%s" % man.get("bgr8"))
         elif kind == "day3":
             add(man.get("bgr8") == "0", "day-3 firmware is the plain build", "bgr8=%s" % man.get("bgr8"))
+    for v in ("e4", "e1"):
+        if os.path.exists(os.path.join(bundle, "WATARI_M1_EFI-%s.fd" % v)):
+            bad = check_fallback_fw(bundle, v)
+            add(bad is None, "declared fallback firmware %s" % v, "manifest model=%s, tag=%s, SHA-256 equal (use only with Marco's 'go %s')" % (FALLBACKS[v][1], v, v) if bad is None else bad)
     for sc in glob.glob(os.path.join(bundle, "winram", "*.img.sha256")):
         img = sc[:-len(".sha256")]
         size = os.path.getsize(img) if os.path.exists(img) else None
@@ -974,12 +1005,12 @@ def cmd_rung(a, bundle, outdir):
     if want != "any" and kind != want and not a.force_bundle:
         say("BUNDLE: this folder is a '%s' bundle but %s belongs to the '%s' bundle (day %d). Run it from the right folder, or --force-bundle." % (kind, rid, want, r["day"]))
         return EX_PRECOND
-    if r["provisional"]:
-        if not a.fw or not a.confirm_provisional:
-            say("PROVISIONAL rung: needs --fw <firmware file of the bundle> and --confirm-provisional after comparing the command with the day-4 decision tree (%s)." % r["note"])
-            return EX_PRECOND
-        if not os.path.exists(os.path.join(bundle, a.fw)):
-            say("--fw %s is not a file of the bundle" % a.fw)
+    fbv = r["id"][3:] if r["id"] in ("W2-e4", "W2-e1") else None
+    if fbv:
+        bad = check_fallback_fw(bundle, fbv)
+        if bad:
+            say("FALLBACK FIRMWARE REFUSED: %s" % bad)
+            say("The bundle must be built with --fallback-efi %s=<file> (day-4 section 1.1 step 3b); never copy a firmware file in by hand." % fbv)
             return EX_PRECOND
     host, py, env = host_env()
     if not dry and r["kind"] == "loader" and not a.m1n1 and not os.environ.get("M1N1_DIR") and not host:
@@ -1001,7 +1032,7 @@ def cmd_rung(a, bundle, outdir):
     if r["jump"]:
         say("PRIMA DEL COMANDO: m1n1 appena avviato (un nuovo avvio per ogni salto, sezione 4); video acceso, telefono fermo, schermo intero in inquadratura.")
         say("Dopo il salto: se non c'e' niente di nuovo entro i tempi, tasto di accensione ~10 s; macOS e recovery non si toccano mai.")
-    cmdtxt = rung_command_text(r).replace("{FW}", a.fw or "{FW}") if r["kind"] == "loader" else r["args"]
+    cmdtxt = rung_command_text(r) if r["kind"] == "loader" else r["args"]
     say("COMANDO (tabella, identico alla procedura %s): %s" % (r["doc"], cmdtxt))
     t_start = hhmmss()
     log_path = os.path.join(outdir, "%s-%s.log" % (datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), rid))
@@ -1021,7 +1052,7 @@ def cmd_rung(a, bundle, outdir):
     ii = args_info(r["args"])
     if ii["ramdisk"]:
         rsize, rsha = image_info(bundle, ii["ramdisk"])
-    overall, checks, facts = run_checks(r, text, code, dry, interrupted, rsize, rsha, a.fw)
+    overall, checks, facts = run_checks(r, text, code, dry, interrupted, rsize, rsha)
     say("")
     say("-" * 100)
     say("AUTOMATIC CHECKS for %s" % rid)
@@ -1064,6 +1095,11 @@ def cmd_verdict(a, bundle, outdir):
     if not a.note:
         say("a verdict needs --note (the transcription / the reason)")
         return EX_USAGE
+    owner = VERDICT_OWNER.get(a.id, a.id)
+    ran = [r for r in parse_results(results_path(outdir, a.dry_run)) if r["kind"] == "auto" and r["id"] == owner]
+    if not ran:
+        say("verdict %s refused: rung %s has no recorded run in %s (a verdict is read off the photos of a run, never entered in advance)." % (a.id, owner, results_path(outdir, a.dry_run)))
+        return EX_PRECOND
     append_record(results_path(outdir, a.dry_run), a.id, "verdict", [("result", a.result), ("note", a.note), ("by", a.by)])
     say("recorded: %s = %s" % (a.id, a.result))
     return EX_OK
@@ -1071,8 +1107,8 @@ def cmd_verdict(a, bundle, outdir):
 
 def cmd_confirm(a, bundle, outdir):
     key = a.key
-    if key not in ("backup", "image-ok", "rate-ok") and not key.startswith("proceed:"):
-        say("known keys: backup, image-ok, rate-ok, proceed:<ID>")
+    if key not in ("backup", "image-ok", "rate-ok", "fallback-e4", "fallback-e1") and not key.startswith("proceed:"):
+        say("known keys: backup, image-ok, rate-ok, fallback-e4, fallback-e1, proceed:<ID>")
         return EX_USAGE
     append_record(results_path(outdir, a.dry_run), key, "confirm", [("result", "CONFIRMED"), ("by", a.by), ("note", a.note or "")])
     say("recorded: %s confirmed by %s" % (key, a.by))
@@ -1087,8 +1123,12 @@ def next_step(recs, kind):
             "Marco, il backup Time Machine di oggi e' finito e verificato? Senza il tuo si', non parte niente."
     un = unresolved(recs)
     if un:
-        return None, ["%s ended FAIL/ABORT: STOP, tell Marco what happened and what the table says (%s / %s), then either a fix round or `confirm proceed:%s`." %
-                      (",".join(un), PROC3, PROC4, un[0])], "Ci fermiamo qui: Marco, decidiamo insieme cosa fare."
+        hint = ""
+        if "W2" in un:
+            hint = (" For a W2 failure that points at the core description or IPIs, day 4 section 6.3 maps the symptom to the declared fallback (W2-e4, then W2-e1); "
+                    "it needs Marco's 'go e4' / 'go e1' in chat (`confirm fallback-e4|fallback-e1`). Stops not about cores (0x5C, 0x7B, 0x1A, black panel, bootmgr errors): no fallback.")
+        return None, ["%s ended FAIL/ABORT: STOP, tell Marco what happened and what the table says (%s / %s), then either a fix round or `confirm proceed:%s`.%s" %
+                      (",".join(un), PROC3, PROC4, un[0], hint)], "Ci fermiamo qui: Marco, decidiamo insieme cosa fare."
     path = [("D0", "D0"), ("D1", "D1"), ("D2", "D2"), ("D4", "D4")]
     for rid, vid in path:
         st = effective(recs, vid)
@@ -1173,8 +1213,8 @@ def build_parser():
     p = sub.add_parser("rung", parents=[common]); p.add_argument("rung_id")
     p.add_argument("--marco-go", action="store_true", help="Marco said go in chat for THIS jump (needed on a real device)")
     p.add_argument("--force-gate", metavar="REASON", help="bypass a failed gate (recorded); never bypasses the backup/image confirmations")
-    p.add_argument("--force-bundle", action="store_true"); p.add_argument("--m1n1"); p.add_argument("--fw", help="firmware file of the bundle (fallback rungs)")
-    p.add_argument("--confirm-provisional", action="store_true"); p.add_argument("--loader", help=argparse.SUPPRESS)
+    p.add_argument("--force-bundle", action="store_true"); p.add_argument("--m1n1")
+    p.add_argument("--loader", help=argparse.SUPPRESS)
     p.add_argument("--boot-timeout", type=int, default=40); p.add_argument("--quiet", action="store_true", help="print only the important loader lines (the full output is in the log)")
     p = sub.add_parser("photos"); p.add_argument("rung_id")
     p = sub.add_parser("verdict", parents=[common]); p.add_argument("id"); p.add_argument("result", choices=["PASS", "FAIL", "ABORT", "UNREADABLE"])

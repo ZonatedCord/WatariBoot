@@ -78,8 +78,11 @@ check(a("D4a") == "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --cpuif trap
 check("--smp" in a("D4b") and "trap-notc" not in a("D4b"), "D4b is --smp with trap")
 check(a("D5b") == a("D5") and mo.RUNGS["D5b"]["bundle"] == "bgr8", "D5b is D5 from the BGR8 bundle")
 check(a("W2g") == a("W2").replace("--fb band", "--fb guest"), "W2g is W2 with --fb guest")
-check(a("W2-e4").replace("{FW}", "WATARI_M1_EFI.fd") == a("W2"), "W2-e4 is W2 with another firmware file (provisional)")
-check(all(mo.RUNGS[x]["provisional"] for x in ("W2-e4", "W2-e1")), "fallbacks are marked provisional until the decision tree is merged")
+check(a("W2-e4").replace("WATARI_M1_EFI-e4.fd", "WATARI_M1_EFI.fd") == a("W2"), "W2-e4 is W2 with the e4 firmware file (T16g names)")
+check(a("W2-e1").replace("WATARI_M1_EFI-e1.fd", "WATARI_M1_EFI.fd").replace("--no-smp", "--smp") == a("W2"), "W2-e1 is W2 with the e1 firmware file and --no-smp")
+check(all(mo.RUNGS[x]["verbatim"] for x in ("W2-e4", "W2-e1")), "fallback commands are verbatim (checked against day-4 section 6.3)")
+check("{FW}" not in open(os.path.join(HERE, "monday.py")).read().split("RUNGS = {}")[1] and "provisional" not in open(os.path.join(HERE, "monday.py")).read(),
+      "no provisional mechanism left in monday.py")
 inproc = set()
 for day, t in docs.items():
     for m in re.finditer(r"\bwl ([\w-]+) (--[^`\n]*?)(?=\s*(#|`|\n|$))", t):
@@ -275,7 +278,7 @@ check(V("W2", "PASS", b4) == 0, "verdict W2 PASS")
 code, txt = mon(b4, out, "next", "--dry-run")
 check("W3 =" in txt or "W3" in txt, "next: W3 verdict pending")
 code, txt = mon(b4, out, "rung", "W2-e4", "--dry-run", "--quiet", "--loader", fake, "--force-bundle", fixture_name="W2")
-check(code in (mo.EX_PRECOND, mo.EX_GATE), "the provisional fallback is refused here (W2 not failed / no --fw)")
+check(code == mo.EX_GATE and "confirm:fallback-e4" in txt and "not bypassable" in txt, "the fallback is refused without Marco's 'go e4' (also with --force-gate)")
 # rate gating from records (device case)
 rd = tempfile.mkdtemp()
 mo.append_record(os.path.join(rd, "results.md"), "confirm-dummy", "note", [("x", "1")])
@@ -294,9 +297,35 @@ check(mo.gate_check(recs, mo.RUNGS["W2"])[0] is True, "rate-ok opens the W2 gate
 mo.append_record(os.path.join(rd, "results.md"), "W2", "auto", [("result", "PASS")])
 mo.append_record(os.path.join(rd, "results.md"), "W2", "verdict", [("result", "FAIL"), ("note", "bugcheck")])
 recs = mo.parse_results(os.path.join(rd, "results.md"))
-check(mo.gate_check(recs, mo.RUNGS["W2-e4"])[0] is True, "after a W2 FAIL the fallback gate is open (still provisional)")
+ge4 = mo.gate_check(recs, mo.RUNGS["W2-e4"])
+check(ge4[0] is False and any("fallback-e4" in m for m in ge4[1]), "after a W2 FAIL the e4 gate still needs Marco's go (hard, not bypassable)")
+mo.append_record(os.path.join(rd, "results.md"), "fallback-e4", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+recs = mo.parse_results(os.path.join(rd, "results.md"))
+check(mo.gate_check(recs, mo.RUNGS["W2-e4"])[0] is True, "W2 FAIL + 'go e4' opens the e4 gate")
+ge1 = mo.gate_check(recs, mo.RUNGS["W2-e1"])
+check(ge1[0] is False and any("W2-e4" in m for m in ge1[2]) and any("fallback-e1" in m for m in ge1[1]), "e1 needs e4 failed first and its own 'go e1'")
 rid, lines, _ = mo.next_step(recs, "day4")
 check(rid is None and "FAIL/ABORT" in " ".join(lines), "next after W2 FAIL: stop and ask Marco")
+
+print("== hardening: stale backup, verdict without a run, fallback manifest ==")
+sd = tempfile.mkdtemp()
+with open(os.path.join(sd, "results.md"), "w") as f:
+    f.write("### backup confirm 2020-01-01T10:00:00\n- result: CONFIRMED\n- by: Marco\n\n")
+check(mo.confirm_state(mo.parse_results(os.path.join(sd, "results.md")), "backup") == "STALE", "a backup confirmation of an earlier day does not count")
+code, txt = mon(tempfile.mkdtemp(), sd, "verdict", "D2", "PASS", "--note", "x", "--dry-run")
+check(code == mo.EX_PRECOND and "no recorded run" in txt, "a verdict without a recorded run is refused")
+fb = tempfile.mkdtemp()
+def wf(name, data): open(os.path.join(fb, name), "wb").write(data)
+import hashlib as _h
+wf("WATARI_M1_EFI.fd", b"main"); wf("WATARI_M1_EFI.fd.build.txt", b"model=j293\nbench=0\nramdisk_standin=0\nbgr8=1\nbuild_tag=\nbuild_pcd=\ndirty=0\n")
+wf("WATARI_M1_EFI-e4.fd", b"e4fw")
+def man(model, tag, dirty="0", bench="0", sha=None):
+    return ("model=%s\nbench=%s\nramdisk_standin=0\nbgr8=1\nbuild_tag=%s\nbuild_pcd=\ndirty=%s\nfd_sha256=%s\n" % (model, bench, tag, dirty, sha or _h.sha256(b"e4fw").hexdigest())).encode()
+check(mo.check_fallback_fw(fb, "e1") is not None, "missing e1 file: refused")
+wf("WATARI_M1_EFI-e4.fd.build.txt", man("j293-e4", "e4")); check(mo.check_fallback_fw(fb, "e4") is None, "a clean e4 fallback passes")
+for label, m in (("wrong model", man("j293", "e4")), ("bench", man("j293-e4", "e4", bench="1")), ("other tag", man("j293-e4", "t16be4")),
+                 ("dirty", man("j293-e4", "e4", dirty="1")), ("sha mismatch", man("j293-e4", "e4", sha="0" * 64))):
+    wf("WATARI_M1_EFI-e4.fd.build.txt", m); check(mo.check_fallback_fw(fb, "e4") is not None, "fallback refused: %s" % label)
 
 print("== preflight and the bundle ==")
 code, txt = mon(tempfile.mkdtemp(), out, "preflight", "--quick", "--no-record")
