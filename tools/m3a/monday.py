@@ -1325,7 +1325,7 @@ def next_step(recs, kind):
             hint += (" FIRST the post-mortem log, THEN the photos: if the Mac is back in m1n1 (fresh boot), `python3 monday.py postmortem` reads the layer's ring of the %s run "
                      "(read-only) and prints the last 40 lines + a summary; if PM0 said NOLOG the ring is gone: photos only." % pm["id"])
         if "W2" in un:
-            hint = (" For a W2 failure that points at the core description or IPIs, day 4 section 6.3 maps the symptom to the declared fallback (W2-e4, then W2-e1); "
+            hint += (" For a W2 failure that points at the core description or IPIs, day 4 section 6.3 maps the symptom to the declared fallback (W2-e4, then W2-e1); "
                     "it needs Marco's 'go e4' / 'go e1' in chat (`confirm fallback-e4|fallback-e1`). Stops not about cores (0x5C, 0x7B, 0x1A, black panel, bootmgr errors): no fallback.")
         return None, ["%s ended FAIL/ABORT: STOP, tell Marco what happened and what the table says (%s / %s), then either a fix round or `confirm proceed:%s`.%s" %
                       (",".join(un), PROC3, PROC4, un[0], hint)], "Ci fermiamo qui: Marco, decidiamo insieme cosa fare."
