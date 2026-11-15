@@ -6,9 +6,9 @@ DTB    j293-minimal.dtb          2387 bytes at 0x840000000  sha256 03030dce36058
 LAYER  wel2-chain.bin          163936 bytes at 0x842000000  sha256 12133934b84ee998
 SPACER 32 MB aligned block at 0x844000000 (not written: keeps D2's addresses equal to D0's)
 EDK2   WATARI_M1_EFI.fd       3145728 bytes at 0x846000000  sha256 4c6b1173321aa798
-PMLOG  region 0x844000000..0x844100000 (1024 KiB, zeroed, start of the spacer block: D0's addresses unchanged, EDK2's range whole)
+PMLOG  region 0x844000000..0x844200000 (2048 KiB, zeroed, start of the spacer block: D0's addresses unchanged, EDK2's range whole)
 POSTMORTEM base 0x844000000 (dry run: not recorded in <R>/m-day3/bundle/out/pmlog-base.json)
-boot arguments: "wel2.cpuif=trap-notc wel2.guest=0x846000000 wel2.pmlog=0x844000000,0x100000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1"
+boot arguments: "wel2.cpuif=trap-notc wel2.guest=0x846000000 wel2.pmlog=0x844000000,0x200000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1"
 kboot_prepare_dt OK
   m1n1: FDT prepared at 0x840000000
 prepared FDT: 2387 bytes at 0x840000000, saved to <R>/m-day3/bundle/out/prepared-fdt.dtb (host folder only: it holds the board serial number;
@@ -34,11 +34,11 @@ framebuffer none
 == block placement check (host side): are the layer/edk2/pmlog blocks wholly inside usable RAM, apart from each other, the prepared FDT and the framebuffer? ==
   layer block 0x842000000..0x844000000 : PASS (inside usable range 0x800000000..0xa00000000)
   edk2  block 0x846000000..0x848000000 : PASS (inside usable range 0x800000000..0xa00000000)
-  pmlog block 0x844000000..0x844100000 : PASS (inside usable range 0x800000000..0xa00000000)
+  pmlog block 0x844000000..0x844200000 : PASS (inside usable range 0x800000000..0xa00000000)
 (dry run: the fake addresses are not m1n1's heap; this only exercises the check)
 BLOCK CHECK: PASS
 == gfdt_dump (the guest FDT the layer would build; no serial number, MAC or seed can appear) ==
-// pmlog at 0x844000000, 0x100000 bytes (cut out of /memory)
+// pmlog at 0x844000000, 0x200000 bytes (cut out of /memory)
 // guest image at 0x846000000, image end 0x846300000, guest FDT at 0x846300000
 // wel2.fb=band: the layer's plan fails (no framebuffer, not whole 16 KB pages, or no room for the band): it keeps the panel, no node
 // framebuffer plan (16 KB granule): mode none, band rows 0, guest rows 0, guest base 0x0, guest bytes 0x0

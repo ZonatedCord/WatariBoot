@@ -30,7 +30,7 @@ range, rounded to 1 MiB, 32 MB aligned) is allocated FIRST (before the layer blo
 retry, read-back), the trailer last, caches cleaned over the whole range, and `wel2.ramdisk=0x<base>,0x<size>` goes into the
 boot arguments. `--ramdisk-test <MiB>` is the proxy rate test: one block, write + read back, MB/s, no DTB, no layer, no jump.
 
-Post-mortem log (T16j, el2/include/wel2_pmlog.h): `--pmlog` (with any rung; `--pmlog-size KIB`, default 1024) with --edk2 puts the region at
+Post-mortem log (T16j, el2/include/wel2_pmlog.h): `--pmlog` (with any rung; `--pmlog-size KIB`, default 2048) with --edk2 puts the region at
 the start of the unwritten spacer block (D0's "guest" block: no extra allocation, all addresses as D0 checked them, and the range that
 holds EDK2's entry stays whole: the layer wants 64 MB of it above the FDT, so a ring cut out right after the EDK2 block is refused, placement
 code 5); without --edk2 it allocates a 32 MB aligned block from the proxy heap LAST. It zeroes the first KIB of it before the jump (the
@@ -778,7 +778,7 @@ PM_VERSION = 1
 PM_MIN = 0x4000
 PM_MAX = 0x4000000
 PM_ALIGN = 16384
-PM_DEFAULT_KIB = 1024
+PM_DEFAULT_KIB = 2048
 PM_RECORD = "pmlog-base.json"
 _PM_FMT = "<8sIIIIQII20sI"        # magic, version, hdr_size, capacity, boots, total, wraps, dropped, reserved, crc (64 bytes)
 
@@ -1302,7 +1302,7 @@ def parse_args(argv):
                     "the EDK2 rungs). Without --edk2, wel2.fb is added only when not 'layer'")
     ap.add_argument("--pmlog", action="store_true", help="post-mortem log (T16j): reserve a ring in RAM (own 32 MB block, allocated last), "
                     "zero it, pass wel2.pmlog=0x<base>,0x<size>; the base is recorded in <out>/pmlog-base.json at the jump")
-    ap.add_argument("--pmlog-size", type=int, default=None, metavar="KIB", help="ring size in KiB (default 1024; a multiple of 16)")
+    ap.add_argument("--pmlog-size", type=int, default=None, metavar="KIB", help="ring size in KiB (default 2048: EDK2's range stays 2 MB aligned; a multiple of 16)")
     ap.add_argument("--pmlog-base", type=lambda s: int(s, 0), default=None, metavar="ADDR",
                     help="fixed 16 KB aligned base instead of an allocated block (with --pmlog), or the base to read with --postmortem")
     ap.add_argument("--postmortem", action="store_true", help="read the post-mortem ring back over the proxy (the Mac is in m1n1 proxy "

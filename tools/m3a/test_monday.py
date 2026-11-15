@@ -191,7 +191,7 @@ d0, d2 = fixture("D0"), fixture("D2")
 d0_addr = {k: v for k, v in re.findall(r"^BLOCK  (layer|edk2) .* at (0x[0-9a-f]+)", d0, re.M)}
 d2_addr = {"layer": re.search(r"^LAYER  .* at (0x[0-9a-f]+)", d2, re.M).group(1), "edk2": re.search(r"^EDK2   .* at (0x[0-9a-f]+)", d2, re.M).group(1)}
 check(d0_addr == d2_addr and len(d0_addr) == 2, "D2 --pmlog keeps D0's layer and EDK2 block addresses %s (the ring takes no block of its own)" % d0_addr)
-pmm = re.search(r"^PMLOG  region 0x([0-9a-f]+)\.\.0x([0-9a-f]+) \(1024 KiB, zeroed, start of the spacer block", d2, re.M)
+pmm = re.search(r"^PMLOG  region 0x([0-9a-f]+)\.\.0x([0-9a-f]+) \(2048 KiB, zeroed, start of the spacer block", d2, re.M)
 spc = re.search(r"^SPACER 32 MB aligned block at 0x([0-9a-f]+)", d2, re.M)
 edk = re.search(r"^EDK2   \S+ +\d+ bytes at 0x([0-9a-f]+)", d2, re.M)
 d0g = re.search(r"^BLOCK  guest .* at 0x([0-9a-f]+)", d0, re.M)
@@ -200,11 +200,11 @@ check(bool(pmm and spc and edk and d0g) and int(pmm.group(1), 16) == int(spc.gro
 check("GUEST FDT CHECK: PASS" in d2, "D2 --pmlog dry run: GUEST FDT CHECK still PASS (gfdt_dump --pmlog accepted the placement)")
 w1c = fixture("W1c")
 rdb = re.search(r"wel2\.ramdisk=0x([0-9a-f]+),", w1c)
-pmw = re.search(r"wel2\.pmlog=0x([0-9a-f]+),0x100000", w1c)
-check(bool(rdb) and bool(pmw) and int(pmw.group(1), 16) % (32 << 20) == 0 and int(pmw.group(1), 16) > int(rdb.group(1), 16), "W1c: wel2.pmlog=<32 MB aligned>,0x100000 after wel2.ramdisk in the boot arguments")
+pmw = re.search(r"wel2\.pmlog=0x([0-9a-f]+),0x200000", w1c)
+check(bool(rdb) and bool(pmw) and int(pmw.group(1), 16) % (32 << 20) == 0 and int(pmw.group(1), 16) > int(rdb.group(1), 16), "W1c: wel2.pmlog=<32 MB aligned>,0x200000 after wel2.ramdisk in the boot arguments")
 for fx, rid in (("D2", "D2"), ("D4", "D4"), ("D5", "D5"), ("W1c", "W1c"), ("W2", "W2")):
     ov, res, facts = run(rid, fixture(fx))
-    check(ov == "PASS" and facts.get("pmlog_base") and facts.get("pmlog_size") == 1 << 20 and facts.get("pmlog_arg"), "%s: PMLOG/POSTMORTEM lines checked, base %s recorded as a fact" % (rid, facts.get("pmlog_base")))
+    check(ov == "PASS" and facts.get("pmlog_base") and facts.get("pmlog_size") == 2 << 20 and facts.get("pmlog_arg"), "%s: PMLOG/POSTMORTEM lines checked, base %s recorded as a fact" % (rid, facts.get("pmlog_base")))
 base2 = hardware(fixture("D2"))
 for what, t, expect in (
     ("no PMLOG line", re.sub(r"^PMLOG  region.*$", "", base2, flags=re.M), "PMLOG region"),

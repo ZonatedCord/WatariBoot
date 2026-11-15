@@ -121,19 +121,19 @@ with tempfile.TemporaryDirectory() as tmp:
     check(rc == 0, "D2 --pmlog hands over")
     allocs = [c for c in t.calls if c[0] == "memalign"]
     check(len(allocs) == 3 and all(c[1] == wl.BLOCK for c in allocs), "D2 --pmlog: still three 32 MB aligned blocks (layer, spacer, edk2): the ring takes no block of its own")
-    pm = [c for c in t.calls if c[0] == "writemem" and c[2] == 1024 * 1024]
+    pm = [c for c in t.calls if c[0] == "writemem" and c[2] == 2048 * 1024]
     check(len(pm) == 1 and pm[0][1] % wl.BLOCK == 0, "the region is written once, 1 MiB, at its block")
     spacer_addr = int(re.search(r"^SPACER 32 MB aligned block at 0x([0-9a-f]+)", out, re.M).group(1), 16)
     edk2_addr = int(re.search(r"^EDK2 .* bytes at 0x([0-9a-f]+)", out, re.M).group(1), 16)
     check(pm[0][1] == spacer_addr and spacer_addr + wl.BLOCK == edk2_addr,
           "the ring sits at the start of the SPACER block, below EDK2: the range that holds EDK2's entry stays whole (placement rule: 64 MB above the FDT)")
-    check(t.mem[pm[0][1]] == b"\0" * 1024 * 1024, "the region is zeroed")
+    check(t.mem[pm[0][1]] == b"\0" * 2048 * 1024, "the region is zeroed")
     ba = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
-    check("wel2.pmlog=0x%x,0x100000" % pm[0][1] in ba.split(), "boot arguments carry wel2.pmlog=0x<base>,0x100000: %r" % ba)
-    check(any(c[0] == "dc_cvac" and c[1] == pm[0][1] and c[2] == 1024 * 1024 for c in t.calls), "the region is cleaned to the point of coherency")
+    check("wel2.pmlog=0x%x,0x200000" % pm[0][1] in ba.split(), "boot arguments carry wel2.pmlog=0x<base>,0x200000: %r" % ba)
+    check(any(c[0] == "dc_cvac" and c[1] == pm[0][1] and c[2] == 2048 * 1024 for c in t.calls), "the region is cleaned to the point of coherency")
     rec = json.load(open(os.path.join(tmp, "out", wl.PM_RECORD)))
-    check(int(rec["base"], 0) == pm[0][1] and rec["size"] == 1024 * 1024 and rec["rung"] == "D2", "the base is recorded in out/pmlog-base.json")
-    check("--pmlog 0x%x,0x100000" % pm[0][1] in open(os.path.join(tmp, "gfdt-args.txt")).read(), "gfdt_dump gets --pmlog 0x<base>,0x100000")
+    check(int(rec["base"], 0) == pm[0][1] and rec["size"] == 2048 * 1024 and rec["rung"] == "D2", "the base is recorded in out/pmlog-base.json")
+    check("--pmlog 0x%x,0x200000" % pm[0][1] in open(os.path.join(tmp, "gfdt-args.txt")).read(), "gfdt_dump gets --pmlog 0x<base>,0x200000")
     check("BLOCK CHECK: PASS" in out and "pmlog" in out, "BLOCK CHECK covers the pmlog region")
     check(n[-1] == "kboot_boot", "kboot_boot is still the last call")
 
