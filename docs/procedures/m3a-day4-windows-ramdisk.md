@@ -110,6 +110,14 @@ Everything is RAM; nothing persistent is written. The RAM disk lives in guest RA
 
 ---
 
+### 1.6 Hardware-hazard checks (T16h, `re/m3a-hardware-hazards-n5.md`)
+
+- **[check] C-7** W1 runs with one vCPU against the eight-core j293 ACPI tables: a stop `INTERNAL_POWER_ERROR (0xA0)` about a minute after the logo is the **expected** end of W1 (bench T16b-2), not a W1 failure. W1 PASS stays "bootmgr or logo". Alternatively run W1c with `--smp` once day 3's D4 has passed.
+- **[check] C-8** The `WatariM1RamDisk: CRC-32 ... verified` line is the cache-coherency verdict for the whole loader-to-EDK2 path. On a mismatch rerun once with the same image before blaming the loader; two different results from the same bytes point at cache maintenance.
+- **[check] C-9** The RAM disk is mapped by Windows with an attribute we do not set (NFIT mapping attribute 0): if boot.wim loads slower than the bench suggests, allow the stated limits before aborting (H7).
+- **[check] C-10** On a stop read and photograph: the stop code and parameters, any `unhandled guest data abort` + IPA, `FIQ storm`, `unemulated ICC access`, `ramdisk` lines.
+- **[check] C-11** After a freeze compare the final statistics with the bench rates (idle Setup: about 110 SGIs/s, about 65 timer irqs/s on cpu 0). All RAM is above 4 GiB (H3).
+
 ## 2. Host setup (Ciani's Mac, zero footprint)
 
 ### 2.1 Reuse of days 1-3

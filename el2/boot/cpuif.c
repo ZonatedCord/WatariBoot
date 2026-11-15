@@ -733,6 +733,9 @@ static bool icc_emulate(struct frame *f, uint32_t crn, uint32_t crm, uint32_t op
     return true;
 }
 
+#define SGI_LOG_BUDGET 32u
+static unsigned g_sgi_trapped;          /* ICC_SGI*R_EL1 writes trapped, all cores (updated under the big lock) */
+
 /* Trapped MSR/MRS: ICC_SGI*R_EL1 writes in both modes; the other ICC registers
  * in TRAP_EMULATE mode. Returns false for anything else (the caller dumps and halts). */
 bool cpuif_sysreg_trap(struct frame *f)
@@ -752,8 +755,18 @@ bool cpuif_sysreg_trap(struct frame *f)
     if (!dir && crn == 12 && crm == 11 && op2 >= 5 && op2 <= 7) {
         uint64_t val = rt == 31 ? 0 : f->x[rt];
         uint32_t mask = vgic_sgi_send_mask(g_v, this_cpu(), val);
-        put_kv(msg[op2 - 5], val);
-        put_kv("Watari EL2:   vCPU target mask = ", mask);
+
+        /* T16h: this runs under the big lock with FIQs masked, once per guest IPI (Windows: hundreds per second). Two
+         * console lines each (the S5L UART poll, the panel ticker's 2560-pixel row fill on non-cacheable memory) would
+         * cost real time on the M1 that QEMU TCG hides. Log the first SGI_LOG_BUDGET, then stay silent (the count is in
+         * the final statistics); wel2.trace keeps the full log. */
+        g_sgi_trapped++;
+        if (g_sgi_trapped <= SGI_LOG_BUDGET || g_trace_on) {
+            put_kv(msg[op2 - 5], val);
+            put_kv("Watari EL2:   vCPU target mask = ", mask);
+        } else if (g_sgi_trapped == SGI_LOG_BUDGET + 1) {
+            puts_("Watari EL2: further ICC_SGI*R writes are not logged (counted in the statistics)\n");
+        }
         f->elr += 4;
         return true;
     }
@@ -864,6 +877,7 @@ void cpuif_stats(void)
             bad += g_cif[i].st_lpi_badtable;
         put_kv("Watari EL2: stats: LPI property table outside RAM (default priority used) = ", bad);
     }
+    put_kv("Watari EL2: stats: guest ICC_SGI*R writes trapped = ", g_sgi_trapped);
     put_kv("Watari EL2: stats: cross-core kicks (SGI 15) = ", t[5]);
     put_kv("Watari EL2: stats: cross-core kicks to evict a worse pending LR = ", kick_evict_total());
     if (g_cpuif_trap) {

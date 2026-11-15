@@ -108,6 +108,14 @@ Everything we write is RAM, CPU/AIC/UART/framebuffer/watchdog state; nothing per
 
 ---
 
+### 1.6 Hardware-hazard checks (T16h, `re/m3a-hardware-hazards-n5.md`)
+
+- **[check] C-1** Run rung E (ehw2, read-only) before D2, not only "optionally": it reads what iBoot left running (ANS2/SART, DCP, PCIe DARTs) that the loader's BLOCK CHECK cannot see (H4).
+- **[check] C-2** All guest RAM is above 4 GiB (0x8_0000_0000 and up); the bench never had that (H3). On D3 note that the ACPI/SMBIOS install lines show no allocation error.
+- **[check] C-3** Hold the D3 screen for **at least 15 minutes once** (the first 10+ minute hardware run): watchdog, thermal, SMC liveness. Keep the Mac on AC power and listen to the fan.
+- **[check] C-5** D4 (`--smp`): **film** the hold, the ticker's final `stats:` lines are the only record (no UART cable): `guest ICC_SGI*R writes trapped`, `spurious`, `storms`, `unemulated ICC access`.
+- **[check] C-6** The bundle must be rebuilt after the T16h change to `el2/boot/cpuif.c` (the IPI trap log is budgeted now); the `wel2.trace` argument still gives the full log.
+
 ## 2. Host setup (Ciani's Mac, zero footprint)
 
 ### 2.1 Reuse of day 2
