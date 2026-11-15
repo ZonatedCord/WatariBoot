@@ -5,6 +5,12 @@
 # compiled out of tree (OUT=...) into <dir>/work, the result goes to <dir>/bundle.
 #
 #   tools/m3a/build-m1-payload.sh [--winram FILE|default] [DIR]      DIR defaults to $WATARI_DATA/m3a-payload
+#   --fallback-efi NAME=FILE   (T16g, day 4) also copies a DECLARED fallback firmware, NAME = e4 (model j293-e4, the four E cores) or
+#                   e1 (model j293-e1, the boot core only), repeatable. Each is checked against its build manifest (model, bgr8 as the main
+#                   firmware, no bench / RAM-disk stand-in / PCD, build tag equal to NAME, clean tree, SHA-256) and lands in the bundle as
+#                   WATARI_M1_EFI-<NAME>.fd (+ .build.txt), listed in SHA256SUMS; `watari-load.py --edk2 WATARI_M1_EFI-e4.fd` selects it. The
+#                   main WATARI_M1_EFI.fd must still pass the plain j293 guard. Build: WATARI_M1_BUILD_TAG=e4 tools/build-edk2-m1.sh --bgr8
+#                   --model j293-e4 (and e1). Using one on the M1 needs Marco's OK (docs/procedures/m3a-day4-windows-ramdisk.md, "Fallbacks").
 #   --winram FILE   (rung W1, PLAN T23b) also copies the Windows RAM-disk image and its .sha256 sidecar into <bundle>/winram/
 #                   (never into the repository). The image is NOT in SHA256SUMS (about 700 MiB; the loader checks the sidecar
 #                   itself, `--ramdisk winram/<name>`). `default` = $WATARI_DATA/winram/winram.img (tools/m3a/build-winram-image.sh).
@@ -38,11 +44,19 @@ die() { echo "build-m1-payload: $*" >&2; exit 1; }
 
 DIR=""
 WINRAM=""
+FALLBACKS=()          # NAME=FILE pairs, NAME in e4 e1
 while [ $# -gt 0 ]; do
     case "$1" in
         --winram)
             [ $# -ge 2 ] || die "--winram needs a file (or 'default')"
             WINRAM="$2"; shift 2 ;;
+        --fallback-efi)
+            [ $# -ge 2 ] || die "--fallback-efi needs NAME=FILE (NAME e4 or e1)"
+            case "$2" in e4=*|e1=*) ;; *) die "--fallback-efi '$2': expected e4=<file> or e1=<file> (only these two are declared fallbacks)" ;; esac
+            for done_fb in ${FALLBACKS[@]+"${FALLBACKS[@]}"}; do
+                [ "${done_fb%%=*}" != "${2%%=*}" ] || die "--fallback-efi ${2%%=*} given twice"
+            done
+            FALLBACKS+=("$2"); shift 2 ;;
         -*) die "unknown option $1" ;;
         *) [ -z "$DIR" ] || die "more than one DIR"; DIR="$1"; shift ;;
     esac
@@ -99,6 +113,32 @@ if [ "${WATARI_NO_EDK2:-0}" != 1 ]; then
     fi
 fi
 
+# Declared fallbacks (T16g): the main firmware stays the plain j293 (guard above, no bench override); every fallback is its own model, named
+# by its tag, and must be a clean production-shaped build of that model. Nothing else (bench, RAM-disk stand-in, PCD, other tag) passes.
+fb_model() { case "$1" in e4) echo j293-e4 ;; e1) echo j293-e1 ;; esac; }
+if [ "${#FALLBACKS[@]}" -gt 0 ]; then
+    [ "${WATARI_NO_EDK2:-0}" != 1 ] || die "--fallback-efi needs the main EDK2 image (not WATARI_NO_EDK2=1)"
+    [ "${WATARI_M1_EFI_ALLOW_BENCH:-0}" != 1 ] || die "--fallback-efi is for hardware bundles: not together with WATARI_M1_EFI_ALLOW_BENCH=1"
+    for fb in "${FALLBACKS[@]}"; do
+        fbn="${fb%%=*}"; fbf="${fb#*=}"
+        [ -f "$fbf" ] || die "--fallback-efi $fbn: $fbf is not a file"
+        fbm="$fbf.build.txt"
+        [ -f "$fbm" ] || die "--fallback-efi $fbn: no build manifest $fbm (rebuild with WATARI_M1_BUILD_TAG=$fbn tools/build-edk2-m1.sh --bgr8 --model $(fb_model "$fbn"))"
+        fval() { sed -n "s/^$1=//p" "$fbm" | head -1; }
+        [ "$(fval model)" = "$(fb_model "$fbn")" ] || die "--fallback-efi $fbn: model is '$(fval model)', not $(fb_model "$fbn") ($fbm)"
+        [ "$(fval bench)" = 0 ] || die "--fallback-efi $fbn: firmware is a --bench build ($fbm)"
+        [ "$(fval ramdisk_standin)" = 0 ] || die "--fallback-efi $fbn: firmware is a --ramdisk bench build ($fbm)"
+        [ "$(fval build_tag)" = "$fbn" ] || die "--fallback-efi $fbn: build tag is '$(fval build_tag)', expected '$fbn' ($fbm)"
+        [ -z "$(fval build_pcd)" ] || die "--fallback-efi $fbn: firmware was built with WATARI_M1_BUILD_PCD ($fbm)"
+        [ "$(fval bgr8)" = "$(mval bgr8)" ] || die "--fallback-efi $fbn: bgr8=$(fval bgr8) differs from the main firmware's bgr8=$(mval bgr8)"
+        [ "$(fval dirty)" = 0 ] || die "--fallback-efi $fbn: built from a dirty tree ($fbm): rebuild from a clean commit"
+        [ "$(fval commit)" != unknown ] || die "--fallback-efi $fbn: no commit in the manifest ($fbm)"
+        [ "$(fval fd_sha256)" = "$(shasum -a 256 "$fbf" | cut -d' ' -f1)" ] || die "--fallback-efi $fbn: SHA-256 differs from its manifest ($fbm)"
+        [ "$(fval commit)" = "$(mval commit)" ] || echo "WARNING: fallback $fbn was built from commit $(fval commit | cut -c1-9), the main firmware from $(mval commit | cut -c1-9)" >&2
+        echo "  guard: fallback $fbn: model $(fval model), bgr8=$(fval bgr8), no bench/stand-in/PCD, clean, commit $(fval commit | cut -c1-9)"
+    done
+fi
+
 OUT="$DIR/bundle"
 # make cannot handle spaces in paths (the data disk is "Arthur Fonzarelli"): when DIR has one, the work tree goes
 # to a space-free temp dir (removed on exit); only the finished bundle is written under DIR (the shell quotes it).
@@ -132,6 +172,12 @@ if [ "${WATARI_NO_EDK2:-0}" != 1 ]; then
     echo "== EDK2 image: $EFI_SRC =="
     [ -f "$MANIFEST" ] && cp "$MANIFEST" "$OUT/$EFI_NAME.build.txt"
     cp "$EFI_SRC" "$OUT/$EFI_NAME"
+    for fb in ${FALLBACKS[@]+"${FALLBACKS[@]}"}; do
+        fbn="${fb%%=*}"; fbf="${fb#*=}"
+        echo "== declared fallback EDK2 image $fbn: $fbf -> WATARI_M1_EFI-$fbn.fd =="
+        cp "$fbf.build.txt" "$OUT/WATARI_M1_EFI-$fbn.fd.build.txt"
+        cp "$fbf" "$OUT/WATARI_M1_EFI-$fbn.fd"
+    done
 fi
 
 echo "== device tree =="
@@ -162,6 +208,7 @@ check_image "$OUT/wel2-m1.bin"
 check_image "$OUT/wel2-chain.bin"
 check_image "$OUT/m1guest.bin"
 [ -f "$OUT/$EFI_NAME" ] && check_image "$OUT/$EFI_NAME"
+for fb in ${FALLBACKS[@]+"${FALLBACKS[@]}"}; do check_image "$OUT/WATARI_M1_EFI-${fb%%=*}.fd"; done
 
 echo "== fdt_m1_dump: parse the DTB with the layer's own parser =="
 SRC="$OUT/fdt-dump-src"
