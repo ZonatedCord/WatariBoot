@@ -1,0 +1,236 @@
+DRY RUN: no device is opened; every proxy call is printed.
+bundle OK: 50 files match SHA256SUMS (<R>/day3/bundle)
+rung D2: layer=wel2-chain.bin guest=- edk2=WATARI_M1_EFI.fd ramdisk=- step=- cpuif=trap fb=band secondaries=False
+rung D2 ends with a JUMP to the layer; the target leaves m1n1 (recovery: power button ~10 s).
+DTB    j293-minimal.dtb          2387 bytes at 0x840000000  sha256 03030dce3605896f
+LAYER  wel2-chain.bin          163936 bytes at 0x842000000  sha256 361b6a151d41a333
+SPACER 32 MB aligned block at 0x844000000 (not written: keeps D2's addresses equal to D0's)
+EDK2   WATARI_M1_EFI.fd       3145728 bytes at 0x846000000  sha256 4c6b1173321aa798
+boot arguments: "wel2.cpuif=trap wel2.guest=0x846000000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1"
+kboot_prepare_dt OK
+  m1n1: FDT prepared at 0x840000000
+prepared FDT: 2387 bytes at 0x840000000, saved to <R>/day3/bundle/out/prepared-fdt.dtb (host folder only: it holds the board serial number;
+never commit it, never paste it). sha256 03030dce3605896f
+(dry run: the 'prepared' FDT is the unmodified DTB; on hardware m1n1 adds memory, cpus, framebuffer)
+== fdt_m1_dump (the layer's own FDT queries, nothing else of the blob) ==
+platform m1 (apple,aic found)
+cpu 0 reg=0x0 spin_table=1 release_addr=(none) 0x0
+cpu 1 reg=0x1 spin_table=1 release_addr=(none) 0x0
+cpu 2 reg=0x2 spin_table=1 release_addr=(none) 0x0
+cpu 3 reg=0x3 spin_table=1 release_addr=(none) 0x0
+cpu 4 reg=0x10100 spin_table=1 release_addr=(none) 0x0
+cpu 5 reg=0x10101 spin_table=1 release_addr=(none) 0x0
+cpu 6 reg=0x10102 spin_table=1 release_addr=(none) 0x0
+cpu 7 reg=0x10103 spin_table=1 release_addr=(none) 0x0
+memory 0 base=0x800000000 size=0x200000000 end=0xa00000000
+usable 0 base=0x800000000 size=0x200000000 end=0xa00000000
+memory pairs wholly reserved: 0
+aic 0 base=0x23b100000 size=0xc000 end=0x23b10c000
+uart s5l base=0x235200000 size=0x4000 chosen_by=stdout-path/serial0
+wdt base=0x23d2b0000 size=0x4000
+framebuffer none
+== block placement check (host side): are the layer/edk2 blocks wholly inside usable RAM? ==
+  layer block 0x842000000..0x844000000 : PASS (inside usable range 0x800000000..0xa00000000)
+  edk2  block 0x846000000..0x848000000 : PASS (inside usable range 0x800000000..0xa00000000)
+(dry run: the fake addresses are not m1n1's heap; this only exercises the check)
+BLOCK CHECK: PASS
+== gfdt_dump (the guest FDT the layer would build; no serial number, MAC or seed can appear) ==
+// guest image at 0x846000000, image end 0x846300000, guest FDT at 0x846300000
+// wel2.fb=band: the layer's plan fails (no framebuffer, not whole 16 KB pages, or no room for the band): it keeps the panel, no node
+// framebuffer plan (16 KB granule): mode none, band rows 0, guest rows 0, guest base 0x0, guest bytes 0x0
+// guest FDT: 1920 bytes (limit 32704), 2 /memory range(s), 8 core(s), wel2.fb=band
+/:
+  #address-cells = <0x2>;
+  #size-cells = <0x2>;
+  compatible = "watari,el2-guest";
+  memory@844000000:
+    device_type = "memory";
+    reg = <0x8 0x44000000 0x1 0xbc000000>;
+  memory@800000000:
+    device_type = "memory";
+    reg = <0x8 0x0 0x0 0x42000000>;
+  psci:
+    compatible = "arm,psci-1.0", "arm,psci-0.2";
+    method = "hvc";
+  intc@f00000000:
+    compatible = "arm,gic-v3";
+    interrupt-controller;
+    #interrupt-cells = <0x3>;
+    reg = <0xf 0x0 0x0 0x10000 0xf 0x10000000 0x0 0x100000>;
+    phandle = <0x1>;
+  timer:
+    compatible = "arm,armv8-timer";
+    interrupt-parent = <0x1>;
+    interrupts = <0x1 0xd 0x4 0x1 0xe 0x4 0x1 0xb 0x4 0x1 0xa 0x4>;
+    always-on;
+  cpus:
+    #address-cells = <0x2>;
+    #size-cells = <0x0>;
+    cpu@0:
+      device_type = "cpu";
+      compatible = "arm,armv8";
+      reg = <0x0 0x0>;
+      enable-method = "psci";
+    cpu@1:
+      device_type = "cpu";
+      compatible = "arm,armv8";
+      reg = <0x0 0x1>;
+      enable-method = "psci";
+    cpu@2:
+      device_type = "cpu";
+      compatible = "arm,armv8";
+      reg = <0x0 0x2>;
+      enable-method = "psci";
+    cpu@3:
+      device_type = "cpu";
+      compatible = "arm,armv8";
+      reg = <0x0 0x3>;
+      enable-method = "psci";
+    cpu@10100:
+      device_type = "cpu";
+      compatible = "arm,armv8";
+      reg = <0x0 0x10100>;
+      enable-method = "psci";
+    cpu@10101:
+      device_type = "cpu";
+      compatible = "arm,armv8";
+      reg = <0x0 0x10101>;
+      enable-method = "psci";
+    cpu@10102:
+      device_type = "cpu";
+      compatible = "arm,armv8";
+      reg = <0x0 0x10102>;
+      enable-method = "psci";
+    cpu@10103:
+      device_type = "cpu";
+      compatible = "arm,armv8";
+      reg = <0x0 0x10103>;
+      enable-method = "psci";
+    watari,el2:
+      compatible = "watari,el2";
+      version = <0x1>;
+      platform = "t8103";
+      hvc-vendor-base = <0xc6000000>;
+      gicd-base = <0xf 0x0>;
+      gicr-base = <0xf 0x10000000>;
+      gicr-stride = <0x20000>;
+      msi-frame-base = <0x0 0xfffff000>;
+      fb-mode = "none";
+== the same guest FDT through dtc ==
+/dts-v1/;
+
+/ {
+	#address-cells = <0x02>;
+	#size-cells = <0x02>;
+	compatible = "watari,el2-guest";
+
+	memory@844000000 {
+		device_type = "memory";
+		reg = <0x08 0x44000000 0x01 0xbc000000>;
+	};
+
+	memory@800000000 {
+		device_type = "memory";
+		reg = <0x08 0x00 0x00 0x42000000>;
+	};
+
+	psci {
+		compatible = "arm,psci-1.0", "arm,psci-0.2";
+		method = "hvc";
+	};
+
+	intc@f00000000 {
+		compatible = "arm,gic-v3";
+		interrupt-controller;
+		#interrupt-cells = <0x03>;
+		reg = <0x0f 0x00 0x00 0x10000 0x0f 0x10000000 0x00 0x100000>;
+		phandle = <0x01>;
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupt-parent = <0x01>;
+		interrupts = <0x01 0x0d 0x04 0x01 0x0e 0x04 0x01 0x0b 0x04 0x01 0x0a 0x04>;
+		always-on;
+	};
+
+	cpus {
+		#address-cells = <0x02>;
+		#size-cells = <0x00>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,armv8";
+			reg = <0x00 0x00>;
+			enable-method = "psci";
+		};
+
+		cpu@1 {
+			device_type = "cpu";
+			compatible = "arm,armv8";
+			reg = <0x00 0x01>;
+			enable-method = "psci";
+		};
+
+		cpu@2 {
+			device_type = "cpu";
+			compatible = "arm,armv8";
+			reg = <0x00 0x02>;
+			enable-method = "psci";
+		};
+
+		cpu@3 {
+			device_type = "cpu";
+			compatible = "arm,armv8";
+			reg = <0x00 0x03>;
+			enable-method = "psci";
+		};
+
+		cpu@10100 {
+			device_type = "cpu";
+			compatible = "arm,armv8";
+			reg = <0x00 0x10100>;
+			enable-method = "psci";
+		};
+
+		cpu@10101 {
+			device_type = "cpu";
+			compatible = "arm,armv8";
+			reg = <0x00 0x10101>;
+			enable-method = "psci";
+		};
+
+		cpu@10102 {
+			device_type = "cpu";
+			compatible = "arm,armv8";
+			reg = <0x00 0x10102>;
+			enable-method = "psci";
+		};
+
+		cpu@10103 {
+			device_type = "cpu";
+			compatible = "arm,armv8";
+			reg = <0x00 0x10103>;
+			enable-method = "psci";
+		};
+	};
+
+	chosen {
+
+		watari,el2 {
+			compatible = "watari,el2";
+			version = <0x01>;
+			platform = "t8103";
+			hvc-vendor-base = <0xc6000000>;
+			gicd-base = <0x0f 0x00>;
+			gicr-base = <0x0f 0x10000000>;
+			gicr-stride = <0x20000>;
+			msi-frame-base = <0x00 0xfffff000>;
+			fb-mode = "none";
+		};
+	};
+};
+GUEST FDT CHECK: PASS (placement rule of the layer, builder accepted)
+kboot_boot(0x842000000) ... (USB goes away now; a timeout is expected)
+handed over. Watch the screen (README-m1-payload.md); L1: the Mac restarts within about a second.
+exit=0
