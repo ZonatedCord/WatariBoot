@@ -69,7 +69,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 +#endif
 --- /dev/null
 +++ b/hw/intc/watari_aic.c
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,317 @@
 +/*
 + * Watari AIC: a minimal Apple Interrupt Controller (AICv1 layout, t8103) for QEMU.
 + *
@@ -104,6 +104,7 @@ SPDX-License-Identifier: GPL-2.0-or-later
 +#include "qemu/osdep.h"
 +#include "qemu/log.h"
 +#include "qemu/module.h"
++#include "qapi/error.h"
 +#include "migration/vmstate.h"
 +#include "hw/core/cpu.h"
 +#include "hw/core/irq.h"

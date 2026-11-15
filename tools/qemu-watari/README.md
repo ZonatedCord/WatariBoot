@@ -21,6 +21,7 @@ QEMU's own device models were read for the API (`pl031.c`, `or-irq.h`, `virt.c`)
 |---|---|
 | `0001-hw-intc-add-watari-aic.patch` | New device `watari-aic` (`hw/intc/watari_aic.c`, `include/hw/intc/watari_aic.h`): AICv1 layout of the t8103 (INFO, WHOAMI as the per-CPU view, EVENT with auto-mask, IPI_SEND/ACK/MASK_SET/MASK_CLR, TARGET_CPU, SW_SET/SW_CLR, MASK_SET/MASK_CLR, HW_STATE); one IRQ output per core. Simplifications are listed at the top of the file. |
 | `0002-hw-arm-virt-add-aic-machine-option.patch` | `virt` machine options `aic=on` and `aic-routes=none\|rtc\|uart\|rtc+uart` (default `rtc+uart`). The GICv3 stays (QEMU provides the `ICH_*` CPU interface only with it, and the M1 has `ICH_*` too). The AIC is mapped at `0x0f004000` (0x8000 bytes, a free hole of the memory map), each CPU's IRQ line becomes the OR (`TYPE_OR_IRQ`) of the GIC and AIC outputs, and the selected devices (PL031 RTC, PL011 UART0) are wired to AIC inputs instead of GIC SPIs. The AIC input number of a device is its usual SPI number (RTC 2, UART0 1), so a layer that exposes AIC hwirq `h` as vINTID `32 + h` (the intr_map rule) keeps the INTIDs that the FDT / ACPI already announce. The FDT gets a node `watari-aic@f004000`: `compatible = "watari,aic-v1"`, `reg`, `watari,num-irq`, `watari,num-cpu`, `watari,routed-irqs`. |
+| `0003-hw-arm-virt-add-ram-base-option.patch` | `virt` option `ram-base=<n GiB>`: guest RAM base (default 1 GiB), e.g. `ram-base=0x800000000` as on the M1 (all M1 RAM is above 4 GiB). |
 
 ## Build
 
@@ -58,18 +59,8 @@ the existing tests). `run-m2.sh` also takes `MACHINE_OPTS=aic=on` (Windows on th
 tree: `cd /private/tmp/watari-qemu/src && diff -urN orig/<dir> qemu-11.1.2/<dir> > ...` per patch, then
 `build.sh --clean` to check that the series still applies from the tarball.
 
-## Status (2026-11-03, stopped on request): what works and what is NOT done
+## Status (2026-11-15, T9b)
 
-- **Done:** the tarball is downloaded and sha256-checked; `ninja` is installed; the work image is created; the
-  two patches are written and **apply cleanly** to the pristine 11.1.2 tree (checked with `patch`); the layer
-  side (FDT node lookup, hybrid GIC+AIC `pirq` backend, AIC drain in the IRQ path, stage-2 hole over the AIC
-  window, `run-m1-6.sh`, `QEMU=` / `MACHINE_OPTS=` knobs) builds and does nothing unless the FDT has the AIC node,
-  so the default configuration is unchanged (`run-all.sh` with the Homebrew QEMU).
-- **NOT done / NOT verified:** QEMU has **never been built**, with or without the patches, so the device model and
-  the `virt` changes have not even been compiled, and `run-m1-6.sh` has never run (it exits 77 = SKIP without the
-  binary). Phase 1 (stock build boots the existing tests) is therefore also open. Phase 4 (timer to FIQ,
-  Windows on the hybrid machine) not started.
-- **Blocker found, then solved offline (T9, 2026-11-13):** `configure` failed in the venv step; it now passes with no
-  download using the Command Line Tools Python 3.9 plus a tomli shim, see `re/qemu-configure-offline.md` and F-28.
-  `build.sh` carries the exact command. The build itself (3165 ninja steps) has still not been run.
-- Expect compile errors on the first build of the patches (written against the 11.1.2 headers without compiling).
+- **Built and working:** the series (0001-0003) compiles offline (one fix: `qapi/error.h` in `watari_aic.c`), `run-m1-6.sh` PASSES and
+  `el2/boot/run-aic.sh` (test guest G1-G12 on `aic=on`) PASSES. Patch 0003 adds `ram-base=` (RAM above 4 GiB).
+- **Not covered:** plat_m1 itself (Apple FIQ timer, fast IPI, Apple sysregs): no QEMU model, see `re/qemu-aic-bench.md`.
