@@ -184,7 +184,7 @@ SHOT_EVERY=120 STALL=0 QEMU_EXTRA=-no-shutdown WEL2_ARGS="wel2.vgicipa=m1 wel2.v
 | 3433 | 798 k | 390 k | 0x37460 | |
 | 3716 (end) | ~850 k | 414 896 | 0x3ab10 | QEMU stopped by the script at TIMEOUT |
 
-- Counters grow steadily (about 130 timer irqs/s on cpu 0 [timer irqs 0x3ab10 = 240 400 in 3700 s are the layer's own tally], about 110 SGIs/s). The
+- Counters grow steadily (about 65 timer irqs/s on cpu 0 [0x3ab10 = 240 400 in 3716 s, the layer's own tally], about 110 SGIs/s). The
   layer log is 120-150 k lines per 10 min; no FATAL / abort / UNEXPECTED / bugcheck line in the whole log (0 matches).
 - `pc.log` (31 snapshots, PC of all 8 vCPUs): at every snapshot most cores sit at the same kernel address `fffff802ba67fe4c` (EL1t, idle loop, PSTATE
   0x600031c4 [hypothesis: the idle loop]); cpu0 and one or two others were seen at other kernel addresses (`fffff802ba414a68`) or in the layer (EL2h,
