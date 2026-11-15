@@ -982,6 +982,9 @@ def run(args, target):
             rd = load_ramdisk(args)
         path = rd.path
         sl = args.ramdisk_slice * MIB
+        if pm_size and args.pmlog_base is None and heap_need(rd.range_size) + BLOCK > HEAP_BYTES:
+            raise LoadError("--pmlog needs its own 32 MB block after the ramdisk's blocks: %.0f MiB + 32 MiB exceed m1n1's %d MiB proxy heap "
+                            "(use a smaller image or --pmlog-base 0x<addr>)" % (heap_need(rd.range_size) / MIB, HEAP_BYTES // MIB), 2)
         say("RAMDISK PLAN: %s: %d bytes (%.1f MiB), sha256 %s (matches its sidecar), crc32 0x%08x" %
             (os.path.basename(path), rd.size, rd.size / MIB, rd.sha256[:16], rd.crc32))
         say("  block %d bytes (%.1f MiB: image + 4 KiB trailer at the end, rounded to 1 MiB), 32 MB aligned, allocated first" %

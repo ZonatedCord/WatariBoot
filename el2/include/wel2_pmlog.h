@@ -46,6 +46,7 @@ struct wel2_pmlog {
 	volatile uint32_t lock;
 	wel2_pmlog_clean_fn clean;        /* NULL = no cleaning (host tests) */
 	unsigned long spin_limit;         /* 0 = the default */
+	uint32_t stuck;                   /* the last write timed out on the lock: later writes try only briefly until one gets it */
 };
 
 uint32_t wel2_pmlog_crc32(const void *p, unsigned long n);
