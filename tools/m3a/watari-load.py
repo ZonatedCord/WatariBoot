@@ -48,6 +48,7 @@ Exit codes: 0 ok / handed over, 1 error, 2 usage or bundle problem, 3 L0/D0: pre
 """
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -475,6 +476,12 @@ class RamdiskImage:
             self._next += len(d)
         return d
 
+    def peek(self, offset, n):
+        """Read without touching the streaming hash (the reuse sample check)."""
+        with open(self.path, "rb") as f:
+            f.seek(offset)
+            return f.read(n)
+
     def check_streamed(self):
         """After the transfer: the bytes read for sending hash to the sidecar value (else the file changed under us)."""
         if self._next != self.size or self._h.hexdigest() != self.sha256:
@@ -534,6 +541,74 @@ def prevalidate(args):
         if not (args.edk2 and args.rung in EDK2_RUNGS):
             raise LoadError("--ramdisk goes with --edk2 on rung D0 (preview) or D2 (jump): the layer needs wel2.abi=fdt for it", 2)
         args._rd = load_ramdisk(args)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# RAM-disk reuse across attempts (T16l): is the image still in DRAM at the block the loader just allocated?
+# ----------------------------------------------------------------------------------------------------------------------
+RD_RECORD = "ramdisk-block.json"
+RD_REUSE_LOG = "ramdisk-reuse.json"
+RD_SAMPLES = 3
+
+
+def write_json(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(obj, f, indent=1, sort_keys=True)
+        f.write("\n")
+
+
+def write_rd_record(out, base, rd):
+    """After a complete transfer (slices, checks, trailer): where the image lives and what it is."""
+    write_json(os.path.join(out, RD_RECORD), dict(base="0x%x" % base, range_size=rd.range_size, size=rd.size, sha256=rd.sha256,
+                                                   crc32="0x%08x" % rd.crc32, written=time.strftime("%Y-%m-%d %H:%M:%S")))
+
+
+def read_rd_record(out):
+    try:
+        with open(os.path.join(out, RD_RECORD)) as f:
+            r = json.load(f)
+        return int(r["base"], 0), int(r["range_size"]), int(r["size"]), r["sha256"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def sample_offsets(size):
+    """Three 4 KiB samples of the image: the start, the middle (4 KiB aligned), the last 4 KiB."""
+    last = max(0, size - 4096)
+    return sorted(set((0, (size // 2) // 4096 * 4096 if size > 8192 else 0, last)))
+
+
+def reuse_check(target, rd, rd_addr, out):
+    """(ok, reason). The block was just allocated at rd_addr (m1n1's heap is first-fit and this block is the first allocation
+    after the small DTB one, so a fresh m1n1 boot gives the same address [hypothesis: confirmed on Monday by the recorded
+    address]). Reuse only if the recorded transfer was this image at this address AND the trailer read back over the proxy
+    says the same AND three 4 KiB samples equal the file. EDK2's CRC-32 over the whole image stays the real guard."""
+    rec = read_rd_record(out)
+    if rec is None:
+        return False, "no record of an earlier transfer in %s (%s)" % (out, RD_RECORD)
+    base, rsize, size, sha = rec
+    if base != rd_addr:
+        return False, "the block is at 0x%x now, the earlier transfer was at 0x%x" % (rd_addr, base)
+    if rsize != rd.range_size or size != rd.size or sha != rd.sha256:
+        return False, "the recorded transfer was another image (size/SHA-256 differ from this image's)"
+    taddr = rd_addr + rd.range_size - RD_TRAILER
+    t = target.read(taddr, RD_TRAILER)
+    if len(t) != RD_TRAILER or t[:8] != RD_MAGIC:
+        return False, "no trailer magic at 0x%x (DRAM did not keep the image, or m1n1 reused the block)" % taddr
+    tsize, tcrc = struct.unpack_from("<QI", t, 8)
+    if tsize != rd.size:
+        return False, "trailer image size %d differs from this image's %d" % (tsize, rd.size)
+    if t[20:52] != bytes.fromhex(rd.sha256):
+        return False, "trailer SHA-256 differs from the sidecar's"
+    if tcrc != rd.crc32:
+        return False, "trailer CRC-32 0x%08x differs from the image's 0x%08x" % (tcrc, rd.crc32)
+    for off in sample_offsets(rd.size):
+        n = min(4096, rd.size - off)
+        if target.read(rd_addr + off, n) != rd.peek(off, n):
+            return False, "sample of the image at offset 0x%x differs from the file (DRAM damaged or overwritten)" % off
+    return True, "trailer magic/size/CRC/SHA-256 match the sidecar, %d samples of 4 KiB equal the file, address 0x%x as recorded" % (
+        len(sample_offsets(rd.size)), rd_addr)
 
 
 def build_trailer(image, crc=None, sha=None):
@@ -1042,15 +1117,31 @@ def run(args, target):
         if rd_addr % BLOCK:
             raise LoadError("the ramdisk block is not 32 MB aligned (0x%x)" % rd_addr)
         say("RAMDISK block 0x%x..0x%x (%d bytes)" % (rd_addr, rd_addr + rd.range_size, rd.range_size))
-        el = write_sliced(target, rd_addr, rd.read, rd.size, args.ramdisk_slice * MIB, "ramdisk", args.ramdisk_verify)
-        rd.check_streamed()
-        trailer = build_trailer(rd)
-        taddr = rd_addr + rd.range_size - RD_TRAILER
-        target.write(taddr, trailer)                      # last
-        if not target.dry_run and target.read(taddr, RD_TRAILER) != trailer:
-            raise LoadError("ramdisk trailer: read-back differs")
-        say("RAMDISK written: %d bytes in %s (%.2f MB/s), trailer at 0x%x (crc32 0x%08x)" %
-            (rd.size, fmt_eta(el), rd.size / el / 1e6 if el > 0 else 0.0, taddr, rd.crc32))
+        reuse_ok = False
+        if args.ramdisk_reuse:
+            reuse_ok, why = reuse_check(target, rd, rd_addr, args.out)
+            write_json(os.path.join(args.out, RD_REUSE_LOG), dict(decision="reuse" if reuse_ok else "transfer", reason=why,
+                                                                  base="0x%x" % rd_addr, dry_run=bool(target.dry_run),
+                                                                  time=time.strftime("%Y-%m-%d %H:%M:%S")))
+            if reuse_ok:
+                say("REUSING image in DRAM, not verified by the loader; EDK2's CRC-32 check will verify it (%s)" % why)
+            else:
+                say("RAMDISK REUSE refused: %s -> transferring the image normally" % why)
+        if reuse_ok:
+            taddr = rd_addr + rd.range_size - RD_TRAILER
+            say("RAMDISK reused: %d bytes already at 0x%x, trailer at 0x%x (crc32 0x%08x), no transfer" % (rd.size, rd_addr, taddr, rd.crc32))
+        else:
+            el = write_sliced(target, rd_addr, rd.read, rd.size, args.ramdisk_slice * MIB, "ramdisk", args.ramdisk_verify)
+            rd.check_streamed()
+            trailer = build_trailer(rd)
+            taddr = rd_addr + rd.range_size - RD_TRAILER
+            target.write(taddr, trailer)                      # last
+            if not target.dry_run and target.read(taddr, RD_TRAILER) != trailer:
+                raise LoadError("ramdisk trailer: read-back differs")
+            say("RAMDISK written: %d bytes in %s (%.2f MB/s), trailer at 0x%x (crc32 0x%08x)" %
+                (rd.size, fmt_eta(el), rd.size / el / 1e6 if el > 0 else 0.0, taddr, rd.crc32))
+            if not target.dry_run:
+                write_rd_record(args.out, rd_addr, rd)       # for --ramdisk-reuse on the next attempt
     if preview:
         # L0 allocates the blocks the jump rungs would use, WITHOUT writing them: the host then checks that m1n1's proxy
         # heap is plain usable RAM (the main unverified risk for L3). With --edk2 (D0) a third block is allocated, in the
@@ -1290,6 +1381,9 @@ def parse_args(argv):
     ap.add_argument("--ramdisk", metavar="IMAGE", help="Windows RAM-disk image (winram.img, with its .sha256 sidecar next to it; a path, "
                     "or a name inside the bundle folder) for rung D0/D2 with --edk2: a FOURTH block, allocated first, written in slices "
                     "with a 4 KiB trailer, passed as wel2.ramdisk=0x<base>,0x<size>")
+    ap.add_argument("--ramdisk-reuse", action="store_true", help="T16l: after a reset, if the image is still in DRAM at the block just allocated "
+                    "(address as recorded in <out>/ramdisk-block.json, trailer magic/size/CRC/SHA-256 and three 4 KiB samples match), skip the "
+                    "transfer; EDK2's CRC-32 check stays the real guard. Any mismatch: normal transfer")
     ap.add_argument("--ramdisk-test", type=int, metavar="MIB", help="rate test: write and read back MIB MiB in one block, print MB/s; "
                     "no DTB, no layer, no jump (first step of rung W1; --rung is not needed)")
     ap.add_argument("--ramdisk-slice", type=int, default=RD_SLICE_MIB, metavar="MIB", help="slice size of the transfer (default 16)")
@@ -1316,6 +1410,8 @@ def parse_args(argv):
     a.pmlog_size_given = a.pmlog_size is not None
     if a.pmlog_size is None:
         a.pmlog_size = PM_DEFAULT_KIB
+    if a.ramdisk_reuse and not a.ramdisk:
+        ap.error("--ramdisk-reuse needs --ramdisk")
     if a.ramdisk_test is not None and (a.ramdisk or a.rung):
         ap.error("--ramdisk-test is a mode of its own: no --rung, no --ramdisk")
     a.bundle = os.path.abspath(a.bundle)

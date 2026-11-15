@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory() as tmp:
     allocs = [c for c in t.calls if c[0] == "memalign"]
     check(len(allocs) == 3 and all(c[1] == wl.BLOCK for c in allocs), "D2 --pmlog: still three 32 MB aligned blocks (layer, spacer, edk2): the ring takes no block of its own")
     pm = [c for c in t.calls if c[0] == "writemem" and c[2] == 2048 * 1024]
-    check(len(pm) == 1 and pm[0][1] % wl.BLOCK == 0, "the region is written once, 1 MiB, at its block")
+    check(len(pm) == 1 and pm[0][1] % wl.BLOCK == 0, "the region is written once, 2 MiB, at its block")
     spacer_addr = int(re.search(r"^SPACER 32 MB aligned block at 0x([0-9a-f]+)", out, re.M).group(1), 16)
     edk2_addr = int(re.search(r"^EDK2 .* bytes at 0x([0-9a-f]+)", out, re.M).group(1), 16)
     check(pm[0][1] == spacer_addr and spacer_addr + wl.BLOCK == edk2_addr,
