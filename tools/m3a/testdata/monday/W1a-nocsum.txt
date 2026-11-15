@@ -1,0 +1,13 @@
+DRY RUN: no device is opened; every proxy call is printed.
+bundle OK: 52 files match SHA256SUMS (<R>/m-day4/bundle)
+rate test: 64 MiB in 16 MiB slices (rung W1, first step); no DTB, no layer, no jump; RAM of the target only
+data checksums disabled (--no-data-csums): a corrupted slice is only caught by the read-back
+BLOCK  rate-test block 0x840000000..0x844000000
+  write slice 1/4:    16.0 / 64.0 MiB  5292.57 MB/s  ETA 0 s
+  write slice 2/4:    32.0 / 64.0 MiB  6409.74 MB/s  ETA 0 s
+  write slice 3/4:    48.0 / 64.0 MiB  7677.87 MB/s  ETA 0 s
+  write slice 4/4:    64.0 / 64.0 MiB  8569.00 MB/s  ETA 0 s
+RATE TEST: write 8563.49 MB/s, read 53533.64 MB/s, read-back not compared (dry run)
+  a 704 MiB image at the write rate: about 0 s [hypothesis: the rate holds for a long transfer]
+  DESIGN 2.3: below 0.5 MB/s the plan stops (24 min); 1 MB/s = 12 min is acceptable once; 3 MB/s and up is comfortable
+exit=0

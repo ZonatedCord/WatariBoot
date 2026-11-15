@@ -191,6 +191,47 @@ int wel2_ranges_inward(const struct wel2_range *in, unsigned n, uint64_t align, 
 	return 0;
 }
 
+int wel2_ranges_carve(const struct wel2_range *in, unsigned n, uint64_t base, uint64_t size, struct wel2_range *out,
+		      unsigned max, unsigned *nout)
+{
+	uint64_t cl = base, ch = base + size;
+	unsigned w = 0;
+
+	if (ch < cl)
+		return -1;
+	for (unsigned i = 0; i < n; i++) {
+		uint64_t lo = in[i].base, hi = in[i].base + in[i].size;
+
+		if (hi < lo)
+			return -1;
+		if (hi == lo)
+			continue;
+		if (size && lo < ch && hi > cl) {               /* overlaps the carve-out: keep the part below and the part above */
+			if (lo < cl) {
+				if (w >= max)
+					return -1;
+				out[w].base = lo;
+				out[w].size = cl - lo;
+				w++;
+			}
+			if (hi > ch) {
+				if (w >= max)
+					return -1;
+				out[w].base = ch;
+				out[w].size = hi - ch;
+				w++;
+			}
+			continue;
+		}
+		if (w >= max)
+			return -1;
+		out[w] = in[i];
+		w++;
+	}
+	*nout = w;
+	return 0;
+}
+
 /* Maps [base, base+size) rounded outward to `attrs`, but only if none of its pages is mapped yet. */
 static int map_fresh(struct wel2_pt *pt, uint64_t base, uint64_t size, uint64_t attrs)
 {

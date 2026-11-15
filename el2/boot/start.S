@@ -134,14 +134,26 @@ park:
 // A core outside that range must not touch a stack: it records its MPIDR (bit 63 set) in g_bad_mpidr
 // (best effort: written with MMU/caches off, so the reader must invalidate its line first; the boot core
 // reports it at the next CPU_ON) and parks.
-    // core_sp: sp = top of this core's EL2 stack slot (x1..x5 clobbered); bad_core for an MPIDR outside the slots.
+    // core_sp: sp = top of this core's EL2 stack slot (x1..x6 clobbered); bad_core for an MPIDR outside the slots.
     .macro core_sp
     mrs     x1, mpidr_el1
     ubfx    x2, x1, #0, #8          // Aff0
     ubfx    x3, x1, #8, #8          // Aff1
     ubfx    x4, x1, #16, #8         // Aff2
     ubfx    x5, x1, #32, #8         // Aff3
-    cmp     x2, #4
+    adr_l   x6, g_core_idx8         // T16d: QEMU bench with wel2.vmpidr=m1 (0 on the M1 and by default)
+    dc      ivac, x6                // MMU off: drop a stale line of this slot first (nothing else lives in it)
+    dsb     sy
+    ldr     x6, [x6]
+    cbz     x6, 5f
+    orr     x3, x3, x4              // bench rule (wel2_flat8_index): Aff0 < 8, Aff1 = Aff2 = Aff3 = 0, idx = Aff0
+    orr     x3, x3, x5
+    cbnz    x3, bad_core
+    cmp     x2, #8
+    b.hs    bad_core
+    mov     x1, x2
+    b       6f
+5:  cmp     x2, #4
     b.hs    bad_core
     cmp     x3, #2
     b.hs    bad_core
@@ -149,7 +161,7 @@ park:
     b.ne    bad_core
     cbnz    x5, bad_core
     add     x1, x2, x3, lsl #2      // idx = Aff0 + 4*Aff1 (0..7)
-    adr_l   x2, __el2_stacks
+6:  adr_l   x2, __el2_stacks
     add     x1, x1, #1
     lsl     x1, x1, #WEL2_STACK_SHIFT   // (idx + 1) * WEL2_STACK_SIZE
     add     sp, x2, x1
@@ -222,6 +234,13 @@ bad_core:
     .balign 128
     .global g_bad_mpidr
 g_bad_mpidr:
+    .quad   0
+    .skip   120
+    // T16d: non-zero = the 8-core QEMU bench (wel2.vmpidr=m1): stack slot = Aff0 (core_sp). Own line: the boot core cleans it to
+    // memory (DC CIVAC) because secondaries read it with the MMU off.
+    .balign 128
+    .global g_core_idx8
+g_core_idx8:
     .quad   0
     .skip   120
     .text

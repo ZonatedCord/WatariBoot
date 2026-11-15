@@ -9,7 +9,7 @@
 # Until the layer implements the vendor hypercalls (docs/design/watari-el2-m1boot/T7-wiring.md) the guest sees
 # NOT_SUPPORTED from WEL2_LOG and falls back to the QEMU PL011 (same text), so the checks that do not need the wiring
 # work today; G5a/G5b judge the trap counters only once WEL2_STATS exists (otherwise "counters n/a").
-# Env: CPUIF=hw|trap|trap-notc (default hw), WEL2_ARGS=extra boot arguments (e.g. "wel2.e2h=1 wel2.gran=16k").
+# Env: MACHINE_OPTS=extra -M options (run-aic.sh), GUEST_ADDR=guest loader address (default 0x40280000), CPUIF=hw|trap|trap-notc (default hw), WEL2_ARGS=extra boot arguments (e.g. "wel2.e2h=1 wel2.gran=16k").
 # Exit 0 = success. 60 s timeout.
 set -u
 cd "$(dirname "$0")"
@@ -29,9 +29,9 @@ GUEST=../guest/build/m1guest.bin
 OUT=build-chain
 LOG=$OUT/guest-uart.log
 : > "$LOG"
-"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3 -cpu "${QEMU_CPU:-max}" -accel tcg \
-    -nographic -m 512M -smp 4 -nic none -no-reboot -kernel $OUT/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
-    -device loader,file="$GUEST",addr=0x40280000,force-raw=on \
+"${QEMU:-qemu-system-aarch64}" -M virt,virtualization=on,gic-version=3${MACHINE_OPTS:+,$MACHINE_OPTS} -cpu "${QEMU_CPU:-max}" -accel tcg \
+    -nographic -m 512M -smp ${SMP:-4} -nic none -no-reboot -kernel $OUT/wel2.bin ${APPEND[@]+"${APPEND[@]}"} \
+    -device loader,file="$GUEST",addr=${GUEST_ADDR:-0x40280000},force-raw=on \
     -serial "file:$LOG" -monitor none >$OUT/guest-qemu.out 2>&1 &
 QPID=$!
 EXITED=0

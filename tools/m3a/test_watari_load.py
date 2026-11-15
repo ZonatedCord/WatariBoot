@@ -13,6 +13,7 @@ import stat
 import struct
 import sys
 import tempfile
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("watari_load", os.path.join(HERE, "watari-load.py"))
@@ -43,6 +44,8 @@ def make_bundle(tmp):
         "m1guest.bin": image(0x20000, b"GUEST"),
         "j293-minimal.dtb": b"\xd0\x0d\xfe\xed" + struct.pack(">I", 64) + b"\0" * 56,
         "WATARI_M1_EFI.fd": image(0x300000, b"EDK2"),
+        "WATARI_M1_EFI-e4.fd": image(0x300000, b"EDK2-E4"),       # T16g declared fallbacks (build-m1-payload.sh --fallback-efi)
+        "WATARI_M1_EFI-e1.fd": image(0x300000, b"EDK2-E1"),
     }
     for n, d in files.items():
         with open(os.path.join(tmp, n), "wb") as f:
@@ -247,11 +250,35 @@ with tempfile.TemporaryDirectory() as tmp:
           "D2: prepare_dt -> read-back of the FDT -> DAIF -> boot")
     check(n.index("kboot_boot") == len(n) - 1 and [c for c in t.calls if c[0] == "kboot_boot"][0][1] == layer_addr,
           "D2: kboot_boot(layer) is the last call")
+
+    # --- T16g: the declared fallback firmware of the bundle is selected by name, nothing else changes -----------------------
+    saved_g = open(gargs).read() if os.path.exists(gargs) else None
+    for fb_name in ("WATARI_M1_EFI-e4.fd", "WATARI_M1_EFI-e1.fd"):
+        t = Fake()
+        rc, out = run(["--rung", "D2", "--edk2", fb_name, "--fb", "band", "--cpuif", "trap-notc", "--go", "--no-smp",
+                       "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+        wr = [c for c in t.calls if c[0] == "writemem"]
+        check(rc == 0 and wr[2][2] == len(files[fb_name]), "D2 --edk2 %s: accepted as a bundle file, the fallback image is the third block" % fb_name)
+        check(rc == 0 and ("edk2=%s" % fb_name) in out, "D2 --edk2 %s: the rung line names the fallback image" % fb_name)
+        check(not [c for c in t.calls if c[0] == "smp_start_secondaries"], "D2 --edk2 %s --no-smp: no secondary is started by m1n1" % fb_name)
+    if os.path.exists(gargs):
+        os.remove(gargs)                       # the gfdt_dump call counts below are for the default run
+    if saved_g is not None:
+        open(gargs, "w").write(saved_g)
     check("smp_start_secondaries" not in n, "D2 starts no secondaries unless --smp")
     g = gfdt_calls()
     check(len(g) == 1 and ("--layer 0x%x" % layer_addr) in g[0] and ("--entry 0x%x" % edk2_addr) in g[0] and
           "--image-size 0x300000" in g[0] and "--fb band" in g[0], "D2 runs gfdt_dump with the layer, entry, image size and fb: %s" % g)
     check("BLOCK CHECK: PASS" in out and "GUEST FDT CHECK: PASS" in out, "D2: block and guest FDT checks pass before the jump")
+
+    # wel2.gran=4k|16k in --args is passed on to gfdt_dump as --gran (the layer picks the granule the same way)
+    for extra, want_gran in (("wel2.gran=4k", "--gran 4k"), ("wel2.gran=16k", "--gran 16k"), ("wel2.hold=1", None)):
+        t3 = Fake()
+        open(gargs, "w").close()
+        rc, _ = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd", "--args", extra, "--fdt-dump", FD, "--gfdt-dump", GD], t3, tmp)
+        g = gfdt_calls()
+        check(rc == 0 and len(g) == 1 and (want_gran in g[0] if want_gran else "--gran" not in g[0]),
+              "D0 --args %s -> gfdt_dump %s: %s" % (extra, want_gran or "no --gran", g))
 
     # D2 default --fb is layer and is passed as such
     t = Fake()
@@ -404,6 +431,363 @@ with tempfile.TemporaryDirectory() as tmp:
     check(a.endswith(" wel2.fb=band") and "wel2.abi" not in a, "L3 --fb band appends wel2.fb=band only: %r" % a)
     check(wl.build_bootargs(3, "trap", 0x840000000, "", edk2=False, fb="layer") == "wel2.step=3 wel2.cpuif=trap wel2.guest=0x840000000",
           "build_bootargs: the default fb adds nothing on the test-guest rungs")
+
+    # --- T23: the fourth block, the Windows RAM-disk image (--ramdisk), the rate test (--ramdisk-test) -----------------------
+    MIB = wl.MIB
+    RD_BYTES = 40 * MIB + 12345                      # not a multiple of the 16 MiB slice: 16 + 16 + 8 MiB + 12345
+    rd_path = os.path.join(tmp, "winram-test.img")
+    with open(rd_path, "wb") as f:
+        for i in range(0, RD_BYTES, MIB):
+            f.write(wl.test_pattern(i // MIB, min(MIB, RD_BYTES - i)))
+    rd_data = open(rd_path, "rb").read()
+    rd_sha = hashlib.sha256(rd_data).hexdigest()
+    rd_crc = zlib.crc32(rd_data) & 0xffffffff
+
+    def write_sidecar(sha):
+        with open(rd_path + ".sha256", "w") as f:
+            f.write("%s  winram-test.img\n" % sha)
+    write_sidecar(rd_sha)
+    RD_RANGE = ((RD_BYTES + 4096 + MIB - 1) // MIB) * MIB
+    check(wl.ramdisk_range_size(RD_BYTES) == RD_RANGE and RD_RANGE % 16384 == 0 and RD_RANGE - RD_BYTES >= 4096,
+          "ramdisk range = image + 4 KiB trailer rounded to 1 MiB (16 KB aligned): %d" % RD_RANGE)
+
+    GD2 = os.path.join(tmp, "gfdt_dump_rd")          # a gfdt_dump that "knows" --ramdisk (the option string is in the file)
+    with open(GD2, "w") as f:
+        f.write("#!/bin/sh\n# supports --ramdisk <base>,<size>\necho \"$@\" >> \"$(dirname \"$0\")/gfdt-args.txt\"\n"
+                "echo 'guest tree (stub)'\nexit 0\n")
+    os.chmod(GD2, 0o755)
+    open(os.path.join(tmp, "gfdt-rc.txt"), "w").write("0\n")
+    if os.path.exists(gargs):
+        os.remove(gargs)
+
+    RD_ARGS = ["--edk2", "WATARI_M1_EFI.fd", "--ramdisk", rd_path, "--fdt-dump", FD]
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go", "--gfdt-dump", GD2] + RD_ARGS, t, tmp)
+    n = names(t)
+    check(rc == 0 and n[-1] == "kboot_boot", "D2 --ramdisk: exit 0 and the jump is the last call")
+    allocs = [c for c in t.calls if c[0] == "memalign"]
+    check(len(allocs) == 4 and allocs[0][1] == wl.BLOCK and allocs[0][2] == RD_RANGE and all(c[1] == wl.BLOCK for c in allocs),
+          "D2 --ramdisk: four 32 MB aligned blocks, the FIRST is the ramdisk of %d bytes" % RD_RANGE)
+    check(n[0] == "malloc" and idx(t, "memalign", 0) == 3 and t.calls[2][0] == "timeout", "D2 --ramdisk: DTB written, the long timeout set, then the ramdisk block is the first memalign")
+    wr = [c for c in t.calls if c[0] == "writemem"]
+    rd_base = wr[1][1]                                  # writes: DTB, then the first ramdisk slice
+    sl = [c for c in wr if c[1] >= rd_base and c[1] < rd_base + RD_RANGE]
+    check([c[2] for c in sl[:3]] == [16 * MIB, 16 * MIB, 8 * MIB + 12345] and [c[1] - rd_base for c in sl[:3]] == [0, 16 * MIB, 32 * MIB],
+          "D2 --ramdisk: three slices 16 + 16 + (8 MiB + 12345) at 0 / 16 / 32 MiB (the boundary slice is short)")
+    check(len(sl) == 4 and sl[3][1] == rd_base + RD_RANGE - 4096 and sl[3][2] == 4096, "D2 --ramdisk: the 4 KiB trailer is the LAST ramdisk write, at the end of the range")
+    tr = t.mem[sl[3][1]]
+    check(tr[:8] == b"WRAMDSK1" and struct.unpack_from("<QI", tr, 8) == (RD_BYTES, rd_crc) and tr[20:52] == bytes.fromhex(rd_sha)
+          and tr[52:] == b"\0" * (4096 - 52), "trailer: magic, image_bytes, CRC-32 (zlib), SHA-256, zero padding")
+    check(b"".join(t.mem[c[1]] for c in sl[:3]) == rd_data, "the three slices carry the image bytes exactly")
+    first_other = min(i for i, c in enumerate(t.calls) if c[0] == "memalign" and c is not allocs[0])
+    check(max(i for i, c in enumerate(t.calls) if c[0] == "writemem" and c[1] in [x[1] for x in sl]) < first_other,
+          "the ramdisk is fully written (trailer last) before the layer block is allocated")
+    def covered(op):
+        return sorted((c[1], c[2]) for c in t.calls if c[0] == op and rd_base <= c[1] < rd_base + RD_RANGE)
+    def contiguous(spans):
+        pos = rd_base
+        for a, n in spans:
+            if a != pos or n > 32 * MIB:
+                return False
+            pos += n
+        return pos == rd_base + RD_RANGE
+    check(all(contiguous(covered(op)) for op in ("dc_cvau", "dc_cvac", "ic_ivau")) and len([c for c in t.calls if c[0] == "dc_cvau"]) >= 3,
+          "cache maintenance over the WHOLE ramdisk range (and the layer, EDK2)")
+    check(idx(t, "ic_ivau", 2) < idx(t, "kboot_set_chosen"), "cache maintenance precedes the boot arguments")
+    got = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
+    edk2_a = [c for c in wr if c[2] == edk2_size][0][1]
+    check("wel2.guest=0x%x wel2.ramdisk=0x%x,0x%x wel2.abi=fdt" % (edk2_a, rd_base, RD_RANGE) in got, "boot arguments carry wel2.ramdisk next to wel2.guest: %r" % got)
+    g = gfdt_calls()
+    check(len(g) == 1 and ("--ramdisk 0x%x,0x%x" % (rd_base, RD_RANGE)) in g[0], "gfdt_dump gets --ramdisk <base>,<size>: %s" % g)
+    check("RAMDISK PLAN" in out and "3 slices of 16 MiB" in out and "ETA" in out and "MB/s" in out and "RAMDISK block 0x%x" % rd_base in out,
+          "the plan, per-slice progress lines (MB/s, ETA) and the placement of the block are printed")
+    check("ramdisk block 0x%x..0x%x : PASS" % (rd_base, rd_base + RD_RANGE) in out, "block check covers the whole ramdisk range and passes")
+
+    # a gfdt_dump without --ramdisk: the ramdisk part of the preview is skipped with a clear note, the rest still runs
+    open(gargs, "w").close()
+    t = Fake()
+    rc, out = run(["--rung", "D0", "--gfdt-dump", GD] + RD_ARGS, t, tmp)
+    g = gfdt_calls()
+    check(rc == 0 and "no --ramdisk option" in out and len(g) == 1 and "--ramdisk" not in g[0],
+          "gfdt_dump without --ramdisk: skipped with a NOTE, the EDK2 placement is still checked")
+
+    # D0: the image is written (read-back sample), no jump, no boot arguments, four blocks checked
+    t = Fake()
+    rc, out = run(["--rung", "D0", "--gfdt-dump", GD2] + RD_ARGS, t, tmp)
+    n = names(t)
+    check(rc == 0 and "kboot_boot" not in n and "kboot_set_chosen" not in n, "D0 --ramdisk: no jump, no boot arguments")
+    check(n.count("memalign") == 4 and sum(1 for c in t.calls if c[0] == "writemem") == 1 + 4, "D0 --ramdisk: four blocks, the DTB and the ramdisk (3 slices + trailer) written")
+    check(all(("%-5s block" % k) in out for k in ("ramdisk", "layer", "guest", "edk2")) and "BLOCK CHECK: PASS" in out, "D0 --ramdisk: four blocks in the placement check")
+    check(sum(1 for c in t.calls if c[0] == "readmem") >= 6 + 2, "D0 --ramdisk: first and last 4 KiB of every slice read back")
+
+    # bad SHA / no sidecar / not a file / --ramdisk on a wrong rung: refused (exit 2) before ANY proxy call
+    write_sidecar("0" * 64)
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go", "--gfdt-dump", GD2] + RD_ARGS, t, tmp)
+    check(rc == 2 and t.calls == [] and "differs from its sidecar" in out, "a sidecar mismatch refuses the image before any proxy call")
+    write_sidecar(rd_sha)
+    os.rename(rd_path + ".sha256", rd_path + ".sha256.off")
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go"] + RD_ARGS, t, tmp)
+    check(rc == 2 and t.calls == [] and "no sidecar" in out, "a missing sidecar refuses the image before any proxy call")
+    os.rename(rd_path + ".sha256.off", rd_path + ".sha256")
+    with open(rd_path, "r+b") as f:
+        f.seek(RD_BYTES - 1)
+        f.write(b"\xff")
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go"] + RD_ARGS, t, tmp)
+    check(rc == 2 and t.calls == [], "a flipped last byte of the image fails the SHA-256 (exit 2, no proxy call)")
+    with open(rd_path, "wb") as f:
+        f.write(rd_data)
+    for argv, label in ((["--rung", "D2", "--go", "--ramdisk", rd_path], "--ramdisk without --edk2"),
+                        (["--rung", "L3", "--go", "--ramdisk", rd_path], "--ramdisk with L3"),
+                        (["--rung", "D2", "--go", "--edk2", "WATARI_M1_EFI.fd", "--ramdisk", rd_path + ".nope"], "--ramdisk of a missing file"),
+                        (["--rung", "D2", "--go", "--edk2", "WATARI_M1_EFI.fd", "--ramdisk", rd_path, "--ramdisk-slice", "0"], "--ramdisk-slice 0")):
+        t = Fake()
+        rc, out = run(argv, t, tmp)
+        check(rc == 2 and t.calls == [], "%s is refused (exit 2) before any proxy call" % label)
+
+    # too big: the 896 MiB limit counts the block (image + trailer rounded to 1 MiB); sparse files, no hashing needed to refuse
+    ok_n = 896 * MIB - 4096
+    check(wl.check_ramdisk_size(ok_n) == 896 * MIB and wl.heap_need(896 * MIB) == wl.HEAP_BYTES, "the largest image (896 MiB - 4 KiB) fits the 1 GiB heap budget exactly")
+    for bad_n in (896 * MIB - 4095, 897 * MIB, 2 * 1024 * MIB):
+        try:
+            wl.check_ramdisk_size(bad_n)
+            check(False, "an image of %d bytes is refused" % bad_n)
+        except wl.LoadError as e:
+            check(e.code == 2, "an image of %.3f MiB is refused (exit 2)" % (bad_n / MIB))
+    big = os.path.join(tmp, "big.img")
+    with open(big, "wb") as f:
+        f.truncate(900 * MIB)
+    open(big + ".sha256", "w").write("%s  big.img\n" % ("1" * 64))
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go", "--edk2", "WATARI_M1_EFI.fd", "--ramdisk", big], t, tmp)
+    check(rc == 2 and t.calls == [] and "larger than the 896 MiB limit" in out, "a 900 MiB image is refused before any proxy call")
+    os.remove(big)
+    os.remove(big + ".sha256")
+
+    # overlap and range checks over the WHOLE ramdisk range (check_blocks)
+    U = "usable 0 base=0x800000000 size=0x100000000 end=0x900000000\n"
+    rdb = (0x840000000, 0x2ca00000, wl.RD_ALIGN)
+    ok_, ln = wl.check_blocks(U, {"ramdisk": rdb, "layer": 0x870000000}, [("prepared FDT", 0x830000000, 0x830010000)])
+    check(ok_, "check_blocks: a ramdisk range clear of the layer, FDT passes")
+    ok_, ln = wl.check_blocks(U, {"ramdisk": rdb, "layer": 0x860000000})
+    check(not ok_ and "overlaps the layer block" in " ".join(ln), "check_blocks: the layer block inside the ramdisk range is an overlap")
+    ok_, ln = wl.check_blocks(U, {"ramdisk": rdb, "edk2": 0x840000000})
+    check(not ok_ and "overlaps the ramdisk block" in " ".join(ln), "check_blocks: overlap is reported on both blocks")
+    ok_, ln = wl.check_blocks(U, {"ramdisk": rdb}, [("prepared FDT", 0x850000000, 0x850010000)])
+    check(not ok_ and "overlaps the prepared FDT" in " ".join(ln), "check_blocks: the prepared FDT inside the range is refused")
+    ok_, ln = wl.check_blocks(U, {"ramdisk": rdb}, [("framebuffer", 0x86c000000, 0x872000000)])
+    check(not ok_ and "overlaps the framebuffer" in " ".join(ln), "check_blocks: the framebuffer overlapping the end is refused")
+    ok_, ln = wl.check_blocks("usable 0 base=0x800000000 size=0x50000000 end=0x850000000\n", {"ramdisk": rdb})
+    check(not ok_ and "not wholly inside" in " ".join(ln), "check_blocks: a range that leaves the usable RAM after its first 32 MB fails (whole range, not 32 MB)")
+    ok_, ln = wl.check_blocks(U, {"ramdisk": (0x840000000 + 4096, 0x2ca00000, wl.RD_ALIGN)})
+    check(not ok_ and "KB aligned" in " ".join(ln), "check_blocks: a ramdisk base that is not 16 KB aligned is refused")
+    check(wl.parse_fb_range("framebuffer base=0x10000000 2560x1600 stride=10240 format=x2r10g10b10\n") == (0x10000000, 0x10000000 + 1600 * 10240), "parse_fb_range")
+    # at CLI level: a usable range that ends inside the ramdisk
+    open(usable_path, "w").write("usable 0 base=0x800000000 size=0x44000000 end=0x844000000\n")
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go", "--gfdt-dump", GD2] + RD_ARGS, t, tmp)
+    check(rc == 4 and "BLOCK CHECK: FAIL" in out and "kboot_boot" not in names(t) and "msr_daif" not in names(t),
+          "D2: a ramdisk that leaves usable RAM fails the block check and does not jump (exit 4)")
+    open(usable_path, "w").write(good)
+
+    # slices: a checksum error retries THAT slice once; twice aborts; a read-back mismatch aborts
+    class FlakyOnce(Fake):
+        fails = 1
+
+        def write(self, addr, data):
+            if len(data) == 16 * MIB and addr % (16 * MIB) == 0 and getattr(self, "seen", 0) == 1 and self.fails:
+                self.fails -= 1
+                self._log("writemem-csumerr", addr, len(data))
+                raise wl.ChecksumError("bad checksum")
+            if len(data) == 16 * MIB:
+                self.seen = getattr(self, "seen", 0) + 1
+            super().write(addr, data)
+    t = FlakyOnce()
+    rc, out = run(["--rung", "D2", "--go", "--gfdt-dump", GD2] + RD_ARGS, t, tmp)
+    check(rc == 0 and "retrying this slice once" in out and names(t).count("writemem-csumerr") == 1, "a slice with one checksum error is retried once and the run continues")
+    t = FlakyOnce()
+    t.fails = 2
+    rc, out = run(["--rung", "D2", "--go", "--gfdt-dump", GD2] + RD_ARGS, t, tmp)
+    check(rc == 1 and "checksum error twice" in out and "kboot_set_chosen" not in names(t) and "kboot_boot" not in names(t),
+          "a slice that fails twice aborts before the boot arguments and the jump")
+
+    class Corrupt(Fake):
+        def read(self, addr, n):
+            d = super().read(addr, n)
+            return b"\x00" + d[1:] if n == 4096 and d[:1] != b"\x00" else d
+    t = Corrupt()
+    rc, out = run(["--rung", "D2", "--go", "--gfdt-dump", GD2] + RD_ARGS, t, tmp)
+    check(rc == 1 and "read-back differs" in out and "kboot_boot" not in names(t), "a read-back mismatch aborts the transfer (no jump)")
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go", "--gfdt-dump", GD2, "--ramdisk-verify", "full"] + RD_ARGS, t, tmp)
+    check(rc == 0 and sum(1 for c in t.calls if c[0] == "readmem" and c[2] > 4096) == 3, "--ramdisk-verify full reads every slice back whole")
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go", "--gfdt-dump", GD2, "--ramdisk-verify", "none"] + RD_ARGS, t, tmp)
+    check(rc == 0 and not any(c[0] == "readmem" and c[2] == 16 * MIB for c in t.calls) and
+          sum(1 for c in t.calls if c[0] == "readmem" and c[2] == 4096) == 1, "--ramdisk-verify none reads back only the trailer")
+    t = Fake()
+    rc, out = run(["--rung", "D2", "--go", "--no-data-csums", "--gfdt-dump", GD2] + RD_ARGS, t, tmp)
+    check(rc == 0 and idx(t, "disable_data_csums") < idx(t, "memalign"), "--no-data-csums is applied before the first allocation")
+
+    # write_sliced directly: progress text, ETA, slice sizes
+    class Clock:
+        def __init__(self):
+            self.t = 0.0
+
+        def __call__(self):
+            self.t += 2.0
+            return self.t
+    t = Fake()
+    lines = []
+    el = wl.write_sliced(t, 0x1000000, lambda off, n: bytes(n), 5 * MIB, 2 * MIB, "x", "sample", Clock(), lines.append)
+    check([c[2] for c in t.calls if c[0] == "writemem"] == [2 * MIB, 2 * MIB, MIB] and len(lines) == 3 and "slice 3/3" in lines[-1] and "ETA 0 s" in lines[-1],
+          "write_sliced: slices 2+2+1 MiB, one progress line each, ETA reaches 0: %s" % lines[-1])
+    check("%.2f MB/s" % (2 * MIB / 2.0 / 1e6) in lines[0], "write_sliced: the rate is decimal MB/s over elapsed time: %s" % lines[0])
+
+    # build_bootargs: the ramdisk argument sits after wel2.guest
+    check(wl.build_bootargs(None, "trap", 0x850000000, "", edk2=True, fb="band", ramdisk=(0x840000000, 0x2ca00000)) ==
+          "wel2.cpuif=trap wel2.guest=0x850000000 wel2.ramdisk=0x840000000,0x2ca00000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band", "build_bootargs with a ramdisk")
+    check("ramdisk" not in wl.build_bootargs(None, "trap", 0x850000000, "", edk2=True, fb="band"), "build_bootargs without a ramdisk is unchanged")
+    check(wl.build_trailer(rd_data) == wl.build_trailer(wl.inspect_ramdisk(rd_path)) and len(wl.build_trailer(b"abc")) == 4096,
+          "build_trailer(bytes) and build_trailer(RamdiskImage) agree, 4096 bytes")
+
+    # --dry-run with a ramdisk: no device, the plan, the arguments, the slices printed
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = wl.main(["--bundle", tmp, "--out", os.path.join(tmp, "out"), "--rung", "D2", "--dry-run", "--gfdt-dump", GD2] + RD_ARGS)
+    o = out.getvalue()
+    check(rc == 0 and "RAMDISK PLAN" in o and "wel2.ramdisk=0x" in o and o.count("[proxy] writemem") == 1 + 3 + 1 + 1 + 1 - 0 and not connected,
+          "D2 --dry-run --ramdisk prints the plan and the arguments without a device")
+    check(rc == 0 and "not compared" in o and "3 slices of 16 MiB" in o, "dry run: slices planned, read-back reported as not compared")
+
+    # --ramdisk-test: its own mode: one block, write + read back, MB/s; no DTB, no layer, no jump, no write outside the block
+    t = Fake()
+    rc, out = run(["--ramdisk-test", "40"], t, tmp)
+    n = names(t)
+    blk = [c for c in t.calls if c[0] == "memalign"]
+    wr = [c for c in t.calls if c[0] == "writemem"]
+    check(rc == 0 and "RATE TEST: write" in out and "read-back identical" in out, "rate test: exit 0, MB/s printed, read-back identical")
+    check(len(blk) == 1 and n.count("malloc") == 0 and not any(x.startswith("kboot") or x in ("msr_daif", "smp_start_secondaries", "cpufreq_init") for x in n),
+          "rate test: one block, no DTB, no kboot_* call, no secondaries")
+    check([c[2] for c in wr] == [16 * MIB, 16 * MIB, 8 * MIB], "rate test: 16 + 16 + 8 MiB slices")
+    base = min(c[1] for c in wr)
+    check(all(base <= c[1] and c[1] + c[2] <= base + 40 * MIB for c in wr) and base % wl.BLOCK == 0, "rate test: no write outside its own 40 MiB block")
+    check(sum(1 for c in t.calls if c[0] == "readmem") == 3, "rate test: every slice read back")
+    t = Fake()
+    rc, out = run(["--ramdisk-test", "20", "--ramdisk-slice", "4", "--no-data-csums"], t, tmp)
+    check(rc == 0 and sum(1 for c in t.calls if c[0] == "writemem") == 5 and "disable_data_csums" in names(t), "rate test: --ramdisk-slice and --no-data-csums")
+
+    class Rot(Fake):
+        def read(self, addr, n):
+            d = super().read(addr, n)
+            return d[:-1] + b"\x01" if n > 4096 else d
+    t = Rot()
+    rc, out = run(["--ramdisk-test", "20"], t, tmp)
+    check(rc == 1 and "RATE TEST: FAIL" in out, "rate test: a read-back difference is a failure (exit 1)")
+    for argv, label in ((["--ramdisk-test", "0"], "0 MiB"), (["--ramdisk-test", "5000"], "5000 MiB")):
+        t = Fake()
+        rc, out = run(argv, t, tmp)
+        check(rc == 2 and t.calls == [], "rate test of %s is refused before any proxy call" % label)
+    for argv, label in ((["--ramdisk-test", "8", "--rung", "L0"], "with --rung"), (["--ramdisk-test", "8", "--ramdisk", rd_path], "with --ramdisk")):
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                wl.main(["--bundle", tmp] + argv, target=Fake())
+            check(False, "--ramdisk-test %s is a usage error" % label)
+        except SystemExit as e:
+            check(e.code == 2, "--ramdisk-test %s is a usage error" % label)
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            wl.main(["--bundle", tmp], target=Fake())
+        check(False, "no --rung and no --ramdisk-test is a usage error")
+    except SystemExit as e:
+        check(e.code == 2, "no --rung and no --ramdisk-test is a usage error")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = wl.main(["--bundle", tmp, "--ramdisk-test", "20", "--dry-run"])
+    check(rc == 0 and "[proxy] memalign" in out.getvalue() and "not compared" in out.getvalue(), "rate test --dry-run opens no device")
+
+    # --- review fixes: the sidecar check precedes the first proxy request (connect() already sends some) -------------------
+    order = []
+    real_connect2 = wl.connect
+    def fake_connect(*a, **k):
+        order.append("connect")
+        raise wl.LoadError("stop here (test)", 2)
+    wl.connect = fake_connect
+    try:
+        for sha, label in (("0" * 64, "a wrong sidecar"), (rd_sha, "a good sidecar")):
+            write_sidecar(sha)
+            order.clear()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = wl.main(["--bundle", tmp, "--out", os.path.join(tmp, "out"), "--rung", "D2", "--go", "--m1n1", "/x"] + RD_ARGS)
+            if sha != rd_sha:
+                check(rc == 2 and order == [] and "differs from its sidecar" in out.getvalue(), "%s: refused BEFORE connect() opens the proxy" % label)
+            else:
+                check(order == ["connect"], "%s: the check passes, then (and only then) connect() is called" % label)
+        write_sidecar(rd_sha)
+        out = io.StringIO()
+        order.clear()
+        with contextlib.redirect_stdout(out):
+            rc = wl.main(["--bundle", tmp, "--ramdisk-test", "5000", "--m1n1", "/x", "--go"])
+        check(rc == 2 and order == [], "an out-of-range rate test is refused before connect()")
+    finally:
+        wl.connect = real_connect2
+
+    # M1n1Target: what v1.6.1 proxy.py raises for a bad write maps onto ChecksumError; other remote errors do not
+    class UartRemoteError(RuntimeError):
+        pass
+    class UartChecksumError(RuntimeError):
+        pass
+    class Iface:
+        def __init__(self):
+            self.cmd, self.unkhandler, self.enabled_features, self.exc, self.n = (lambda *a, **k: None), None, 0, None, 0
+        def writemem(self, a, d, progress=False):
+            self.n += 1
+            if self.exc and self.n <= self.fail:
+                raise self.exc
+        def readmem(self, a, n):
+            raise UartChecksumError("Reply data checksum error")
+    ifc = Iface()
+    tg = wl.M1n1Target(ifc, None, None, (OSError,), None, (UartChecksumError, UartRemoteError), 1)
+    ifc.exc, ifc.fail = UartRemoteError("Reply error: Data checksum failed"), 1
+    lines = []
+    wl.write_sliced(tg, 0x1000, lambda off, n: bytes(n), 8, 8, "x", "none", out=lines.append)
+    check(ifc.n == 2 and any("retrying" in l for l in lines), "real target: UartRemoteError 'Data checksum failed' is retried once as a checksum error")
+    ifc.n, ifc.exc, ifc.fail = 0, UartRemoteError("Reply error: Invalid argument"), 1
+    try:
+        wl.write_sliced(tg, 0x1000, lambda off, n: bytes(n), 8, 8, "x", "none", out=lines.append)
+        check(False, "an 'Invalid argument' remote error is not retried")
+    except UartRemoteError:
+        check(ifc.n == 1, "an 'Invalid argument' remote error is not retried")
+    try:
+        tg.read(0, 4)
+        check(False, "read-back checksum error is a LoadError")
+    except wl.LoadError:
+        check(True, "a read-back checksum error is a LoadError, not a traceback")
+    try:
+        tg.disable_data_csums()
+        check(False, "--no-data-csums refuses when the handshake did not enable the feature")
+    except wl.LoadError as e:
+        check(e.code == 2, "--no-data-csums refuses (exit 2) when the handshake did not enable the feature")
+    ifc.enabled_features = 1
+    tg.disable_data_csums()
+    check(True, "--no-data-csums passes only when iface.enabled_features already has the flag")
+
+    # the file changing after the sidecar check is caught before the trailer
+    rdi = wl.inspect_ramdisk(rd_path)
+    rdi.read(0, 100)
+    try:
+        rdi.check_streamed()
+        check(False, "a partly read image fails check_streamed")
+    except wl.LoadError:
+        check(True, "check_streamed refuses a transfer that did not hash to the sidecar value")
+    rdi = wl.inspect_ramdisk(rd_path)
+    for off in range(0, RD_BYTES, 16 * MIB):
+        rdi.read(off, min(16 * MIB, RD_BYTES - off))
+    rdi.check_streamed()
+    check(True, "check_streamed accepts a complete sequential read")
 
     # --- jump rungs need --go on a real device; refused before any m1n1 import ----------------------------------------
     rc, out = run(["--rung", "L1", "--m1n1", "/nonexistent"], None, tmp)

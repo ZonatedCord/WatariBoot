@@ -1,0 +1,80 @@
+diff -urN a/hw/arm/virt.c b/hw/arm/virt.c
+--- a/hw/arm/virt.c	2026-11-15 02:29:05
++++ b/hw/arm/virt.c	2026-11-15 02:29:13
+@@ -2625,6 +2625,10 @@
+     for (i = 0; i < ARRAY_SIZE(base_memmap); i++) {
+         vms->memmap[i] = base_memmap[i];
+     }
++    if (vms->ram_base) {
++        /* Watari: guest RAM at an M1-like base (all M1 RAM is above 4 GiB) */
++        vms->memmap[VIRT_MEM].base = vms->ram_base;
++    }
+ 
+     if (ms->ram_slots > ACPI_MAX_RAM_SLOTS) {
+         error_report("unsupported number of memory slots: %"PRIu64,
+@@ -2662,7 +2666,8 @@
+         error_report("maxmem/slots too huge");
+         exit(EXIT_FAILURE);
+     }
+-    if (base < vms->memmap[VIRT_MEM].base + LEGACY_RAMLIMIT_BYTES) {
++    if (!vms->ram_base &&
++        base < vms->memmap[VIRT_MEM].base + LEGACY_RAMLIMIT_BYTES) {
+         base = vms->memmap[VIRT_MEM].base + LEGACY_RAMLIMIT_BYTES;
+     }
+ 
+@@ -3746,6 +3751,31 @@
+     }
+ }
+ 
++static void virt_get_ram_base(Object *obj, Visitor *v, const char *name,
++                              void *opaque, Error **errp)
++{
++    VirtMachineState *vms = VIRT_MACHINE(obj);
++    uint64_t val = vms->ram_base ? vms->ram_base : GiB;
++
++    visit_type_uint64(v, name, &val, errp);
++}
++
++static void virt_set_ram_base(Object *obj, Visitor *v, const char *name,
++                              void *opaque, Error **errp)
++{
++    VirtMachineState *vms = VIRT_MACHINE(obj);
++    uint64_t val;
++
++    if (!visit_type_uint64(v, name, &val, errp)) {
++        return;
++    }
++    if (val & (GiB - 1)) {
++        error_setg(errp, "ram-base must be a multiple of 1 GiB");
++        return;
++    }
++    vms->ram_base = (val == GiB) ? 0 : val;
++}
++
+ static bool virt_get_aic(Object *obj, Error **errp)
+ {
+     VirtMachineState *vms = VIRT_MACHINE(obj);
+@@ -4423,6 +4453,12 @@
+     object_class_property_set_description(oc, "gic-version",
+                                           "Set GIC version. "
+                                           "Valid values are 2, 3, 4, x-5, host and max");
++
++    object_class_property_add(oc, "ram-base", "uint64", virt_get_ram_base,
++                              virt_set_ram_base, NULL, NULL);
++    object_class_property_set_description(oc, "ram-base",
++                                          "Watari: guest RAM base address "
++                                          "(default 1 GiB, multiple of 1 GiB)");
+ 
+     object_class_property_add_bool(oc, "aic", virt_get_aic, virt_set_aic);
+     object_class_property_set_description(oc, "aic",
+diff -urN a/include/hw/arm/virt.h b/include/hw/arm/virt.h
+--- a/include/hw/arm/virt.h	2026-11-15 02:29:05
++++ b/include/hw/arm/virt.h	2026-11-15 02:29:13
+@@ -175,6 +175,7 @@
+     bool highmem_redists;
+     bool tcg_its;
+     bool virt;
++    uint64_t ram_base;      /* Watari: RAM base override, 0 = default 1 GiB */
+     bool aic;               /* Watari: an Apple-style AIC next to the GIC (aic=on) */
+     uint32_t aic_routes;    /* Watari: devices wired to the AIC instead of the GIC */
+     DeviceState *aic_dev;

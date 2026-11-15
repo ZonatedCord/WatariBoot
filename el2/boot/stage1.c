@@ -45,6 +45,8 @@
 #include "wel2_ram.h"
 #include "wel2_maps.h"
 #include "wel2_uart.h"
+#include "wel2_pmlog.h"
+#include "wel2_guest_place.h"
 
 extern uint8_t _start[], __image_start[], __text_end[], __rodata_end[], __layer_end[];
 
@@ -74,10 +76,18 @@ uint64_t guest_ram_span_end(void)
     return g_fake_fb_lo ? g_fake_fb_lo : g_ram_end;
 }
 
+/* T16j: wel2.pmlog= (see boot.h). Written once by the boot core with the MMU off, cleaned below, read by everyone after. */
+uint64_t g_pmlog_base, g_pmlog_size;
+unsigned g_pmlog_status;
+bool g_pmlog_hole;
+
 bool guest_ram_contains(uint64_t pa)
 {
-    if (!g_plat->m1_memory && !g_nguest_ram)     /* QEMU: one span, unless wel2.split cut it into g_guest_ram[] */
+    if (!g_plat->m1_memory && !g_nguest_ram) {   /* QEMU: one span, unless wel2.split cut it into g_guest_ram[] */
+        if (g_pmlog_hole && pa >= g_pmlog_base && pa - g_pmlog_base < g_pmlog_size)
+            return false;
         return pa >= g_ram_base && pa < guest_ram_span_end();
+    }
     for (unsigned i = 0; i < g_nguest_ram; i++)
         if (pa >= g_guest_ram[i].base && pa - g_guest_ram[i].base < g_guest_ram[i].size)
             return true;
@@ -97,6 +107,16 @@ unsigned guest_ranges(struct wel2_range *out)
 
     out[0].base = g_carve_base + g_carve_size;
     out[0].size = top > out[0].base ? top - out[0].base : 0;
+    if (g_pmlog_hole && out[0].size) {            /* T16j: the ring is not guest RAM (the M1 and wel2.split cut g_guest_ram[] itself) */
+        struct wel2_range cut[2];
+        unsigned nc = 0;
+
+        if (wel2_ranges_carve(out, 1, g_pmlog_base, g_pmlog_size, cut, 2, &nc))
+            return 1;                             /* cannot happen: stage1_build checked that the cut leaves at most two pieces */
+        for (unsigned i = 0; i < nc; i++)
+            out[i] = cut[i];
+        return nc;
+    }
     return out[0].size ? 1 : 0;
 }
 
@@ -194,6 +214,44 @@ static bool parse_wxh(const char *args, const char *key, uint32_t *w, uint32_t *
         }
     }
     return false;
+}
+
+/* "wel2.pmlog=0x<base>,0x<size>" as a whole word: 0 = absent, 1 = parsed, -1 = malformed (hex digits only, the 0x optional). */
+static int parse_pmlog(const char *args, uint64_t *base, uint64_t *size)
+{
+    static const char key[] = "wel2.pmlog=";
+
+    for (const char *p = args; *p; p++) {
+        unsigned k = 0;
+        uint64_t v[2] = { 0, 0 };
+
+        if (p != args && p[-1] != ' ')
+            continue;
+        while (key[k] && p[k] == key[k])
+            k++;
+        if (key[k])
+            continue;
+        const char *q = p + k;
+
+        for (unsigned i = 0; i < 2; i++) {
+            unsigned nd = 0;
+
+            if (q[0] == '0' && (q[1] == 'x' || q[1] == 'X'))
+                q += 2;
+            for (; (*q >= '0' && *q <= '9') || (*q >= 'a' && *q <= 'f') || (*q >= 'A' && *q <= 'F'); q++, nd++)
+                v[i] = v[i] * 16 + (uint64_t)(*q <= '9' ? *q - '0' : (*q | 0x20) - 'a' + 10);
+            if (nd == 0 || nd > 16 || (i == 0 && *q != ','))
+                return -1;
+            if (i == 0)
+                q++;
+        }
+        if (*q && *q != ' ')
+            return -1;
+        *base = v[0];
+        *size = v[1];
+        return 1;
+    }
+    return 0;
 }
 
 /* <key><decimal> as a whole word (key = "wel2.step="): its value, 0 when absent or not a number. */
@@ -447,6 +505,51 @@ void stage1_build(uint64_t fdt)
         }
     }
 
+    /* T16j: wel2.pmlog=0x<base>,0x<size>: the post-mortem log ring. The range is cut out of the guest's RAM (M1 and wel2.split:
+     * g_guest_ram[] itself, so stage 2, /memory and PSCI's entry check all lose it; QEMU without a split: a stage-2 hole and
+     * guest_ranges()). It stays mapped in EL2's own stage 1 (all RAM is). A bad argument never stops the boot: pmlog_start says why. */
+    if (have_args) {
+        uint64_t pb = 0, ps2 = 0;
+        int pr = parse_pmlog(args, &pb, &ps2);
+
+        if (pr < 0) {
+            g_pmlog_status = 2;
+        } else if (pr > 0) {
+            struct wel2_range one[1], cut[WEL2_MAX_GUEST_RANGES];
+            const struct wel2_range *rs = g_guest_ram;
+            unsigned nrs = g_nguest_ram, nc = 0;
+
+            if (!m1 && !g_nguest_ram) {               /* QEMU, no split: the one span behind the carve-out */
+                uint64_t lo = g_carve_base + g_carve_size, top = g_fake_fb_lo ? g_fake_fb_lo : g_ram_end;
+
+                one[0].base = lo;
+                one[0].size = top > lo ? top - lo : 0;
+                rs = one;
+                nrs = 1;
+            }
+            if (ps2 < WEL2_PMLOG_MIN || ps2 > WEL2_PMLOG_MAX || (ps2 & 0x3fff) || (pb & 0x3fff) || pb + ps2 < pb) {
+                g_pmlog_status = 3;
+            } else if (!wel2_ranges_cover(rs, nrs, pb, ps2)) {
+                g_pmlog_status = 4;
+            } else if (wel2_ranges_carve(rs, nrs, pb, ps2, cut, WEL2_MAX_GUEST_RANGES, &nc)) {
+                g_pmlog_status = 5;
+            } else {
+                g_pmlog_status = PMLOG_OK;
+                g_pmlog_base = pb;
+                g_pmlog_size = ps2;
+                if (rs == one) {
+                    g_pmlog_hole = true;
+                } else {
+                    for (unsigned i = 0; i < nc; i++)
+                        g_guest_ram[i] = cut[i];
+                    g_nguest_ram = nc;
+                }
+            }
+            if (g_pmlog_status != PMLOG_OK)
+                s1_msg("Watari EL2: WARNING: wel2.pmlog refused (reason follows once the log is up), no post-mortem log\n");
+        }
+    }
+
     struct wel2_s1_layout layout = {
         (uint64_t)(uintptr_t)__image_start, (uint64_t)(uintptr_t)__text_end, (uint64_t)(uintptr_t)__rodata_end,
     };
@@ -565,6 +668,10 @@ void stage1_build(uint64_t fdt)
     clean_inval(&g_plat, sizeof(g_plat));
     clean_inval(g_guest_ram, sizeof(g_guest_ram));
     clean_inval(&g_nguest_ram, sizeof(g_nguest_ram));
+    clean_inval(&g_pmlog_base, sizeof(g_pmlog_base));
+    clean_inval(&g_pmlog_size, sizeof(g_pmlog_size));
+    clean_inval(&g_pmlog_status, sizeof(g_pmlog_status));
+    clean_inval(&g_pmlog_hole, sizeof(g_pmlog_hole));
     clean_inval(&g_layer_base, sizeof(g_layer_base));
     clean_inval(&g_carve_base, sizeof(g_carve_base));
     clean_inval(&g_carve_size, sizeof(g_carve_size));

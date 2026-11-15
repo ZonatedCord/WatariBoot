@@ -29,7 +29,7 @@ cd "$(dirname "$0")"
 # shellcheck source=/dev/null
 source ../../tools/env.sh || { echo "FAIL: data disk not mounted"; exit 2; }
 FD="${FWDIR:-$WATARI_DATA/build-kernel}/QEMU_EFI-kernel.fd"
-DISK="$WATARI_DATA/vm/win11.qcow2"
+DISK="${DISK:-$WATARI_DATA/vm/win11.qcow2}"   # T22: DISK=<winram.img> DISKFMT=raw runs the WinPE image here (still snapshot=on)
 [ -f "$FD" ] || { echo "FAIL: $FD missing"; exit 2; }
 [ -f "$DISK" ] || { echo "FAIL: $DISK missing"; exit 2; }
 # F-31: no `pgrep -f` (it matches wait loops and this very shell); look at the QEMU processes' own arguments.
@@ -74,7 +74,7 @@ echo "machine: $MACH"
     -chardev "socket,id=ser0,path=$SOCKDIR/ser.sock,server=on,wait=off,logfile=$LOG" -serial chardev:ser0 \
     -monitor "unix:$SOCKDIR/mon.sock,server,nowait" \
     -device ramfb -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 \
-    -drive if=none,id=hd0,format=qcow2,file="$DISK",snapshot=on \
+    -drive if=none,id=hd0,format="${DISKFMT:-qcow2}",file="$DISK",snapshot=on \
     -device nvme,drive=hd0,serial=watari0,bootindex=0 \
     >"$OUT/qemu.out" 2>&1 < /dev/null &
 QPID=$!

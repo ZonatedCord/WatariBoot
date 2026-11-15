@@ -155,11 +155,11 @@
           "output": 4016
         },
         "claude-opus-5-5": {
-          "cache_read": 63003116,
-          "cache_write_1h": 740590,
+          "cache_read": 64787886,
+          "cache_write_1h": 1136000,
           "cache_write_5m": 0,
-          "input": 634,
-          "output": 144453
+          "input": 644,
+          "output": 147131
         },
         "claude-sonnet-5-5": {
           "cache_read": 281458765,
@@ -220,11 +220,11 @@
     "adc822c45845": {
       "models": {
         "claude-opus-5-5": {
-          "cache_read": 14840984,
-          "cache_write_1h": 270144,
+          "cache_read": 23044225,
+          "cache_write_1h": 291972,
           "cache_write_5m": 0,
-          "input": 202,
-          "output": 65314
+          "input": 274,
+          "output": 78176
         }
       }
     },

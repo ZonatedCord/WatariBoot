@@ -10,12 +10,14 @@
 //
 // Core numbering: vCPU index == physical core index (g_pcpu[]). The MPIDR the
 // guest sees (VMPIDR_EL2) equals the physical one, so target_cpu is passed
-// through to the firmware unchanged once validated.
+// through to the firmware unchanged once validated. Exception (T16d, wel2.vmpidr=m1, QEMU bench): the guest sees the M1's MPIDRs
+// and the physical QEMU MPIDR of the same vCPU index is handed to the firmware.
 
 #include "boot.h"
 #include "plat.h"
 #include "wel2_coreidx.h"
 #include "wel2_cpu_start.h"
+#include "wel2_vmpidr.h"
 
 #define PSCI_VERSION          0x84000000u
 #define PSCI_CPU_SUSPEND_32   0x84000001u
@@ -78,6 +80,12 @@ static void report_bad_core(void)
     __asm__ volatile("dc civac, %0; dsb sy" : : "r"(&g_bad_mpidr) : "memory");
 }
 
+/* vCPU of a PSCI target MPIDR as the guest names it: the physical MPIDR, or (T16d, wel2.vmpidr=m1) the M1's. ~0u if none. */
+static unsigned guest_cpu_from_target(uint64_t target)
+{
+    return g_vmpidr_m1 ? wel2_vm1_find(target) : cpu_from_mpidr(target);
+}
+
 static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
 {
     report_bad_core();
@@ -86,16 +94,22 @@ static int64_t cpu_on(uint64_t target, uint64_t entry, uint64_t ctx, bool is64)
         entry &= 0xffffffffULL;
         ctx &= 0xffffffffULL;
     }
-    if (g_plat->native_psci)
+    if (g_plat->native_psci || g_vmpidr_m1)
         target &= ~PSCI_MPIDR_RES_BITS;
     if (target & ~PSCI_MPIDR_MASK)
         return PSCI_INVALID_PARAMETERS;
-    unsigned idx = cpu_from_mpidr(target);
+    unsigned idx = guest_cpu_from_target(target);
     if (idx == ~0u)
         return PSCI_INVALID_PARAMETERS;
-    /* The core needs an EL2 stack slot (wel2_core_index, start.S): refuse before powering it on. */
-    if (wel2_core_index(target) == WEL2_CORE_INVALID)
+    if (g_vmpidr_m1) {
+        /* T16d: the guest's name for the core is the M1's; the firmware starts the physical core by QEMU's MPIDR. */
+        target = wel2_aff_to_mpidr(g_pcpu[idx].aff);
+        if (wel2_flat8_index(target) == ~0u)
+            return PSCI_INVALID_PARAMETERS;
+    } else if (wel2_core_index(target) == WEL2_CORE_INVALID) {
+        /* The core needs an EL2 stack slot (wel2_core_index, start.S): refuse before powering it on. */
         return PSCI_INVALID_PARAMETERS;
+    }
     /* Entry point: a 4-byte aligned address inside guest RAM, else the
      * implementation knows it is unavailable to the caller (5.6.2). */
     if ((entry & 3) || !guest_ram_contains(entry))
@@ -187,11 +201,11 @@ static int64_t affinity_info(uint64_t target, uint64_t level, bool is64)
         level &= 0xffffffffULL;
     }
     /* Levels above 0 are optional since PSCI 1.0 (5.7.1): not supported. */
-    if (g_plat->native_psci)
+    if (g_plat->native_psci || g_vmpidr_m1)
         target &= ~PSCI_MPIDR_RES_BITS;
     if (level != 0 || (target & ~PSCI_MPIDR_MASK))
         return PSCI_INVALID_PARAMETERS;
-    unsigned idx = cpu_from_mpidr(target);
+    unsigned idx = guest_cpu_from_target(target);
     if (idx == ~0u)
         return PSCI_INVALID_PARAMETERS;
     if (g_plat->native_psci)

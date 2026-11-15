@@ -58,6 +58,12 @@ struct pcpu {
 };
 extern struct pcpu g_pcpu[MAX_CPUS];
 extern unsigned g_ncpu;
+/* T16d (QEMU bench, wel2.vmpidr=m1): the guest sees the M1's eight MPIDRs. g_vmpidr_m1 false = everything below is the identity (default, and
+ * always on plat_m1). g_vaff[i] = packed Aff3.Aff2.Aff1.Aff0 the guest sees for vCPU i (== g_pcpu[i].aff when off); g_core_idx8 (start.S) selects
+ * the flat Aff0 stack-slot rule for the 8 QEMU cores. include/wel2_vmpidr.h. */
+extern bool g_vmpidr_m1;
+extern uint32_t g_vaff[MAX_CPUS];
+extern volatile uint64_t g_core_idx8;
 extern struct vgic g_vgic;
 extern uint64_t g_hcr;
 extern bool g_cpuif_noeoi;         /* test knob wel2.test=noeoi: LRs without EOI maintenance */
@@ -136,6 +142,15 @@ _Static_assert(WEL2_MAX_GUEST_RANGES == M1_MAX_USABLE + 2, "one cut can split on
 extern struct m1_platform g_m1;
 extern struct wel2_range g_guest_ram[WEL2_MAX_GUEST_RANGES];
 extern unsigned g_nguest_ram;
+/* T16j: wel2.pmlog=0x<base>,0x<size>, the post-mortem log ring (include/wel2_pmlog.h). stage1.c (MMU off) validates the argument and
+ * cuts the range out of the guest RAM; g_pmlog_status says what it decided (0 = not asked, 1 = ok, > 1 = a refusal, pmlog_start prints
+ * why). g_pmlog_hole: QEMU without wel2.split, where the carve-out is a stage-2 hole instead (guest_ranges() cuts the FDT's /memory). */
+#define PMLOG_OK 1
+extern uint64_t g_pmlog_base, g_pmlog_size;
+extern unsigned g_pmlog_status;
+extern bool g_pmlog_hole;
+extern bool g_pmlog_on;                      /* util.c: the ring is live, puts_/console_bytes copy every line into it */
+void pmlog_start(void);                      /* util.c: el2_main, MMU on: reports the argument's fate, sets the ring up */
 unsigned guest_ranges(struct wel2_range *out);   /* stage1.c: the ranges the guest FDT lists, out[WEL2_MAX_GUEST_RANGES] */
 bool guest_ram_contains(uint64_t pa);        /* pa is guest RAM (M1: inside one of g_guest_ram[]) */
 struct fdt_aic_info;

@@ -6,12 +6,17 @@
 // reach the output. The result is also checked here: no node or property whose name or string value contains "apple",
 // and none of the names wel2_fdtw_forbidden() lists; a hit exits 3.
 //
-//   gfdt_dump prepared.dtb [--layer 0xA] [--entry 0xE] [--image-size N] [--fb layer|band|guest] [-o guest.dtb]
+//   gfdt_dump prepared.dtb [--layer 0xA] [--entry 0xE] [--image-size N] [--fb layer|band|guest] [--gran 4k|16k]
+//                          [--ramdisk 0xBASE,0xSIZE] [--pmlog 0xBASE,0xSIZE] [-o guest.dtb]
 //     --layer      address of the layer's 32 MB block (cut out of the guest RAM, as stage1.c does); default: none cut
 //     --entry      wel2.guest=<entry> (EDK2's block). With it the placement of wel2_gfdt_place is checked and the
 //                  range that holds the entry is listed first; without it the ranges are listed in address order
 //     --image-size the EDK2 image's arm64 header image_size (default 0x2000000, the 32 MB block)
 //     --fb         wel2.fb mode the loader will pass; "layer" (default) gives the guest no framebuffer node
+//     --ramdisk    wel2.ramdisk=<base>,<size> (T21; needs --entry): the layer's own checks (wel2_gfdt_place_ramdisk), the range cut out
+//                  of /memory and the /reserved-memory/ramdisk node; a range the layer would refuse exits 1
+//     --pmlog      wel2.pmlog=<base>,<size> (T16j): the post-mortem ring is cut out of the guest RAM before the placement (as stage1.c does)
+//                  and gets /reserved-memory/pmlog@<base>; a range the layer would refuse (not in one RAM range, 16 KB alignment) exits 1
 //     -o           also write the guest FDT blob (for dtc -I dtb -O dts)
 // Exit: 0 printed, 1 malformed input or the builder/placement refused, 2 usage or file error, 3 privacy self-check hit.
 // Stdout is the tree. What the tool cannot know is said on stderr as NOTE lines.
@@ -125,7 +130,7 @@ static bool walk_cb(void *ctx, unsigned depth, const char *node, const char *pro
 
 static int usage(const char *a0)
 {
-	fprintf(stderr, "usage: %s prepared.dtb [--layer 0xA] [--entry 0xE] [--image-size N] [--fb layer|band|guest] [--gran 4k|16k] [-o guest.dtb]\n", a0);
+	fprintf(stderr, "usage: %s prepared.dtb [--layer 0xA] [--entry 0xE] [--image-size N] [--fb layer|band|guest] [--gran 4k|16k] [--ramdisk 0xBASE,0xSIZE] [--pmlog 0xBASE,0xSIZE] [-o guest.dtb]\n", a0);
 	return 2;
 }
 
@@ -134,6 +139,10 @@ int main(int argc, char **argv)
 	const char *in_path = NULL, *out_path = NULL, *fbmode = "layer";
 	uint64_t layer = 0, entry = 0, image_size = 0x2000000ULL;
 	bool have_layer = false;
+	uint64_t rd_base = 0, rd_size = 0;
+	bool have_rd = false;
+	uint64_t pm_base = 0, pm_size = 0;
+	bool have_pm = false;
 	unsigned gshift = 14;                                  /* WEL2_DEF_GRAN: 16 KB; --gran 4k for wel2.gran=4k */
 
 	for (int i = 1; i < argc; i++) {
@@ -147,12 +156,36 @@ int main(int argc, char **argv)
 			fbmode = argv[++i];
 		else if (!strcmp(argv[i], "--gran") && i + 1 < argc)
 			gshift = !strcmp(argv[++i], "4k") ? 12 : !strcmp(argv[i], "16k") ? 14 : 0;
-		else if (!strcmp(argv[i], "-o") && i + 1 < argc)
+		else if (!strcmp(argv[i], "--ramdisk") && i + 1 < argc) {
+			char *e = NULL;
+
+			rd_base = strtoull(argv[++i], &e, 0);
+			if (!e || *e != ',')
+				return usage(argv[0]);
+			rd_size = strtoull(e + 1, &e, 0);
+			if (!e || *e)
+				return usage(argv[0]);
+			have_rd = true;
+		} else if (!strcmp(argv[i], "--pmlog") && i + 1 < argc) {
+			char *e = NULL;
+
+			pm_base = strtoull(argv[++i], &e, 0);
+			if (!e || *e != ',')
+				return usage(argv[0]);
+			pm_size = strtoull(e + 1, &e, 0);
+			if (!e || *e)
+				return usage(argv[0]);
+			have_pm = true;
+		} else if (!strcmp(argv[i], "-o") && i + 1 < argc)
 			out_path = argv[++i];
 		else if (argv[i][0] != '-' && !in_path)
 			in_path = argv[i];
 		else
 			return usage(argv[0]);
+	}
+	if (have_rd && !entry) {
+		fprintf(stderr, "--ramdisk needs --entry (the placement of the image decides what is left of /memory)\n");
+		return 2;
 	}
 	if (!gshift || !in_path || (strcmp(fbmode, "layer") && strcmp(fbmode, "band") && strcmp(fbmode, "guest")))
 		return usage(argv[0]);
@@ -192,6 +225,26 @@ int main(int argc, char **argv)
 		fprintf(stderr, "the FDT leaves no guest RAM (or too many pieces)\n");
 		return 1;
 	}
+	if (have_pm) {                                       /* stage1.c: the ring is cut out of g_guest_ram[] (same rule as pmlog in stage1_build) */
+		struct wel2_range cut[WEL2_MAX_GUEST_RANGES];
+		unsigned nc = 0;
+		bool inside = false;
+
+		for (unsigned i = 0; i < ngram; i++)          /* wholly inside ONE range, like wel2_ranges_cover in stage1.c */
+			if (pm_base >= gram[i].base && pm_base + pm_size <= gram[i].base + gram[i].size)
+				inside = true;
+		if (pm_size < 0x4000 || pm_size > 0x4000000ULL || (pm_size & 0x3fff) || (pm_base & 0x3fff) || pm_base + pm_size < pm_base ||
+		    !inside ||
+		    wel2_ranges_carve(gram, ngram, pm_base, pm_size, cut, WEL2_MAX_GUEST_RANGES, &nc)) {
+			fprintf(stderr, "wel2.pmlog refused by the layer's rule (16 KB .. 64 MB, 16 KB aligned, wholly inside one guest RAM range, "
+				"at most %d pieces): the layer would log a WARNING and run without the post-mortem log\n", WEL2_MAX_GUEST_RANGES);
+			return 1;
+		}
+		for (unsigned i = 0; i < nc; i++)
+			gram[i] = cut[i];
+		ngram = nc;
+		printf("// pmlog at 0x%" PRIx64 ", 0x%" PRIx64 " bytes (cut out of /memory)\n", X64(pm_base), X64(pm_size));
+	}
 	if (!have_layer)
 		fprintf(stderr, "NOTE: no --layer: the layer's 32 MB block is not cut out of the guest RAM\n");
 
@@ -199,11 +252,24 @@ int main(int argc, char **argv)
 	const struct wel2_range *ordered = gram;
 	unsigned nord = ngram;
 	if (entry) {
-		int rc = wel2_gfdt_place(gram, ngram, entry, image_size, WEL2_GFDT_MAX, &gp);
-		if (rc != WEL2_GFP_OK) {
-			fprintf(stderr, "placement refused by the layer's rule (wel2_gfdt_place code %d): the layer would stop with a FATAL line\n", rc);
+		int prc = 0;
+		int rc = wel2_gfdt_place_ramdisk(gram, ngram, entry, image_size, WEL2_GFDT_MAX, have_rd ? rd_base : 0, have_rd ? rd_size : 0,
+						 gshift, &gp, &prc);
+		if (have_rd && !rd_size) {
+			fprintf(stderr, "wel2.ramdisk: zero size: the layer would stop with a FATAL line\n");
 			return 1;
 		}
+		if (rc != WEL2_RD_OK) {
+			if (rc == WEL2_RD_PLACE0 || rc == WEL2_RD_PLACE)
+				fprintf(stderr, "placement refused by the layer's rule (wel2_gfdt_place code %d%s): the layer would stop with a FATAL line\n",
+					prc, rc == WEL2_RD_PLACE ? ", after cutting out the RAM disk" : "");
+			else
+				fprintf(stderr, "wel2.ramdisk refused by the layer's rule (wel2_gfdt_place_ramdisk code %d: 1 zero/wrap, 2 alignment, "
+					"3 not inside one guest RAM range, 4 overlaps the image or the FDT, 5 too many pieces): the layer would stop with a FATAL line\n", rc);
+			return 1;
+		}
+		if (have_rd)
+			printf("// ramdisk at 0x%" PRIx64 ", 0x%" PRIx64 " bytes (cut out of /memory)\n", X64(rd_base), X64(rd_size));
 		ordered = gp.ordered;
 		nord = gp.n;
 		printf("// guest image at 0x%" PRIx64 ", image end 0x%" PRIx64 ", guest FDT at 0x%" PRIx64 "%s\n", X64(gp.entry),
@@ -221,6 +287,14 @@ int main(int argc, char **argv)
 	gi.gicd_base = M1_GICD;
 	gi.gicr_base = M1_GICR;
 	gi.gicr_stride = 0x20000;
+	if (have_pm) {
+		gi.pmlog_base = pm_base;
+		gi.pmlog_size = pm_size;
+	}
+	if (have_rd) {
+		gi.ramdisk_base = rd_base;
+		gi.ramdisk_size = rd_size;
+	}
 	gi.ncores = p.ncpu < WEL2_GFDT_MAX_CORES ? p.ncpu : WEL2_GFDT_MAX_CORES;
 	if (!gi.ncores) {
 		fprintf(stderr, "the FDT lists no cpu\n");

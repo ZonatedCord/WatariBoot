@@ -1,0 +1,13 @@
+DRY RUN: no device is opened; every proxy call is printed.
+bundle OK: 52 files match SHA256SUMS (<R>/m-day3/bundle)
+rung L5: layer=wel2-chain.bin guest=m1guest.bin edk2=- ramdisk=- step=5 cpuif=trap fb=band secondaries=True
+rung L5 ends with a JUMP to the layer; the target leaves m1n1 (recovery: power button ~10 s).
+DTB    j293-minimal.dtb          2387 bytes at 0x840000000  sha256 03030dce3605896f
+LAYER  wel2-chain.bin          163936 bytes at 0x842000000  sha256 12133934b84ee998
+GUEST  m1guest.bin              53976 bytes at 0x844000000  sha256 eb2a1f64d8f25a7d
+boot arguments: "wel2.step=5 wel2.cpuif=trap wel2.guest=0x844000000 wel2.fb=band wel2.hold=1"
+kboot_prepare_dt OK
+  m1n1: FDT prepared at 0x840000000
+kboot_boot(0x842000000) ... (USB goes away now; a timeout is expected)
+handed over. Watch the screen (README-m1-payload.md); L1: the Mac restarts within about a second.
+exit=0

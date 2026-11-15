@@ -8,6 +8,7 @@
 #include "boot.h"
 #include "wel2_uart.h"
 #include "wel2_hvc.h"
+#include "wel2_pmlog.h"
 
 #define UART0_BASE   0x09000000UL      /* QEMU virt PL011 */
 
@@ -115,6 +116,62 @@ void putc_(char c)
     wel2_uart_putc(&g_con, (uint8_t)c);
 }
 
+/* ---- Post-mortem log (T16j) ------------------------------------------------------------------------------------
+ * wel2.pmlog=: every line puts_ / console_bytes prints is also appended to a ring in a reserved RAM region (wel2_pmlog.h) and
+ * cleaned to the point of coherency, so that the host can read it after a reset. g_pmlog_on stays false (initialised data: the EL1
+ * test payload shares this file with its MMU off) unless pmlog_start succeeded; failure to set it up only costs the log. */
+struct wel2_pmlog g_pmlog;
+bool g_pmlog_on;
+
+/* The ring is only touched with EL2's stage 1 and caches on (SCTLR_EL2.M and .C): with the MMU off the accesses are Device memory, where the
+ * ring lock's atomic exchange may fault, and a cacheable write would not be coherent. A core that prints before s1_enable (or after a
+ * failed one: el2_secondary_main's fatal_msg) simply skips the ring. Without wel2.pmlog= the cost is the one g_pmlog_on test. */
+static bool pmlog_usable(void)
+{
+    uint64_t sctlr;
+
+    if (!g_pmlog_on)
+        return false;
+    __asm__ volatile("mrs %0, sctlr_el2" : "=r"(sctlr));
+    return (sctlr & 5) == 5;
+}
+
+static void pmlog_text(const char *s)
+{
+    unsigned long n = 0;
+
+    while (s[n])
+        n++;
+    wel2_pmlog_write(&g_pmlog, s, n);
+}
+
+void pmlog_start(void)
+{
+    static const char *const why[] = {
+        0, 0, "wel2.pmlog: expected 0x<base>,0x<size>",
+        "wel2.pmlog: base or size not 16 KB aligned, or size outside 16 KB .. 64 MB",
+        "wel2.pmlog: the range is not wholly inside one guest RAM range",
+        "wel2.pmlog: cutting the range out of the guest RAM leaves too many pieces",
+    };
+
+    if (g_pmlog_status == 0)
+        return;
+    if (g_pmlog_status != PMLOG_OK) {
+        puts_("Watari EL2: WARNING: ");
+        puts_(g_pmlog_status < sizeof(why) / sizeof(why[0]) && why[g_pmlog_status] ? why[g_pmlog_status] : "wel2.pmlog refused");
+        puts_(": no post-mortem log, boot continues\n");
+        return;
+    }
+    if (wel2_pmlog_init(&g_pmlog, (void *)(uintptr_t)g_pmlog_base, (uint32_t)g_pmlog_size, dcache_clean_range)) {
+        puts_("Watari EL2: WARNING: wel2.pmlog: the ring could not be set up: no post-mortem log, boot continues\n");
+        return;
+    }
+    g_pmlog_on = true;
+    put_kv("Watari EL2: post-mortem log ring at ", g_pmlog_base);
+    put_kv("Watari EL2:   size = ", g_pmlog_size);
+    put_kv("Watari EL2:   boot counter = ", ((struct wel2_pmlog_hdr *)g_pmlog.base)->boots);
+}
+
 void puts_(const char *s)
 {
     bool got = spin_lock(&g_uart, 1UL << 24);
@@ -122,6 +179,8 @@ void puts_(const char *s)
     if (!g_fb_mute)
         wel2_fb_puts(&g_fb, s);
     wel2_uart_puts(&g_con, s);
+    if (pmlog_usable())
+        pmlog_text(s);
     if (got)
         spin_unlock(&g_uart);
 }
@@ -143,6 +202,8 @@ void console_bytes(const uint8_t *b, unsigned n)
     }
     text[k] = 0;
     wel2_fb_puts(&g_fb, text);
+    if (k && pmlog_usable())
+        wel2_pmlog_write(&g_pmlog, text, k);
     if (got)
         spin_unlock(&g_uart);
 }

@@ -10,13 +10,18 @@
 #              the PL011 of QEMU's device tree, ACPI tables of model qemu-virt (GIC at QEMU's
 #              addresses), the Shell with acpiview, boots the Shell by default.
 #              Output: $WATARI_DATA/build-m1/WATARI_M1_EFI-bench.fd  (separate WORKSPACE)
-#   --ramdisk  T16a, bench only: the production configuration (hypercall console, the layer holes the PL011 away from the
-#              guest) plus WatariM1BenchRamDiskDxe (a RAM disk over an image the bench loads into RAM) and the stand-in
-#              boot application WatariM1BenchBootTest.efi (copied to $WATARI_DATA/build-m1/WatariM1BenchBootTest.efi).
-#              Output name gets "-ramdisk", separate WORKSPACE. A build without --ramdisk must not contain either (check 2).
+#   --ramdisk  T16a/T21, bench only: the production configuration (hypercall console, the layer holes the PL011 away from the
+#              guest) plus the stand-in boot application WatariM1BenchBootTest.efi (copied to
+#              $WATARI_DATA/build-m1/WatariM1BenchBootTest.efi). The RAM-disk driver WatariM1RamDiskDxe (T21) is in EVERY build
+#              (it does nothing without the guest FDT node /reserved-memory/ramdisk); this flag only adds the stand-in application.
+#              Output name gets "-ramdisk", separate WORKSPACE. A build without --ramdisk must not contain the application (check 2).
 #   --bgr8     -D WATARI_FB_REPORT_BGR8=TRUE (E11): the 10-bit panel is reported as 8-bit BGR GOP (untruthful,
 #              DESIGN 8.5 stage 2). Output name gets "-bgr8", separate WORKSPACE.
 #   --model m  override the acpigen model.
+#
+# Env WATARI_M1_BUILD_TAG=<tag> (letters, digits, - _): a private build area for parallel work: the EDK2 workspace becomes
+# $WATARI_LINK/build-m1<suffix>-<tag>, the log m1-build<suffix>-<tag>.log, the firmware copy WATARI_M1_EFI<suffix>-<tag>.fd and the
+# stand-in application WatariM1BenchBootTest-<tag>.efi (all under $WATARI_DATA/build-m1/). Without it nothing changes.
 #
 # Nothing is downloaded or installed. The EDK2 tree is the one on the data disk (WATARI_EDK2); the
 # only change to it is the idempotent HVF/GICv3 patch tools/edk2-hvf-gicv3.patch, as in the other
@@ -57,7 +62,12 @@ else
 fi
 [ "$BGR8" = 1 ] && SUFFIX="${SUFFIX}-bgr8"
 [ "$RAMDISK" = 1 ] && SUFFIX="${SUFFIX}-ramdisk"
-case "$MODEL" in j293|qemu-virt) ;; *) echo "ERROR: --model must be j293 or qemu-virt (got '$MODEL')" >&2; exit 2 ;; esac
+case "$MODEL" in j293|j293-e4|j293-e1|qemu-virt|qemu-virt-bench) ;; *) echo "ERROR: --model must be j293, j293-e4, j293-e1, qemu-virt or qemu-virt-bench (got '$MODEL')" >&2; exit 2 ;; esac
+TAGSUF=""
+if [ -n "${WATARI_M1_BUILD_TAG:-}" ]; then
+    case "$WATARI_M1_BUILD_TAG" in *[!A-Za-z0-9_-]*) echo "ERROR: WATARI_M1_BUILD_TAG may hold letters, digits, - and _ only" >&2; exit 2 ;; esac
+    TAGSUF="-$WATARI_M1_BUILD_TAG"
+fi
 mkdir -p "$WATARI_LOGS"
 
 # HVF/GICv3 patch, idempotent (as build-edk2-watari.sh).
@@ -79,7 +89,7 @@ python3 -I "$HERE/check-dsdt-uids.py" "$DSDT_ASL" "$ACPIGEN_BIN" --model j293
 
 # Separate WORKSPACE (OUTPUT_DIRECTORY is Build/WatariM1-AArch64 in both configurations). The FDF
 # !include lines resolve from WORKSPACE only, so it holds links to every EDK2 package (but Build, Conf).
-export WORKSPACE="$WATARI_LINK/build-m1${SUFFIX}"
+export WORKSPACE="$WATARI_LINK/build-m1${SUFFIX}${TAGSUF}"
 mkdir -p "$WORKSPACE"
 for e in "$WATARI_EDK2"/*; do
     n="$(basename "$e")"
@@ -106,13 +116,15 @@ fi
 
 [ "$BGR8" = 1 ] && DEFS+=(-D WATARI_FB_REPORT_BGR8=TRUE)
 [ "$RAMDISK" = 1 ] && DEFS+=(-D WATARI_M1_BENCH_RAMDISK=TRUE)
+# T22 experiments: WATARI_M1_BUILD_PCD="gWatariM1TokenSpaceGuid.PcdWatariRamDiskType=0" (RAM disk as Reserved, NFIT published)
+[ -n "${WATARI_M1_BUILD_PCD:-}" ] && DEFS+=(--pcd "$WATARI_M1_BUILD_PCD")
 
 # F-12: EDK2 does not notice changes to the acpigen headers (a path outside PACKAGES_PATH), so the
 # platform's modules are rebuilt every time.
 OUT="$WORKSPACE/Build/WatariM1-AArch64/${TARGET}_${WATARI_TOOLCHAIN}"
 rm -rf "$OUT/AARCH64/WatariM1Pkg"
 
-LOG="${BUILD_LOG:-$WATARI_LOGS/m1-build${SUFFIX}.log}"
+LOG="${BUILD_LOG:-$WATARI_LOGS/m1-build${SUFFIX}${TAGSUF}.log}"
 build -a AARCH64 -t "$WATARI_TOOLCHAIN" -b "$TARGET" \
       -p WatariM1Pkg/WatariM1Pkg.dsc -n "$(sysctl -n hw.ncpu)" "${DEFS[@]}" \
       2>&1 | tee "$LOG"
@@ -126,7 +138,7 @@ BUILT="$(cd "$OUT/AARCH64" && find . -name OUTPUT -type d | sed -e 's|^\./||' -e
 echo "$BUILT" > "$WORKSPACE/built-modules.txt"
 FORBID='VirtNorFlash|QemuFwCfg|FwCfg|Virtio|PciBus|PciHostBridge|PciLib|NvmExpress|QemuRamfb|PL031|Xhci|Usb'
 if [ "$BENCH" = 0 ]; then FORBID="$FORBID|PL011"; fi
-if [ "$RAMDISK" = 0 ]; then FORBID="$FORBID|WatariM1BenchRamDisk|WatariM1BenchBootTest"; fi
+if [ "$RAMDISK" = 0 ]; then FORBID="$FORBID|WatariM1BenchBootTest"; fi
 if echo "$BUILT" | grep -E "$FORBID"; then
     echo "ERROR: forbidden module(s) listed above are part of this build (bench=$BENCH)" >&2
     exit 1
@@ -150,9 +162,24 @@ mkdir -p "$WATARI_DATA/build-m1"
 if [ "$RAMDISK" = 1 ]; then
     TESTAPP="$(find "$OUT/AARCH64/WatariM1Pkg/Application/WatariM1BenchBootTest" -name WatariM1BenchBootTest.efi | head -1)"
     [ -n "$TESTAPP" ] || { echo "ERROR: WatariM1BenchBootTest.efi was not built" >&2; exit 1; }
-    cp "$TESTAPP" "$WATARI_DATA/build-m1/WatariM1BenchBootTest.efi"
+    cp "$TESTAPP" "$WATARI_DATA/build-m1/WatariM1BenchBootTest${TAGSUF}.efi"
 fi
-DEST="$WATARI_DATA/build-m1/WATARI_M1_EFI${SUFFIX}.fd"
+DEST="$WATARI_DATA/build-m1/WATARI_M1_EFI${SUFFIX}${TAGSUF}.fd"
 cp "$FD" "$DEST"
-echo "Output: $FD -> $DEST"
+# Build manifest (T16e): the file name and the log carry no model line, so a sidecar records what this firmware is. The bundle script
+# (tools/m3a/build-m1-payload.sh) refuses a firmware without it, and a bench/tagged/non-j293 one, unless told otherwise.
+{
+    echo "model=$MODEL"
+    echo "bench=$BENCH"
+    echo "ramdisk_standin=$RAMDISK"
+    echo "bgr8=$BGR8"
+    echo "target=$TARGET"
+    echo "build_tag=${WATARI_M1_BUILD_TAG:-}"
+    echo "build_pcd=${WATARI_M1_BUILD_PCD:-}"
+    echo "commit=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
+    echo "dirty=$([ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ] && echo 1 || echo 0)"
+    echo "fd_size=$FDSIZE"
+    echo "fd_sha256=$(shasum -a 256 "$FD" | cut -d" " -f1)"
+} > "$DEST.build.txt"
+echo "Output: $FD -> $DEST (manifest $DEST.build.txt)"
 ls -l "$DEST"
