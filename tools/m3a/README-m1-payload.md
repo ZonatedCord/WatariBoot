@@ -157,3 +157,7 @@ waiting for replies). Neither is committed or pasted into chat; `fdt_m1_dump` pr
 `gfdt_dump` prints (and saves as `out/guest-fdt.dtb`) holds no identifier by construction (see above), so its text may be pasted
 into the session notes; the prepared FDT it was built from may not. The loader
 echoes only m1n1 console lines about the FDT address and failures. The folder is deleted at the end of the day.
+
+## Declared fallback firmware (T16g, day 4 only)
+
+`build-m1-payload.sh --fallback-efi e4=<WATARI_M1_EFI-bgr8-e4.fd> --fallback-efi e1=<WATARI_M1_EFI-bgr8-e1.fd>` adds `WATARI_M1_EFI-e4.fd` and `WATARI_M1_EFI-e1.fd` (plus `.build.txt`) to the bundle, both in `SHA256SUMS`; they are manifest-checked (model `j293-e4` / `j293-e1`, BGR8, no bench, clean tree) and never replace `WATARI_M1_EFI.fd`. Select one with `--edk2 WATARI_M1_EFI-e4.fd` (`--smp`) or `--edk2 WATARI_M1_EFI-e1.fd` (`--no-smp`). Only with Marco's OK: `docs/procedures/m3a-day4-windows-ramdisk.md` 6.3.

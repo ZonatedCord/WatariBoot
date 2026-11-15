@@ -272,6 +272,11 @@ Written by Ralph (one entry per task: date and time, task, commits, what Opus ve
 - Commits: ba17ec1, e2d1d1a (`re/m3b-winram-bench.md` "T16f soak"). Run t16f-1: plain j293 `--bgr8` firmware (manifest: model j293, no tag, commit 87eba25, clean), SMP 8 with `wel2.vgicipa=m1 wel2.vmpidr=m1`, trap-notc, PANEL 8, 3 GB, RAM disk, `-no-shutdown`, 3716 s. Setup's driver page from ~300 s to the end (~55 min); 7 CPU_ON accepted; ICC_SGI1R writes 414 896 (~110/s), cpu0 timer IRQs growing (~65/s); no FATAL/abort/stop code; all 8 vCPUs alive in pc.log.
 - Opus checked the evidence directly: CPU_ON accepted = 7, FATAL/abort = 0, SGI1R writes = 414 896, 31 screenshots, the last one (shot-0032) is the Setup driver page with the layer band "LAST ERROR: NONE". Not covered: AIC/FIQ path, real timing, input.
 
+### 2026-11-15 - T16g fallback ladder for day 4: done (review pending)
+- New acpigen model `j293-e1` (boot core only) with host tests; `tools/build-edk2-m1.sh --model j293-e1`; `tools/m3a/build-m1-payload.sh --fallback-efi e4=<fd> --fallback-efi e1=<fd>` (manifest-guarded: model, bgr8, no bench/stand-in/PCD, tag = name, clean, SHA; copied as `WATARI_M1_EFI-e4.fd`/`-e1.fd`, in SHA256SUMS; main firmware still plain j293); `tools/m3a/test_fallback_guard.sh` 29 checks; loader test for the fallback names.
+- Bench (QEMU TCG, PANEL 8, 3 GB, trap-notc, vgicipa=m1): j293 SMP 8 driver page at 310 s, 7 CPU_ON; e4 SMP 4 "Attendere" 247 s, driver page 310 s, 3 CPU_ON; e1 SMP 1 driver page 245 s, no CPU_ON; no FATAL in any. Details in `re/m3b-winram-bench.md` T16g.
+- Procedure: day-4 sections 1.1 (3b), 2.2, 2.3 (dry runs validated on `$WATARI_DATA/rehearsal-n5/day4-fb/bundle`), W2 pointer, new 6.3 decision tree, Q-4D-8 (Marco's OK needed).
+
 ### 2026-11-15 - Night 5 stop
 - Done: T19, T20, T21, T22, T23, T24, T16b-T16f (WinPE from a RAM disk reaches Setup first screen on the M1-shaped bench, production j293 tables with 8 cores, 55-minute soak clean; run-all 46/46 both configs; F-35, F-36, F-37). Diary: `docs/sessions/2026-11-15-ralph-01.md`.
 - Open: T16 stays repeatable; nothing more useful identified without hardware tonight.

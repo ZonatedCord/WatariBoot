@@ -72,6 +72,19 @@ WATARI_M1_EFI="$WATARI_DATA/build-m1/WATARI_M1_EFI-bgr8.fd" tools/m3a/build-m1-p
 cd "$WATARI_DATA/m3a-payload-w1/bundle" && shasum -a 256 -c SHA256SUMS && ls -l winram/
 ```
 
+**Optional step 2b/3b (T16g, the fallback ladder; needs Marco's OK, section 6.3 and Q-4D-8).** Two more firmware files built from the same clean commit, carried in the same bundle as **declared fallbacks**. They are never the main firmware: the main `WATARI_M1_EFI.fd` is still the plain j293 file above.
+
+```sh
+# 2b. fallbacks (a clean tree: commit first; the bundle script refuses a manifest with dirty=1). The tag e4 / e1 keeps the file names apart from the main firmware.
+WATARI_M1_BUILD_TAG=e4 tools/build-edk2-m1.sh --bgr8 --model j293-e4    # -> $WATARI_DATA/build-m1/WATARI_M1_EFI-bgr8-e4.fd (+ .build.txt: model=j293-e4)
+WATARI_M1_BUILD_TAG=e1 tools/build-edk2-m1.sh --bgr8 --model j293-e1    # -> $WATARI_DATA/build-m1/WATARI_M1_EFI-bgr8-e1.fd (+ .build.txt: model=j293-e1)
+# 3b. the same bundle command as step 3 plus the two declarations
+WATARI_M1_EFI="$WATARI_DATA/build-m1/WATARI_M1_EFI-bgr8.fd" tools/m3a/build-m1-payload.sh --winram default \
+    --fallback-efi e4="$WATARI_DATA/build-m1/WATARI_M1_EFI-bgr8-e4.fd" --fallback-efi e1="$WATARI_DATA/build-m1/WATARI_M1_EFI-bgr8-e1.fd" "$WATARI_DATA/m3a-payload-w1"
+```
+
+The bundle then holds `WATARI_M1_EFI-e4.fd` and `WATARI_M1_EFI-e1.fd` (+ their `.build.txt`) next to `WATARI_M1_EFI.fd`, all three in `SHA256SUMS` (the image still is not). The guard accepts a fallback only if its manifest says: model `j293-e4` / `j293-e1`, `bgr8` as the main firmware, no `--bench`, no RAM-disk stand-in, no PCD override, build tag `e4` / `e1`, `dirty=0`, SHA-256 equal to the file; and it refuses `--fallback-efi` together with `WATARI_M1_EFI_ALLOW_BENCH=1` or `WATARI_NO_EDK2=1`, and a main firmware that is not the plain j293 **[verified: `tools/m3a/test_fallback_guard.sh`, 29 checks]**. Without `--fallback-efi` the bundle is exactly as before.
+
 - **Which firmware is the hardware one.** Only `WATARI_M1_EFI-bgr8.fd` from the plain `--bgr8` command above: ACPI model **j293** (GIC at `0xF_0000_0000`, MSI frame `0xFFFFF000`), no UART, `PcdWatariRamDiskType` at its repo default **0 = `EfiReservedMemoryType`** (RamDiskDxe then publishes an NFIT and an NVDIMM-root SSDT; this is what the bench needs for Windows to boot, F-35 b; whether that is acceptable on the real M1 is Marco's open question 3 in the bench note [check]). **Never** put into the bundle a file with `-bench`, `-ramdisk` or `-t22*`/`-vb` in its name, or one built with `--model qemu-virt-bench`, `--model qemu-virt`, `--model j293-e4` (T16b: four E cores only, bench experiment) or `WATARI_M1_BUILD_PCD`: those are bench builds (QEMU's GIC addresses: the M1's HAL would not find its GIC). The build writes `WATARI_M1_EFI-bgr8.fd.build.txt` (model, bench, ramdisk stand-in, tag, PCD, commit, SHA-256) and **`build-m1-payload.sh` refuses a firmware** whose name contains `-bench`/`-ramdisk`/`-t<NN>`/`-vb`/`-e4`, that has no manifest, whose manifest is not `model=j293`, `bench=0`, `ramdisk_standin=0`, empty tag and PCD, or whose SHA-256 differs from the manifest (`WATARI_M1_EFI_ALLOW_BENCH=1` overrides, bench bundles only) **[verified: rehearsal, `re/m3a-bundle-rehearsal-n5.md`]**; the manifest travels in the bundle (`WATARI_M1_EFI.fd.build.txt`, in `SHA256SUMS`). Still check the clean `env` above and the file's "built at" time (day 3 G-5). **The gate (WG-5) needs this firmware rebuilt from the final commit**, then the bundle rebuilt from it; a bundle assembled earlier (`m3a-payload-t23`, `m3a-payload-bgr8`) is not the day-4 bundle.
 - `--winram default` = `$WATARI_DATA/winram/winram.img`; the image and its sidecar land in `<bundle>/winram/`, **outside `SHA256SUMS`** (the loader hashes the image itself and compares it with the sidecar before any proxy call) **[verified: `build-m1-payload.sh`, README-m1-payload]**. The bundle folder is `<DIR>/bundle/`.
 - This three-command sequence was **rehearsed end to end on 2026-11-15** from the night-5 head into `$WATARI_DATA/rehearsal-n5/` (T16e: firmware, bundle with the 713 MiB image, `SHA256SUMS` and the sidecar check OK, all dry runs below exit 0) **[verified: `re/m3a-bundle-rehearsal-n5.md`]**.
@@ -138,6 +151,7 @@ shasum -a 256 -c SHA256SUMS                                  # every line OK (th
 shasum -a 256 winram/winram.img                              # compare with winram/winram.img.sha256 and Marco's value
 cat winram/winram.img.sha256
 shasum -a 256 wel2-chain.bin m1guest.bin WATARI_M1_EFI.fd    # compare with Marco's values
+ls WATARI_M1_EFI-e4.fd WATARI_M1_EFI-e1.fd 2>/dev/null       # the declared fallbacks, only if the bundle was built with them (section 6.3); both are covered by SHA256SUMS above
 ```
 
 `gfdt_dump` and `fdt_m1_dump` are prebuilt; if Gatekeeper kills them (exit -9), day 3 section 2.2 applies (`xattr -d com.apple.quarantine` on those two files only, with Ciani's OK, then `shasum -c` again).
@@ -156,7 +170,12 @@ python3 watari-load.py --rung D0 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram
 python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --dry-run --args wel2.hold=1 "${M1[@]}"    # W1 (c)
 python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --cpuif trap-notc --smp --go --dry-run --args wel2.hold=1 "${M1[@]}"   # W2/W3 with day 3's D4 flags
 python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb guest --go --dry-run --args wel2.hold=1 "${M1[@]}"   # optional: full panel
+# only if the bundle carries the declared fallbacks (section 6.3), same shape as W2; "bundle OK: 54 files match SHA256SUMS" then:
+python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go --dry-run --cpuif trap-notc --smp --args wel2.hold=1 "${M1[@]}"      # fallback e4 (secondaries=True)
+python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go --dry-run --cpuif trap-notc --no-smp --args wel2.hold=1 "${M1[@]}"   # fallback e1 (secondaries=False)
 ```
+
+The two fallback lines were run with `--dry-run` on 2026-11-15 against the rehearsal bundle `$WATARI_DATA/rehearsal-n5/day4-fb/bundle` (54 files in `SHA256SUMS`, all OK), both exit 0 with `BLOCK CHECK: PASS`, `edk2=WATARI_M1_EFI-e4.fd` / `-e1.fd`, `secondaries=True` / `False`, and the boot arguments of W2 unchanged (`wel2.cpuif=trap-notc wel2.guest=0x874000000 wel2.ramdisk=0x842000000,0x2ca00000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1`) **[verified: dry run]**; a name that is not in the bundle (`WATARI_M1_EFI-e9.fd`) exits 2 with "not listed in SHA256SUMS" **[verified]**.
 
 Claude checks, in each output (all **[verified: dry run, image 747 634 688 bytes]**):
 - `bundle OK: 50 files match SHA256SUMS (<folder>)` (the count of the night-5 head: 49 bundle files plus the firmware manifest; any later change may move it, what matters is OK).
@@ -304,6 +323,8 @@ wl W2-jump --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb ba
 
 Use the cpuif that D3/D4 settled (`trap` if only `trap` passed: `--cpuif trap` is the default, then drop the flag).
 
+**If W2 fails in the multi-core description** (stop `0xA0`, a freeze after the `CPU_ON` of a P core, an IPI storm): section 6.3 maps the symptom to the declared fallback firmware (`e4`, then `e1`), which needs Marco's OK and a fresh transfer.
+
 **What to watch (continuous video, a photo every 2 minutes while the logo stays, the stopwatch in frame):**
 
 | After "handed over" | Expected | Read it by |
@@ -373,6 +394,43 @@ Only after a rung reached S3 or later in band mode, or if band mode shows a wron
 | PASS | PASS | stops after the display change | BasicDisplay on this framebuffer or Setup's hardware checks | record the exact screen; bench |
 
 ---
+
+### 6.3 Fallback ladder (T16g): which symptom, which firmware (needs Marco's OK, Q-4D-8)
+
+**The default stays the main `WATARI_M1_EFI.fd` (model j293, eight cores).** The fallbacks exist only if the bundle was built with `--fallback-efi` (section 1.1, step 3b): `WATARI_M1_EFI-e4.fd` (model **j293-e4**: the four Icestorm cores, MPIDR `0x0..0x3`, all in cluster 0, a GICR range of four frames; the P cores are not described, so Windows never calls `CPU_ON` for them) and `WATARI_M1_EFI-e1.fd` (model **j293-e1**: the boot core only, one GICC and one PPTT entry). Everything else is identical to j293 (GIC and MSI addresses, GTDT, FADT, BGR8 GOP, RAM disk). **Using a fallback on the M1 is Marco's call in chat** ("go e4" / "go e1"): it runs Windows on 4 or 1 of the 8 cores, a deliberate step back, and the open question stays open until he answers (Q-4D-8). Every fallback run is a **fresh m1n1 boot and a new image transfer** (section 1.3).
+
+**Bench evidence (T16g, `re/m3b-winram-bench.md`, QEMU TCG, 3 GB, RAM disk at `0x80000000`, `trap-notc`, `wel2.vgicipa=m1`, firmware `--bgr8`):**
+
+| Variant | Bench configuration | Result [verified] |
+|---|---|---|
+| j293 (main) | `-smp 8`, `wel2.vmpidr=m1` | Setup driver page on the shot at 310 s (shots every 60 s), `CPU_ON` cpu 1-7 accepted, no FATAL |
+| j293-e4 | `-smp 4` | Setup "Attendere" on the shot at 247 s, driver page at 310 s, `CPU_ON` cpu 1-3 accepted, no FATAL |
+| j293-e1 | `-smp 1` (the layer with one core) | driver page on the shot at 245 s, unchanged to 554 s, no `CPU_ON` at all (a single core), no FATAL |
+
+The bench does not show the M1's AIC/FIQ path or real timing; it proves that the **tables** and the layer's behaviour with 1, 4 and 8 described cores are accepted by the Windows kernel, not that any of them runs on the M1 **[hypothesis]**.
+
+**Decision tree** (read the symptom off the photos, section 6.1; a fallback is for a symptom that points at the multi-core description or at IPIs, **not** for a stop that has nothing to do with cores):
+
+| Symptom at W2/W3 with the main firmware | Reading | Next run |
+|---|---|---|
+| Bugcheck `0xA0 INTERNAL_POWER_ERROR` (the bench's shape with a MADT that describes cores that do not come up) | power policy over processors that never came online, or the two efficiency classes **[hypothesis, F-37]** | **e4** |
+| Logo frozen, ticker's last lines are `PSCI CPU_ON cpu 4..7 accepted` (a P core), squares 9/10 green, nothing after | a P core (cluster 1, `0x10100`) was started but never ran, or its interrupts do not arrive **[hypothesis]** | **e4** |
+| Logo frozen with `CPU_ON` of cpu 1..3 as last lines, or **IPI storm** (the ticker flooded by `ICC_SGI1R_EL1 write trapped` with the spinner stopped), or bugcheck `0x101 CLOCK_WATCHDOG_TIMEOUT` / `0x133 DPC_WATCHDOG_VIOLATION` (a core that does not take interrupts) | the E cores' own bring-up or the IPI path **[hypothesis]** | **e4** first; if the same symptom, **e1** |
+| e4 shows the same symptom as the main firmware, at the same place | not the P cores | **e1** |
+| e1 shows the same symptom | not a multi-core problem: stop the ladder | record it as a single-core failure, bench the layer's timer/FIQ path; no further fallback |
+| e1 passes where e4 failed | the second core or the IPI is the defect | record; Marco decides about M3b with one core |
+| `0x5C`, `0x7B`, `0x1A`, black panel, bootmgr errors, loader exit codes (section 6.1) | RAM disk, GOP, ACPI/GIC/timer: **not** about the core count | no fallback; section 6.1/6.2 |
+
+**Commands** (from the bundle folder after `source ~/WatariBoot-host/env.sh`, `M1` and the `wl` helper as in section 4/5, a fresh m1n1 boot, Marco's go in chat; the main W2 line is in section 5):
+
+```sh
+# e4: the four E cores in the tables. m1n1 still starts all eight cores (--smp): the layer's CPU_ON path needs the secondaries in the spin table
+wl W2-e4 --rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --args wel2.hold=1
+# e1: one core in the tables. No secondaries (--no-smp, the D2 default): m1n1 does not start the other seven and its tree then lists one cpu (the loader's own comment on `dt_set_cpus`) **[hypothesis on the M1]**
+wl W2-e1 --rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --no-smp --args wel2.hold=1
+```
+
+**What changes in the photos.** With e4 the ticker shows `PSCI CPU_ON cpu 1..3 accepted` and **no** cpu 4..7 line; with e1 no `CPU_ON` line at all and `vCPU target mask = 0x...01` only; the PASS criteria of W2/W3 are the same, the time limits too (a single core under real load is slower than eight: allow the 20 minutes of W2 and stretch W3 by half **[hypothesis]**). The dry-run lines for both are in section 2.3; the loader prints which file it took (`edk2=WATARI_M1_EFI-e4.fd`), copy that line into the notes so a photo can never be confused with a main-firmware run.
 
 ## 7. What to record: `re/m3b-winram-day4.md` (template)
 
@@ -464,6 +522,7 @@ ls -la "$HOSTDIR/work/"                                            # the day-4 b
 | Q-4D-5 | **Done 2026-11-14**: W3 and section 3.3 updated from `re/m3b-winram-bench.md`. Open for Marco: is the NFIT + NVDIMM SSDT of RAM-disk type 0 acceptable on the real M1 (bench note, next step 3)? | Marco |
 | Q-4D-6 | Heap fit of a 64 MiB rate test plus the image in one m1n1 session (the safe rule is a fresh m1n1 boot per transfer) | W1 (a) |
 | Q-4D-7 | RAM size of the M1 (8 or 16 GB): D0's memory ranges tell | day 3 / W1 |
+| **Q-4D-8** | **May the declared fallbacks `j293-e4` (four E cores) and `j293-e1` (boot core only) be used on the real M1 if W2/W3 fail in the multi-core description (section 6.3)?** Built, benched to Setup and guarded in the bundle (T16g), but they run Windows on 4 or 1 core. Same open question as `re/m3b-winram-bench.md` T16b / next step 4. No answer, no fallback run | Marco |
 
 ## 10. Sources
 
