@@ -84,8 +84,8 @@ The palette is taken from the VGA 16-colour palette, the colours of classic BIOS
 | Role | Hex | RGB | VGA index |
 |---|---|---|---|
 | Plate | `#AAAAAA` | 170, 170, 170 | 7, light grey |
-| W | `#0000AA` | 0, 0, 170 | 1, blue: the Windows side |
-| B and accent | `#00AAAA` | 0, 170, 170 | 3, cyan: blue + white (Apple) |
+| W and accent | `#0000AA` | 0, 0, 170 | 1, blue: the Windows side |
+| B | `#00AAAA` | 0, 170, 170 | 3, cyan: blue + white (Apple) |
 | Background (outside the plate, VectorCraft file only) | `#000000` | 0, 0, 0 | 0, black |
 | Spare | `#55FFFF` | 85, 255, 255 | 11, light cyan |
 | Spare | `#FFFFFF` | 255, 255, 255 | 15, white |
