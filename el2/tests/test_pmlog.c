@@ -210,8 +210,10 @@ static void test_lock_timeout(void)
 	put("lost\n");
 	put("lost too\n");
 	CHECK_EQ(g_r.dropped, 2);
+	CHECK_EQ(g_r.stuck, 1);                              /* later lines only try briefly now */
 	g_r.lock = 0;
 	put("kept\n");
+	CHECK_EQ(g_r.stuck, 0);
 	CHECK_EQ(rd(SZ, &n, &h), 0);
 	CHECK_EQ(n, 5);
 	CHECK(memcmp(g_out, "kept\n", 5) == 0);

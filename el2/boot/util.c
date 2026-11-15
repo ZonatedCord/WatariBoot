@@ -123,6 +123,19 @@ void putc_(char c)
 struct wel2_pmlog g_pmlog;
 bool g_pmlog_on;
 
+/* The ring is only touched with EL2's stage 1 and caches on (SCTLR_EL2.M and .C): with the MMU off the accesses are Device memory, where the
+ * ring lock's atomic exchange may fault, and a cacheable write would not be coherent. A core that prints before s1_enable (or after a
+ * failed one: el2_secondary_main's fatal_msg) simply skips the ring. Without wel2.pmlog= the cost is the one g_pmlog_on test. */
+static bool pmlog_usable(void)
+{
+    uint64_t sctlr;
+
+    if (!g_pmlog_on)
+        return false;
+    __asm__ volatile("mrs %0, sctlr_el2" : "=r"(sctlr));
+    return (sctlr & 5) == 5;
+}
+
 static void pmlog_text(const char *s)
 {
     unsigned long n = 0;
@@ -166,7 +179,7 @@ void puts_(const char *s)
     if (!g_fb_mute)
         wel2_fb_puts(&g_fb, s);
     wel2_uart_puts(&g_con, s);
-    if (g_pmlog_on)
+    if (pmlog_usable())
         pmlog_text(s);
     if (got)
         spin_unlock(&g_uart);
@@ -189,7 +202,7 @@ void console_bytes(const uint8_t *b, unsigned n)
     }
     text[k] = 0;
     wel2_fb_puts(&g_fb, text);
-    if (g_pmlog_on && k)
+    if (k && pmlog_usable())
         wel2_pmlog_write(&g_pmlog, text, k);
     if (got)
         spin_unlock(&g_uart);

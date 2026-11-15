@@ -60,6 +60,7 @@ int wel2_pmlog_init(struct wel2_pmlog *r, void *base, uint32_t size, wel2_pmlog_
 	r->lock = 0;
 	r->clean = clean_fn;
 	r->spin_limit = 0;
+	r->stuck = 0;
 	*h = (struct wel2_pmlog_hdr){ WEL2_PMLOG_MAGIC, WEL2_PMLOG_VERSION, WEL2_PMLOG_HDR, r->cap, boots, 0, 0, 0, { 0 }, 0 };
 	hdr_seal(h);
 	clean(r, h, WEL2_PMLOG_HDR);
@@ -76,6 +77,8 @@ void wel2_pmlog_write(struct wel2_pmlog *r, const char *s, unsigned long n)
 
 	if (!n)
 		return;
+	if (r->stuck && limit > 64)     /* a dead holder: do not pay the full bound on every line of a fatal dump */
+		limit = 64;
 	for (unsigned long i = 0; i < limit; i++) {
 		if (!__atomic_exchange_n(&r->lock, 1, __ATOMIC_ACQUIRE)) {
 			got = 1;
@@ -85,8 +88,10 @@ void wel2_pmlog_write(struct wel2_pmlog *r, const char *s, unsigned long n)
 	}
 	if (!got) {
 		__atomic_fetch_add(&r->dropped, 1, __ATOMIC_RELAXED);
+		r->stuck = 1;
 		return;
 	}
+	r->stuck = 0;
 	if (n > r->cap) {                              /* keep the tail: the newest bytes matter most */
 		skip = n - r->cap;
 		s += skip;
