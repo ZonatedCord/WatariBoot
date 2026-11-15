@@ -447,7 +447,7 @@ Use the cpuif that D3/D4 settled (`trap` unless D4 showed a reason).
 
 | Rung | Command (after `source env.sh`; `--m1n1 ...` omitted) | Jumps | Evidence | Passes if | Ends with | Abort after |
 |---|---|---|---|---|---|---|
-| E (opt.) | `ehw2.py` (section 5) | no | report file | report written, read-only | proxy alive | proxy silent |
+| E (mandatory before W1) | `ehw2.py` (section 5) | no | report file | report written, read-only | proxy alive | proxy silent |
 | D0 | `--rung D0 --edk2 WATARI_M1_EFI.fd --fb band --no-smp` | no | loader text | BLOCK CHECK and GUEST FDT CHECK PASS, band 360 / 1240, stride 4 x width | proxy alive | any error |
 | D1 | `--rung L5 --go --fb band --args wel2.hold=1` | yes | video + final photo | `PASS 13 FAIL 0 SKIP 0`, four bars R/G/B/Y below the band | held screen | 60 s, red square |
 | D2+D3 | `--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --pmlog --args wel2.hold=1` | yes | video + final photo | EDK2 text within 10 s; bars, ten white boxes, HOLD line | held screen | 60 s, red square, 10 s without EDK2 text |

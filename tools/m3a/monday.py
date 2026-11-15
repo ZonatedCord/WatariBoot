@@ -1433,7 +1433,7 @@ def next_step(recs, kind):
     # day 3 gate passed (D0-D4): day 4 only with the image OK from Marco
     if kind != "day4":
         return None, ["D0-D4 are PASS: the day-3 gate for Windows is open. Switch to the day-4 bundle folder (the one with winram/), `confirm image-ok` (WG-2), then `next` again. "
-                      "Optional before: E, D3b, D5 (not needed for Windows band mode)."], "Il gate del giorno 3 e' passato. Passiamo alla cartella del bundle del giorno 4."
+                      "Optional before: D3b, D5 (not needed for Windows band mode)."], "Il gate del giorno 3 e' passato. Passiamo alla cartella del bundle del giorno 4."
     if confirm_state(recs, "image-ok") != "CONFIRMED":
         return None, ["Day 4 needs Marco's OK (WG-2) that the Microsoft-derived image sits on Ciani's Mac inside the bundle folder and is deleted at the end. Marco approved it on 2026-11-15 (docs/decisions/2026-11-15-marco-monday.md): record it as `monday.py confirm image-ok --by Marco --note \"pre-approved 2026-11-15, docs/decisions/2026-11-15-marco-monday.md\"`"], \
             "Questa immagine contiene file Microsoft: la copiamo sul Mac di Ciani solo dentro la cartella del bundle e a fine giornata la cancelliamo. Marco, sei d'accordo?"

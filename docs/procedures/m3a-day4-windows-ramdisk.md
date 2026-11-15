@@ -537,7 +537,7 @@ ls -la "$HOSTDIR/work/"                                            # the day-4 b
 
 | ID | Question | Who |
 |---|---|---|
-| **Q-4D-1** | **Answered 2026-11-15: yes (`docs/decisions/2026-11-15-marco-monday.md`).** May the roughly 713 MiB Microsoft-derived image (built from Marco's own ISO) be copied to Ciani's Mac inside the bundle folder and deleted at the end?** (WG-2; the draft ADR's open question 1 is not decided.) No approval, no day 4 | Marco |
+| **Q-4D-1** | **Answered 2026-11-15: yes (`docs/decisions/2026-11-15-marco-monday.md`).** May the roughly 713 MiB Microsoft-derived image (built from Marco's own ISO) be copied to Ciani's Mac inside the bundle folder and deleted at the end? (WG-2; the draft ADR is accepted.) No record, no day 4 | Marco |
 | Q-4D-2 | Does the ISO's boot path stop at "Press any key to boot from CD or DVD" (the `cdboot` stubs are in the image: `cdboot.efi`, `cdboot_noprompt.efi`, `efisys*.bin` are listed in the manifest) and, with no keyboard, can it continue? The BCD is deliberately not read **[hypothesis: bootmgr starts straight from `\EFI\BOOT\BOOTAA64.EFI` without the stub; unknown]**. The bench note (T22) records no such stop on the way to Setup, but also does not say that no key was sent **[check]** | T22 / bench |
 | Q-4D-3 | **Answered 2026-11-15: up to 15 minutes per attempt, above it stop and ask Marco (`docs/decisions/2026-11-15-marco-monday.md`).** The transfer limit (15 min) and whether a hand-trimmed image (smaller) is wanted, from the measured rate | Marco, at W1 (a) |
 | Q-4D-4 | `--fb band` (2560 x 1240, ticker alive) vs `--fb guest` (native 2560 x 1600, no log) for the first Windows try. This text starts with band for observability | Marco; the bench (T22) may say |
