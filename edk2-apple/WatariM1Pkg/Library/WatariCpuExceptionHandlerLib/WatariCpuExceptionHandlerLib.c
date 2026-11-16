@@ -371,9 +371,15 @@ ArchVectorConfig (
 //
 #define WATARI_EMU_SEEN_MAX  16
 #define WATARI_EMU_LINES_MAX 32
+#define WATARI_EMU_PROGRESS_EVERY  4096     // one "count=" line per this many emulations of the same encoding
+#define WATARI_EMU_PROGRESS_MAX    32       // cap of the "count=" lines in total
+#define WATARI_EMU_FRQ_FALLBACK    24000000ULL  // CNTFRQ_EL0 reading 0 (not programmed): the M1's 24 MHz [hypothesis]
 
 STATIC UINT32  mEmuSeen[WATARI_EMU_SEEN_MAX];
 STATIC UINT32  mEmuSeenCount;
+STATIC UINT32  mEmuCount[WATARI_EMU_SEEN_MAX];   // emulations per seen encoding (racy by design, diagnostics only)
+STATIC UINT32  mEmuProgress;
+STATIC UINT32  mEmuFrqLine;
 STATIC UINT32  mEmuLines;
 STATIC WATARI_PMU  mEmuPmu;           // the virtual PMU cycle counter; one global instance, see WatariSysregEmu.h
 
@@ -420,6 +426,15 @@ WatariTryEmulateSysreg (
 
   __asm__ volatile ("isb; mrs %0, cntvct_el0" : "=r" (Cnt));
   __asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (Frq));
+  if (Frq == 0) {
+    // An unprogrammed CNTFRQ_EL0 would make the virtual cycle counter read constant 0 (bootmgr then spins on it).
+    Frq = WATARI_EMU_FRQ_FALLBACK;
+    if (__atomic_fetch_add (&mEmuFrqLine, 1, __ATOMIC_RELAXED) == 0) {
+      CharCount = AsciiSPrint (Buffer, sizeof (Buffer), "EL1EMU CNTFRQ_EL0 reads 0, assuming 24 MHz\n");
+      SerialPortWrite ((UINT8 *)Buffer, CharCount);
+    }
+  }
+
   if (!WatariSysregEmulate (Word, &Context->X0, &Context->SPSR, &mEmuPmu, Cnt, Frq, &R)) {
     return FALSE;
   }
@@ -430,12 +445,33 @@ WatariTryEmulateSysreg (
   Count = mEmuSeenCount;
   for (Idx = 0; (Idx < Count) && (Idx < WATARI_EMU_SEEN_MAX); Idx++) {
     if (mEmuSeen[Idx] == Key) {
+      Line = ++mEmuCount[Idx];
+      if (((Line % WATARI_EMU_PROGRESS_EVERY) == 0) &&
+          (__atomic_fetch_add (&mEmuProgress, 1, __ATOMIC_RELAXED) < WATARI_EMU_PROGRESS_MAX))
+      {
+        CharCount = AsciiSPrint (
+                      Buffer,
+                      sizeof (Buffer),
+                      "EL1EMU %c S%d_%d_C%d_C%d_%d count=%u last=0x%lx\n",
+                      R.IsRead ? 'R' : 'W',
+                      R.Op0,
+                      R.Op1,
+                      R.Crn,
+                      R.Crm,
+                      R.Op2,
+                      Line,
+                      (R.IsRead && (R.Rt < 31)) ? (&Context->X0)[R.Rt] : 0
+                      );
+        SerialPortWrite ((UINT8 *)Buffer, CharCount);
+      }
+
       return TRUE;
     }
   }
 
   if (Count < WATARI_EMU_SEEN_MAX) {
-    mEmuSeen[Count] = Key;
+    mEmuSeen[Count]  = Key;
+    mEmuCount[Count] = 1;
     mEmuSeenCount   = Count + 1;
   }
 
