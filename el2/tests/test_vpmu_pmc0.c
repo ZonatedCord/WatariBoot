@@ -17,7 +17,7 @@ static uint64_t wait_stub(void *ctx)
 	return 24000;                   /* 1 ms at 24 MHz */
 }
 
-static void fresh(uint32_t flags)
+static void fresh_def(uint32_t flags)   /* default flags: the counter always runs */
 {
 	memset(&FS, 0, sizeof FS);
 	memset(&SH, 0, sizeof SH);
@@ -27,6 +27,11 @@ static void fresh(uint32_t flags)
 	FS.pmc0_step = 3000000;         /* 3 GHz: 3,000,000 cycles per read pair over the 1 ms stub */
 	SH.flags = flags;
 	G.vflags = WEL2_VPMU_GLOBAL | flags;
+}
+
+static void fresh(uint32_t flags)      /* strict: the architectural freeze, as the first tests assume */
+{
+	fresh_def(flags | WEL2_VPMU_STRICT);
 }
 
 static struct wel2_sysreg_enc ENC(unsigned op1, unsigned crn, unsigned crm, unsigned op2, unsigned rd)
@@ -244,8 +249,8 @@ static void t_hiwater(void)
 	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 1000), 3000);       /* jumped to the mark */
 	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 1500), 3500);       /* and keeps counting at its own pace from there */
 	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 3200), 3500);
-	/* without it the two cores keep their own pace */
-	fresh(0);
+	/* without it (and without sync) the two cores keep their own pace */
+	fresh(WEL2_VPMU_NOSYNC);
 	wel2_vpmu_core_init(&SH, &C[0], true, 0, WEL2_PMC0_OK);
 	wel2_vpmu_core_init(&SH, &C[1], false, 0, WEL2_PMC0_OK);
 	enable_all(&C[0], 0);
@@ -268,6 +273,77 @@ static void t_freeze_is_global_lazy_per_core(void)
 	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 5000), 800);
 }
 
+/* ---- review fixes: always-running default, late re-sync, wrap / reset ----------------------------------------- */
+
+static void t_default_always_runs(void)
+{
+	/* bootmgr's first PMU access is a PMCCNTR read before any PMCR / PMCNTENSET write: the value must advance */
+	fresh_def(0);
+	wel2_vpmu_core_init(&SH, &C[0], true, 1000, WEL2_PMC0_OK);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 1000), 1000);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 1500), 1500);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 9000), 9000);
+	/* a secondary too, from the boot core's value, and a later enable / disable does not freeze it */
+	wel2_vpmu_core_init(&SH, &C[1], false, 7, WEL2_PMC0_OK);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 7), 9000);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 107), 9100);
+	wr_(&C[1], E_PMCR, 0, 207, false);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 307), 9300);
+	/* strict keeps the freeze */
+	fresh(0);
+	wel2_vpmu_core_init(&SH, &C[0], true, 1000, WEL2_PMC0_OK);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 5000), 1000);
+}
+
+static void t_late_resync(void)
+{
+	/* strict: the boot core runs far ahead; a secondary that only now resumes is lifted to the boot core's published value */
+	fresh(0);
+	wel2_vpmu_core_init(&SH, &C[0], true, 0, WEL2_PMC0_OK);
+	wel2_vpmu_core_init(&SH, &C[1], false, 0, WEL2_PMC0_OK);
+	enable_all(&C[0], 0);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 50000000), 50000000);   /* published */
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 100), 50000000);       /* first read: no big backwards step */
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 200), 50000100);
+	/* freeze and a late resume on core 1 after core 0 moved on again */
+	wr_(&C[1], E_CNTENCLR, WEL2_PMU_CBIT, 300, false);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 400), 50000200);
+	fresh(0);
+	wel2_vpmu_core_init(&SH, &C[0], true, 0, WEL2_PMC0_OK);
+	wel2_vpmu_core_init(&SH, &C[1], false, 0, WEL2_PMC0_OK);
+	enable_all(&C[0], 0);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 10), 0);               /* strict: resumes from its frozen start value */
+	wr_(&C[0], E_CNTENCLR, WEL2_PMU_CBIT, 20, true);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[1], &G, false, 30), 20);              /* frozen at 20 */
+	wr_(&C[0], E_CNTENSET, WEL2_PMU_CBIT, 40, true);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 90000000), 90000000 - 40 + 20); /* core 0 resumed from its frozen value 20 at PMC0 40 */
+	CHECK(wel2_vpmu_read(&SH, &C[1], &G, false, 100) >= SH.pub0);          /* the late resume is never below the boot core's published value */
+}
+
+static void t_wrap_and_reset(void)
+{
+	/* 48-bit wrap of PMC0: the value continues from last + 1, it does not stall */
+	fresh_def(0);
+	wel2_vpmu_core_init(&SH, &C[0], true, (1ull << 48) - 100, WEL2_PMC0_OK);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, (1ull << 48) - 50), (1ull << 48) - 50);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, (1ull << 48) - 1), (1ull << 48) - 1);
+	{
+		uint64_t a = wel2_vpmu_read(&SH, &C[0], &G, true, 10);            /* wrapped to 10 */
+		uint64_t b = wel2_vpmu_read(&SH, &C[0], &G, true, 5010);
+		CHECK_EQ(a, (1ull << 48));
+		CHECK_EQ(b - a, 5000);                                             /* and keeps counting from there */
+	}
+	/* PMC0 reset to a small value in deep idle */
+	fresh_def(0);
+	wel2_vpmu_core_init(&SH, &C[0], true, 5000000, WEL2_PMC0_OK);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 9000000), 9000000);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 100), 9000001);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 600), 9000501);
+	/* a small step back (jitter) is still clamped, not rebased */
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 500), 9000501);
+	CHECK_EQ(wel2_vpmu_read(&SH, &C[0], &G, true, 700), 9000601);
+}
+
 /* ---- options and panel text --------------------------------------------------------------------------------- */
 
 static void t_parse(void)
@@ -280,6 +356,7 @@ static void t_parse(void)
 	CHECK(wel2_vpmu_parse("global,src=timer,src=pmc0", &f, &end)); CHECK_EQ(f, WEL2_VPMU_GLOBAL | WEL2_VPMU_SRC_PMC0);
 	CHECK(wel2_vpmu_parse("global,nosync,hiwater,run", &f, &end));
 	CHECK_EQ(f, WEL2_VPMU_GLOBAL | WEL2_VPMU_NOSYNC | WEL2_VPMU_HIWATER | WEL2_VPMU_RUN);
+	CHECK(wel2_vpmu_parse("global,strict", &f, &end)); CHECK_EQ(f, WEL2_VPMU_GLOBAL | WEL2_VPMU_STRICT);
 	CHECK(wel2_vpmu_parse("global,nosync,sync", &f, &end)); CHECK_EQ(f, WEL2_VPMU_GLOBAL);
 	CHECK(wel2_vpmu_parse("global", &f, &end)); CHECK_EQ(f, WEL2_VPMU_GLOBAL);              /* unchanged: sync on, source = platform default */
 	CHECK(!wel2_vpmu_parse("src=cycles", &f, &end));
@@ -325,6 +402,9 @@ int main(void)
 	RUN(t_clamp_per_core);
 	RUN(t_hiwater);
 	RUN(t_freeze_is_global_lazy_per_core);
+	RUN(t_default_always_runs);
+	RUN(t_late_resync);
+	RUN(t_wrap_and_reset);
 	RUN(t_parse);
 	RUN(t_src_format);
 	TESTS_DONE();

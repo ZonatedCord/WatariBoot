@@ -26,6 +26,7 @@ enum wel2_pmc0_state {
 };
 
 /* What the per-core hardware init saw (for the log and the panel). */
+#define WEL2_PMC0_BACK_MAX (1ull << 20)   /* a backwards step of PMC0 larger than this is a wrap / reset, not jitter */
 struct wel2_pmc0_init {
 	uint64_t pmcr0_before, pmcr0_after, pmcr1_before, pmcr1_after;
 	uint64_t s0, s1;         /* PMC0 before / after the delay */
@@ -47,6 +48,7 @@ struct wel2_vpmu_core {
 	uint64_t last;           /* the last value this core returned or was set to (the clamp) */
 	uint64_t frozen;         /* PMCCNTR while not running */
 	uint64_t sample;         /* PMC0 at init (resolves PENDING) */
+	uint8_t synced;          /* the first read after init has re-synced this core to the boot core */
 };
 /* State shared by all cores (under the big lock). */
 struct wel2_vpmu_sh {
@@ -61,7 +63,7 @@ struct wel2_vpmu_sh {
 void wel2_vpmu_core_init(struct wel2_vpmu_sh *sh, struct wel2_vpmu_core *c, bool boot, uint64_t pmc0_now, enum wel2_pmc0_state st);
 /* PENDING -> OK (PMC0 moved since init) or FAILED (still the same). Returns the state after. Other states are returned unchanged. */
 enum wel2_pmc0_state wel2_vpmu_resolve(struct wel2_vpmu_core *c, uint64_t pmc0_now);
-/* The gate the global control state `g` implies: PMCR.E && PMCNTENSET.C, or always with WEL2_VPMU_RUN. */
+/* The gate the global control state `g` implies: PMCR.E && PMCNTENSET.C, or always unless WEL2_VPMU_STRICT (default: always runs; bootmgr reads PMCCNTR before any enable). */
 bool wel2_vpmu_running(const struct wel2_vpmu_sh *sh, const struct wel2_catch_cpu *g);
 /* PMCCNTR_EL0 as the guest sees it on this core now. */
 uint64_t wel2_vpmu_read(struct wel2_vpmu_sh *sh, struct wel2_vpmu_core *c, const struct wel2_catch_cpu *g, bool boot, uint64_t pmc0_now);

@@ -116,8 +116,9 @@ struct wel2_catch_cpu {
 #define WEL2_VPMU_SRC_TIMER 128u  /* src=timer: PMCCNTR from CNTPCT (the default off the M1); neither bit = the platform default */
 #define WEL2_VPMU_NOSYNC    256u  /* nosync: do not start every core's counter at the boot core's value (sync is the default) */
 #define WEL2_VPMU_HIWATER   512u  /* hiwater: a core's counter never reads below the highest value any core returned (bench option) */
-#define WEL2_VPMU_RUN       1024u /* run: the PMC0 counter runs whatever PMCR.E / PMCNTENSET.C say (the timer source always does) */
-/* Parse wel2.vpmu= (comma list percore|global|nouser|frq1|n6|src=pmc0|src=timer|nosync|sync|hiwater|run; default global). false on a bad value (flags untouched). */
+#define WEL2_VPMU_RUN       1024u /* run: accepted, the default now (the guest-visible counter always runs, like the timer source) */
+#define WEL2_VPMU_STRICT    2048u /* strict: the PMC0 counter freezes unless PMCR.E and PMCNTENSET.C are set (the architectural behaviour) */
+/* Parse wel2.vpmu= (comma list percore|global|nouser|frq1|n6|src=pmc0|src=timer|nosync|sync|hiwater|run|strict; default global). false on a bad value (flags untouched). */
 bool wel2_vpmu_parse(const char *val, uint32_t *flags, const char **end);
 #define WEL2_PMCR_E     (1u << 0)
 #define WEL2_PMCR_C     (1u << 2)

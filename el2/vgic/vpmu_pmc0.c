@@ -47,7 +47,8 @@ void wel2_vpmu_core_init(struct wel2_vpmu_sh *sh, struct wel2_vpmu_core *c, bool
 	c->sample = pmc0_now;
 	c->off = start - pmc0_now;
 	c->last = c->frozen = start;
-	c->running = 0;
+	c->running = !(sh->flags & WEL2_VPMU_STRICT) || (sh->flags & WEL2_VPMU_RUN);   // default: counting from the start
+	c->synced = 0;
 	if (boot || !sh->have_boot) {
 		sh->have_boot = true;
 		sh->pub0 = start;
@@ -63,7 +64,7 @@ enum wel2_pmc0_state wel2_vpmu_resolve(struct wel2_vpmu_core *c, uint64_t pmc0_n
 
 bool wel2_vpmu_running(const struct wel2_vpmu_sh *sh, const struct wel2_catch_cpu *g)
 {
-	if (sh->flags & WEL2_VPMU_RUN)
+	if (!(sh->flags & WEL2_VPMU_STRICT) || (sh->flags & WEL2_VPMU_RUN))
 		return true;
 	return (g->pmcr & WEL2_PMCR_E) && (g->pmcnten & WEL2_PMU_CBIT);
 }
@@ -73,13 +74,33 @@ static bool below(uint64_t a, uint64_t b)       // a < b, modulo 2^64
 	return (int64_t)(a - b) < 0;
 }
 
+// Re-sync a core that was not running (resume) or has not read yet: never below its own last value, nor below the boot core's latest
+// published value (sync) or the high-water mark (hiwater), so a thread that migrates here sees no big backwards step.
+static void resync(struct wel2_vpmu_sh *sh, struct wel2_vpmu_core *c, bool boot, uint64_t pmc0_now)
+{
+	uint64_t v = pmc0_now + c->off, t = c->last;
+
+	if (!(sh->flags & WEL2_VPMU_NOSYNC) && !boot && sh->have_boot && below(t, sh->pub0))
+		t = sh->pub0;
+	if ((sh->flags & WEL2_VPMU_HIWATER) && below(t, sh->hiwater))
+		t = sh->hiwater;
+	if (below(v, t))
+		c->off += t - v;
+}
+
 // The visible value while running, with the per-core clamp (and the optional global high-water mark).
 static uint64_t visible(struct wel2_vpmu_sh *sh, struct wel2_vpmu_core *c, bool boot, uint64_t pmc0_now)
 {
 	uint64_t v = pmc0_now + c->off;
 
-	if (below(v, c->last))
-		v = c->last;                             // never below what this core already returned
+	if (below(v, c->last)) {
+		if (c->last - v > WEL2_PMC0_BACK_MAX) {  // PMC0 wrapped (48-bit?) or was reset (deep idle): continue from last + 1, do not stall
+			c->off += c->last + 1 - v;
+			v = c->last + 1;
+		} else {
+			v = c->last;                         // small step back: never below what this core already returned
+		}
+	}
 	if (sh->flags & WEL2_VPMU_HIWATER) {
 		if (below(v, sh->hiwater)) {
 			c->off += sh->hiwater - v;           // a lagging core jumps forward to the mark (it never stalls)
@@ -101,6 +122,7 @@ static void gate(struct wel2_vpmu_sh *sh, struct wel2_vpmu_core *c, bool boot, u
 		c->off = c->frozen - pmc0_now;
 		c->last = c->frozen;
 		c->running = 1;
+		resync(sh, c, boot, pmc0_now);
 	} else if (!run && c->running) {
 		c->frozen = visible(sh, c, boot, pmc0_now);
 		c->running = 0;
@@ -110,6 +132,10 @@ static void gate(struct wel2_vpmu_sh *sh, struct wel2_vpmu_core *c, bool boot, u
 uint64_t wel2_vpmu_read(struct wel2_vpmu_sh *sh, struct wel2_vpmu_core *c, const struct wel2_catch_cpu *g, bool boot, uint64_t pmc0_now)
 {
 	gate(sh, c, boot, pmc0_now, wel2_vpmu_running(sh, g));
+	if (c->running && !c->synced) {
+		c->synced = 1;
+		resync(sh, c, boot, pmc0_now);
+	}
 	return c->running ? visible(sh, c, boot, pmc0_now) : c->frozen;
 }
 
