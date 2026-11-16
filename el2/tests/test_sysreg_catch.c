@@ -510,6 +510,72 @@ static void t_groups(void)
     wel2_catch_groups_str(b, sizeof(b), 0); CHECK(!strcmp(b, "none"));
 }
 
+/* HACR_EL2[56] routing: an EC 0x3F exception carries the MSR/MRS ISS in AFSR1_EL2[24:0] [hypothesis]; ESR is the fallback. */
+static void t_ec3f(void)
+{
+    struct wel2_sysreg_enc e;
+    uint64_t esr_3f = (uint64_t)WEL2_EC_IMPDEF << 26 | 1u << 25;
+
+    /* PMCCNTR_EL0 read into x7, ISS in AFSR1; the upper AFSR1 bits do not matter */
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, iss(3, 3, 9, 13, 0, 7, 1) | 0xab000000ull, &e), WEL2_EC3F_AFSR1);
+    CHECK_EQ(e.op0, 3); CHECK_EQ(e.crn, 9); CHECK_EQ(e.crm, 13); CHECK_EQ(e.op2, 0); CHECK_EQ(e.rt, 7); CHECK_EQ(e.rd, 1);
+    CHECK_EQ(wel2_catch_classify(&e), WEL2_CATCH_PMU);
+    /* PMCR_EL0 write of xzr */
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, iss(3, 3, 9, 12, 0, 31, 0), &e), WEL2_EC3F_AFSR1);
+    CHECK_EQ(e.rt, 31); CHECK_EQ(e.rd, 0);
+    /* AFSR1 empty or not ours, the ISS in ESR: fallback */
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f | iss(3, 3, 9, 12, 0, 2, 1), 0, &e), WEL2_EC3F_ESR);
+    CHECK_EQ(e.rt, 2);
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f | iss(3, 3, 9, 14, 0, 4, 1), iss(3, 0, 12, 0, 0, 1, 1), &e), WEL2_EC3F_ESR);
+    /* nothing decodable: not a catch (the caller's fatal path prints ESR / AFSR1 / ELR) */
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, 0, &e), WEL2_EC3F_NONE);
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, iss(1, 0, 8, 7, 0, 0, 0), &e), WEL2_EC3F_NONE);       /* TLBI */
+    /* dispatch: the decoded access is answered by the same catch emulation as an EC 0x18 trap (PMCCNTR_EL0 follows the counter) */
+    {
+        struct wel2_catch_cpu c = { .vflags = WEL2_VPMU_GLOBAL };
+
+        CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, iss(3, 3, 9, 13, 0, 0, 1), &e), WEL2_EC3F_AFSR1);
+        CHECK(wel2_catch_enabled(WEL2_CATCH_G_PMU, wel2_catch_classify(&e)));
+        CHECK_EQ(wel2_catch_read(&c, &e, 1000, 1000000000ull), wel2_catch_pmccntr(&c, 1000, 1000000000ull));
+    }
+}
+
+static void t_hacr_parse(void)
+{
+    uint64_t m = 7;
+    const char *end;
+
+    CHECK(wel2_hacr_parse("0x100000000000000", &m, &end)); CHECK_EQ(m, WEL2_HACR_PMU); CHECK(*end == 0);
+    CHECK(wel2_hacr_parse("100000000000000 wel2.x=1", &m, &end)); CHECK_EQ(m, WEL2_HACR_PMU); CHECK(*end == ' ');
+    CHECK(wel2_hacr_parse("0", &m, 0)); CHECK_EQ(m, 0);
+    CHECK(wel2_hacr_parse("0xFfFfFfFfFfFfFfFf", &m, 0)); CHECK_EQ(m, ~0ull);
+    m = 5;
+    CHECK(!wel2_hacr_parse("", &m, 0));
+    CHECK(!wel2_hacr_parse("0x", &m, 0));
+    CHECK(!wel2_hacr_parse("0xg", &m, 0));
+    CHECK(!wel2_hacr_parse("0x1ffffffffffffffff", &m, 0));        /* 17 digits */
+    CHECK(!wel2_hacr_parse("12zz", &m, 0));
+    CHECK_EQ(m, 5);                                               /* untouched on a bad value */
+}
+
+static void t_status_format(void)
+{
+    char b[WEL2_CATCH_LINE_MAX];
+    struct wel2_sysreg_enc e = { .op0 = 3, .op1 = 3, .crn = 9, .crm = 13, .op2 = 0, .rd = 1, .rt = 0 };
+    unsigned n;
+
+    n = wel2_catch_status_format(b, sizeof(b), 0x60, WEL2_HACR_PMU, 12, &e);
+    CHECK(!strcmp(b, "MDCR STUCK=0x60 HACR=0x100000000000000 CATCH N=12 LAST=PMCCNTR_EL0"));
+    CHECK_EQ(n, strlen(b));
+    wel2_catch_status_format(b, sizeof(b), 0, 0, 0, 0);
+    CHECK(!strcmp(b, "MDCR STUCK=0x0 HACR=0x0 CATCH N=0 LAST=NONE"));
+    e = (struct wel2_sysreg_enc){ .op0 = 3, .op1 = 5, .crn = 15, .crm = 2, .op2 = 6, .rd = 0 };
+    wel2_catch_status_format(b, sizeof(b), 0, 0, 1, &e);
+    CHECK(strstr(b, "LAST=") != 0);
+    n = wel2_catch_status_format(b, 16, 0x60, WEL2_HACR_PMU, 12, 0);       /* truncation keeps the NUL */
+    CHECK(n < 16 && b[n] == 0);
+}
+
 int main(void)
 {
     RUN(t_groups);
@@ -525,5 +591,8 @@ int main(void)
     RUN(t_table);
     RUN(t_format);
     RUN(t_bits);
+    RUN(t_ec3f);
+    RUN(t_hacr_parse);
+    RUN(t_status_format);
     TESTS_DONE();
 }
