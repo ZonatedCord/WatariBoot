@@ -21,6 +21,8 @@
  *                       [verified: llvm-mc encodes 'mrs x0, cnthp_ctl_el2' / 'cnthv_ctl_el2' (+vh) as these; Arm ARM D8.13.2]
  *   ICH_HCR_EL2         3,4,12,11,0  [verified: Linux v6.12 sysreg.h:576]
  *   ICH_MISR_EL2        3,4,12,11,2  [verified: Linux v6.12 sysreg.h:578]
+ *   HACR_EL2            3,4,1,1,7    [verified: llvm-mc encodes 'mrs x0, hacr_el2' as S3_4_C1_C1_7 = 0xd53c11e0; Arm ARM D24.2 HACR_EL2]. NOT
+ *                       S3_4_C15_C1_7 (that one is another IMPLEMENTATION DEFINED register); the IMPLEMENTATION DEFINED part is the bit meaning.
  * The independent copy of this table that the build check compares the object code against is in
  * boot/check-apple-enc.sh (it does not include this header on purpose).
  */
@@ -42,6 +44,7 @@ enum apple_sr {
 	APPLE_SR_UPMSR,            /* rd only */
 	APPLE_SR_ICH_HCR,
 	APPLE_SR_ICH_MISR,         /* rd only */
+	APPLE_SR_HACR_EL2,         /* HACR_EL2 (architectural encoding, Apple-defined bits: bit 56 routes the PMUv3 accesses to EL2) */
 	APPLE_SR_COUNT
 };
 

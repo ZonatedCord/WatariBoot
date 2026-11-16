@@ -164,4 +164,29 @@ unsigned wel2_catch_format_overflow(char *buf, unsigned cap, const struct wel2_s
 /* "CATCH SUMMARY distinct=<n> total=<n> overflow=<n>" */
 unsigned wel2_catch_format_summary(char *buf, unsigned cap, const struct wel2_catch_tab *t);
 
+/* ---- HACR_EL2[56]: routing of the PMUv3 accesses on the M1 (docs/design/watari-el2/hacr56-pmu.md) ---------------------------
+ * The M1 has no PMUv3 (ID_AA64DFR0_EL1.PMUVer = 0xF, MDCR_EL2.TPM / TPMCR are RES0), so the architectural PMU registers are UNDEFINED
+ * at EL1 and MDCR_EL2 cannot trap them. Setting bit 56 of the IMPLEMENTATION DEFINED part of HACR_EL2 makes them trap to EL2 instead
+ * [hypothesis until measured on our M1]. They then arrive as EC 0x18 (the ISS is in ESR_EL2) or as EC 0x3F (IMPLEMENTATION DEFINED
+ * exception class) where the MSR/MRS ISS is found in AFSR1_EL2 [hypothesis: the low 25 bits, same layout as the ISS of EC 0x18]. */
+#define WEL2_EC_IMPDEF   0x3fu
+#define WEL2_HACR_PMU    (1ULL << 56)
+#define WEL2_AFSR1_ISS   0x1ffffffu
+
+enum wel2_ec3f_src {
+	WEL2_EC3F_NONE = 0,          /* no MSR/MRS ISS found: not a catch (the caller keeps its fatal path) */
+	WEL2_EC3F_AFSR1,             /* AFSR1_EL2[24:0] decodes to a register this module owns */
+	WEL2_EC3F_ESR,               /* fallback: ESR_EL2[24:0] does */
+};
+/* Find the MSR/MRS ISS of an EC 0x3F exception [hypothesis, see vgic/sysreg_catch.c]: needs ESR.IL = 1; AFSR1_EL2[24:0] is used only if
+ * AFSR1[63:25] = 0 and it decodes to an owned encoding that does not contradict an owned decode of ESR[24:0] (then ESR wins, AFSR1 being
+ * stale); else ESR[24:0] if it decodes to an owned encoding; else NONE (the caller reflects an UNDEF). *e is filled on a hit. */
+enum wel2_ec3f_src wel2_catch_ec3f_decode(uint64_t esr, uint64_t afsr1, struct wel2_sysreg_enc *e);
+/* wel2.hacr=<hex>: "0x<hex>" or plain hex, 1..16 digits, up to a space or NUL. false on a bad value (mask untouched). */
+bool wel2_hacr_parse(const char *val, uint64_t *mask, const char **end);
+/* The fixed status row: "MDCR STUCK=0x<hex> HACR=0x<hex> CATCH N=<n> LAST=<name>" (LAST=NONE with no catch yet). `last` may be
+ * NULL (none). Returns the length. */
+unsigned wel2_catch_status_format(char *buf, unsigned cap, uint64_t mdcr_stuck, uint64_t hacr, uint64_t n,
+				  const struct wel2_sysreg_enc *last);
+
 #endif

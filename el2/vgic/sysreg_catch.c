@@ -533,3 +533,105 @@ unsigned wel2_catch_format_summary(char *buf, unsigned cap, const struct wel2_ca
 	buf[n] = 0;
 	return n;
 }
+
+// ---- HACR_EL2[56] routing (EC 0x3F) ------------------------------------------------------------------------------------
+// [hypothesis] An EC 0x3F exception from a lower EL (HACR_EL2[56]) is an MSR/MRS of 32 bits (ESR.IL = 1) and AFSR1_EL2[24:0] holds its ISS.
+// AFSR1_EL2 is a firmware-owned auxiliary register that may be stale, so its low 25 bits are not trusted blindly:
+//   - ESR.IL must be 1 (an MSR/MRS is a 32-bit instruction);
+//   - AFSR1 bits [63:25] must be 0 (a real ISS is 25 bits wide; leftovers usually are not);
+//   - AFSR1[24:0] must decode to an encoding this module owns;
+//   - if ESR[24:0] ALSO decodes to an owned encoding and it differs from AFSR1's (op, CRn, CRm, Rt, direction), one of them is stale and
+//     the architectural ESR wins.
+// Anything else decodes to NONE: the caller reflects the exception to the guest as an UNDEF (its behaviour before HACR).
+static bool same_enc(const struct wel2_sysreg_enc *a, const struct wel2_sysreg_enc *b)
+{
+	return a->op0 == b->op0 && a->op1 == b->op1 && a->crn == b->crn && a->crm == b->crm && a->op2 == b->op2 && a->rt == b->rt &&
+	       a->rd == b->rd;
+}
+
+enum wel2_ec3f_src wel2_catch_ec3f_decode(uint64_t esr, uint64_t afsr1, struct wel2_sysreg_enc *e)
+{
+	struct wel2_sysreg_enc ta, te;
+	bool a_ok, e_ok;
+
+	if (!(esr & (1ULL << 25)))
+		return WEL2_EC3F_NONE;
+	a_ok = !(afsr1 >> 25) && wel2_catch_decode((uint32_t)(afsr1 & WEL2_AFSR1_ISS), &ta) && wel2_catch_classify(&ta) != WEL2_CATCH_NONE;
+	e_ok = wel2_catch_decode((uint32_t)(esr & WEL2_AFSR1_ISS), &te) && wel2_catch_classify(&te) != WEL2_CATCH_NONE;
+	if (a_ok && (!e_ok || same_enc(&ta, &te))) {
+		*e = ta;
+		return WEL2_EC3F_AFSR1;
+	}
+	if (e_ok) {
+		*e = te;
+		return WEL2_EC3F_ESR;
+	}
+	return WEL2_EC3F_NONE;
+}
+
+bool wel2_hacr_parse(const char *val, uint64_t *mask, const char **end)
+{
+	const char *p = val;
+	uint64_t m = 0;
+	unsigned nd = 0;
+
+	if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X'))
+		p += 2;
+	for (;; p++, nd++) {
+		char c = *p;
+		uint64_t d;
+
+		if (c >= '0' && c <= '9')
+			d = (uint64_t)(c - '0');
+		else if (c >= 'a' && c <= 'f')
+			d = (uint64_t)(c - 'a' + 10);
+		else if (c >= 'A' && c <= 'F')
+			d = (uint64_t)(c - 'A' + 10);
+		else
+			break;
+		if (nd >= 16)
+			break;
+		m = (m << 4) | d;
+	}
+	if (end)
+		*end = p;
+	if (nd == 0 || nd > 16 || (*p != 0 && *p != ' '))
+		return false;
+	*mask = m;
+	return true;
+}
+
+unsigned wel2_catch_status_format(char *buf, unsigned cap, uint64_t mdcr_stuck, uint64_t hacr, uint64_t n,
+				  const struct wel2_sysreg_enc *last)
+{
+	char nm[WEL2_CATCH_NAME_MAX];
+	unsigned k = 0;
+
+	if (!cap)
+		return 0;
+	put_s(buf, cap, &k, "MDCR STUCK=");
+	put_hex(buf, cap, &k, mdcr_stuck);
+	put_s(buf, cap, &k, " HACR=");
+	put_hex(buf, cap, &k, hacr);
+	put_s(buf, cap, &k, " CATCH N=");
+	put_dec(buf, cap, &k, n);
+	put_s(buf, cap, &k, " LAST=");
+	if (!last) {
+		put_s(buf, cap, &k, "NONE");
+	} else if (wel2_catch_name(last, nm, sizeof(nm))) {
+		put_s(buf, cap, &k, nm);
+	} else {
+		put_s(buf, cap, &k, "S");
+		put_dec(buf, cap, &k, last->op0);
+		put_s(buf, cap, &k, "_");
+		put_dec(buf, cap, &k, last->op1);
+		put_s(buf, cap, &k, "_C");
+		put_dec(buf, cap, &k, last->crn);
+		put_s(buf, cap, &k, "_C");
+		put_dec(buf, cap, &k, last->crm);
+		put_s(buf, cap, &k, "_");
+		put_dec(buf, cap, &k, last->op2);
+	}
+	buf[k] = 0;
+	return k;
+}

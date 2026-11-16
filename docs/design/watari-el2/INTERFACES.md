@@ -210,6 +210,13 @@ Bench (QEMU TCG, WinPE from RAM disk, `wel2.catch=pmu`, SMP 4, `CNTFRQ` = 1 GHz 
 
 Conclusion: the PMUSERENR mirror is the fix; the global counter is kept as the default because it is monotonic on every core by construction (per-core also passes on the bench). Variants (a) `nouser`, (b) `frq1`, (c) `n6` were not needed (and `frq1` is identical on this QEMU).
 
+**HACR_EL2[56] routing (`wel2.hacr=<hex mask>`, default `0x100000000000000` (bit 56) on the M1, 0 on QEMU; added after the first M1 measurements; design: `hacr56-pmu.md`).** Measured on the M1: `ID_AA64DFR0_EL1 = 0x10305f09` (PMUVer 0xF), `PMCR_EL0` read UNDEFINED, `MDCR_EL2.TPM`/`TPMCR` RES0, no FEAT_FGT: the `MDCR_EL2` path above never sees Windows' PMUv3 accesses. Bit 56 of `HACR_EL2` (architectural register, `S3_4_C1_C1_7` **[verified: llvm-mc]**; the bit is Apple IMPLEMENTATION DEFINED) is expected to make them trap to EL2 **[hypothesis until measured]**.
+- Every core, same place as `catch_cpu_init`: `HACR_EL2 |= mask`, read back, one line `Watari EL2: hacr: before=.. after=.. requested=.. core N`. Never touched when the platform is not the M1 (`wel2.hacr` is then ignored with a warning). Accessor: `APPLE_SR_HACR_EL2` (`apple_sysreg.c`, checked by `check-apple-enc.sh`).
+- Arrival: EC 0x18 (ISS in `ESR_EL2`, existing path) or EC 0x3F (`el2_exception`, `catch_trap_ec3f`): the MSR/MRS ISS is taken from `AFSR1_EL2[24:0]` first **[hypothesis: same layout as the EC 0x18 ISS]**, else from `ESR_EL2[24:0]` (`wel2_catch_ec3f_decode`). The first 8 EC 0x3F exceptions print `ec3f: ESR=.. AFSR1=.. ELR=.. iss=afsr1|esr|none` so the hardware run settles the layout. No decodable owned encoding: the fatal path, which now also prints `AFSR1_EL2`.
+- The PMU group is answered whenever `g_hacr != 0`, even with `wel2.catch=0` and whatever stuck in `MDCR_EL2` (the trap bits are best effort). `catch_cpu_init` also runs HACR-only.
+- Status row (4th row of the catch area, `WEL2_FB_CATCH_ROWS` 3 to 4, `wel2_fb_catch_status`): `MDCR STUCK=0x.. HACR=0x.. CATCH N=.. LAST=<name>`; redrawn on every new distinct encoding and otherwise at most twice a second; also logged as `catch status: ...`. `STUCK` = MDCR trap bits of the mask that read back 0 on any core.
+- Host probe: `tools/m3a/hacr_probe.py`, rung `HACR0` (readback + restore; `--el1` opt-in tries an EL1 `mrs PMCCNTR_EL0` through el1_call).
+
 ## 8. Backend interfaces (C)
 All tables are `const` and are selected in the composition root.
 

@@ -80,6 +80,8 @@ extern uint32_t g_vpmu;            /* catch.c: wel2.vpmu flags (WEL2_VPMU_*) */
 extern uint32_t g_catch_mask;      /* catch.c: enabled groups (WEL2_CATCH_G_*), 0 when g_catch is false */
 extern bool g_catch;               /* catch.c: wel2.catch=1 (default on the M1): HCR_EL2.TIDCP|TACR and MDCR_EL2 trap bits set */
 struct wel2_stats;
+extern uint64_t g_hacr;           /* catch.c: wel2.hacr mask ORed into HACR_EL2 on every core (M1 default 1<<56), 0 = HACR never touched */
+bool catch_trap_ec3f(struct frame *f);   /* catch.c: an EC 0x3F (IMPLEMENTATION DEFINED) exception: the PMUv3 access routed by HACR_EL2[56], ISS from AFSR1_EL2 */
 bool wel2_inject_undef(struct frame *f);  /* inject_undef.c: bench-only wel2.vpmu=undef, reflect the trapped access to guest EL1 as UNDEFINED */
 bool catch_trap(struct frame *f);  /* catch.c: a trapped PMU/debug/IMPDEF/ACTLR_EL1 access (EC 0x18): RAZ/WI + one log line per encoding */
 void catch_cpu_init(bool log);     /* catch.c: MDCR_EL2 |= trap bits, every core before it enters the guest */

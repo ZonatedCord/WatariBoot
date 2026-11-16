@@ -47,7 +47,7 @@ enum wel2_fb_fmt {
 #define WEL2_FB_LABEL_MAX 32u
 /* Catch area (wel2.catch=1, wel2_fb_catch_enable): WEL2_FB_CATCH_ROWS text rows, drawn at half the text scale (at least 1), between
  * the last-error area and the rule: "FIRST <line>", "LAST <line>" (the newest distinct catch) and the guest exception. */
-#define WEL2_FB_CATCH_ROWS 3u
+#define WEL2_FB_CATCH_ROWS 4u    /* FIRST, LAST, the status row (wel2_fb_catch_status), the guest exception */
 #define WEL2_FB_CATCH_LEN  96u
 #define WEL2_FB_GUEST_BASE 16u     /* squares from here on are guest checks (WEL2_CHK_SQUARE_BASE) */
 #define WEL2_FB_GUEST_N    32u     /* guest checks counted: squares 16..47 */
@@ -92,6 +92,7 @@ struct wel2_fb {
 	uint32_t gexc_set;
 	char catch_first[WEL2_FB_CATCH_LEN];
 	char catch_last[WEL2_FB_CATCH_LEN];
+	char catch_status[WEL2_FB_CATCH_LEN];  /* the fixed status row (empty until the first wel2_fb_catch_status) */
 	char gexc[WEL2_FB_CATCH_LEN];
 };
 
@@ -181,6 +182,8 @@ void wel2_fb_set_error_auto(struct wel2_fb *fb, const char *msg);
 void wel2_fb_catch_enable(struct wel2_fb *fb);
 void wel2_fb_catch_note(struct wel2_fb *fb, const char *line);
 void wel2_fb_catch_guest_exc(struct wel2_fb *fb, const char *line);
+/* The fixed status row (third row of the area: MDCR / HACR / catch count): replaces its text and repaints the area. Rate limiting is the caller's job. */
+void wel2_fb_catch_status(struct wel2_fb *fb, const char *line);
 /* Guest counters shown in the band. */
 unsigned wel2_fb_guest_pass(const struct wel2_fb *fb);
 unsigned wel2_fb_guest_fail(const struct wel2_fb *fb);

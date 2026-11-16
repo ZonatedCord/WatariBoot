@@ -321,10 +321,14 @@ static void draw_catch(const struct wel2_fb *fb)
 		catch_row(fb, 1, "LAST  ", fb->catch_last, COL_CATCH, WEL2_RGB_BLACK);
 	else
 		catch_row(fb, 1, "", "", COL_CATCH, WEL2_RGB_BLACK);
-	if (fb->gexc_set)
-		catch_row(fb, 2, "", fb->gexc, COL_GEXC, COL_GEXCBG);
+	if (fb->catch_status[0])
+		catch_row(fb, 2, "", fb->catch_status, COL_CATCH, WEL2_RGB_BLACK);
 	else
-		catch_row(fb, 2, "GUEST EXCEPTION: NONE", "", COL_NOERR, WEL2_RGB_BLACK);
+		catch_row(fb, 2, "", "", COL_CATCH, WEL2_RGB_BLACK);
+	if (fb->gexc_set)
+		catch_row(fb, 3, "", fb->gexc, COL_GEXC, COL_GEXCBG);
+	else
+		catch_row(fb, 3, "GUEST EXCEPTION: NONE", "", COL_NOERR, WEL2_RGB_BLACK);
 }
 
 /* ---- scrolling text --------------------------------------------------------------------------------------------- */
@@ -543,6 +547,17 @@ void wel2_fb_catch_guest_exc(struct wel2_fb *fb, const char *line)
 		return;
 	catch_copy(fb->gexc, line);
 	fb->gexc_set = 1;
+	if (!fb->catch_on || muted(fb))
+		return;
+	ensure_init(fb);
+	refresh(fb);
+}
+
+void wel2_fb_catch_status(struct wel2_fb *fb, const char *line)
+{
+	if (!fb->fmt)
+		return;
+	catch_copy(fb->catch_status, line);
 	if (!fb->catch_on || muted(fb))
 		return;
 	ensure_init(fb);

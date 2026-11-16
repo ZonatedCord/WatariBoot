@@ -38,6 +38,7 @@
 #define EC_SMC64 0x17
 
 #define EC_DABT_LOWER 0x24
+#define EC_IMPDEF     0x3f   /* IMPLEMENTATION DEFINED exception class (Arm ARM D24.2): the M1 routes HACR_EL2[56] accesses here [hypothesis] */
 #define EC_SYSREG     0x18   /* trapped MSR/MRS/system instruction (Arm ARM D24.2) */
 
 #ifndef WEL2_CHAIN
@@ -135,6 +136,12 @@ static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
     puts_("\n");
     put_kv("  ESR_EL2  = ", f->esr);
     put_kv("  ELR_EL2  = ", f->elr);
+    {
+        uint64_t afsr1;
+
+        __asm__ volatile("mrs %0, afsr1_el2" : "=r"(afsr1));      /* architectural; an EC 0x3F carries its ISS here [hypothesis] */
+        put_kv("  AFSR1_EL2 = ", afsr1);
+    }
     put_kv("  FAR_EL2  = ", f->far);
     put_kv("  SPSR_EL2 = ", f->spsr);
     for (unsigned i = 0; i < 31; i++) {            /* guest registers at the fault */
@@ -727,9 +734,11 @@ void el2_exception(struct frame *f, unsigned idx)
         handle_smc(f);
     } else if (idx == 8 && ec == EC_DABT_LOWER) {
         handle_dabt(f, idx);
-    } else if (idx == 8 && ec == EC_SYSREG && g_catch && catch_trap(f)) {
+    } else if (idx == 8 && ec == EC_SYSREG && (g_catch || g_hacr) && catch_trap(f)) {
         /* catch mode: a PMU / debug / IMPLEMENTATION DEFINED / ACTLR_EL1 access, answered RAZ/WI and logged (catch.c); the
          * encodings it does not own fall through to the paths below, unchanged */
+    } else if (idx == 8 && ec == EC_IMPDEF && catch_trap_ec3f(f)) {
+        /* HACR_EL2[56]: a PMUv3 access of the guest that the M1 reports as EC 0x3F, answered by the catch path, or reflected to the guest as an EL1 UNDEF when it is not a catch (catch.c); fatal only if neither works */
     } else if (idx == 8 && ec == EC_SYSREG && idreg_trap(f)) {
         /* T6g: a read of the ID group 3 (HCR_EL2.TID3), decoded first: it is cheap and touches no ICH register */
     } else if (idx == 8 && ec == EC_SYSREG && cpuif_sysreg_trap(f)) {
@@ -1156,6 +1165,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
  *                        QEMU's Aff0 0..7 (start.S stack slot = Aff0). No-op on the M1. Default native.
  *   wel2.hold=1          do not reset at the end of a step or of the guest (wel2.step=2, the guest's SYSTEM_RESET): paint the final
  *                        state, print the HOLD message and park, so the screen can be photographed (not wel2.step=1)
+ *   wel2.hacr=<hex mask>   HACR_EL2 |= mask on every core (default on the M1: 0x100000000000000 = bit 56, routes the PMUv3 accesses to EL2; 0 = off; ignored off the M1)
  *   wel2.vpmu=percore|global[,nouser][,frq1][,n6]   virtual PMU of catch mode (default global: one always-running PMCCNTR = scaled CNTPCT shared by all cores)
  *   wel2.catch=0|1|0x<mask>|pmu,dbg,impdef,actlr   catch mode (1 = all groups; mask bit0 PMU, bit1 debug, bit2 IMPDEF, bit3 ACTLR; default on the M1: pmu): trap PMU / debug / IMPLEMENTATION DEFINED registers and ACTLR_EL1 (HCR_EL2.TIDCP|TACR, MDCR_EL2.TPM|TPMCR|TDA|TDOSA|TDRA),
  *                        answer them RAZ/WI and log the first access of each distinct encoding (default: on on the M1, off on QEMU)
@@ -1213,6 +1223,14 @@ static void parse_bootargs(uint64_t fdt)
                 g_vpmu = v;
             else
                 puts_("Watari EL2: WARNING: bad wel2.vpmu value (percore|global[,nouser][,frq1][,n6]), keeping the default\n");
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'h' && p[6] == 'a' && p[7] == 'c' &&
+                   p[8] == 'r' && p[9] == '=') {
+            uint64_t hm;
+
+            if (wel2_hacr_parse(p + 10, &hm, 0))
+                g_hacr = hm;
+            else
+                puts_("Watari EL2: WARNING: bad wel2.hacr value (hex mask, 0 = off), keeping the default\n");
         } else if (arg_is(p, "wel2.test=tcoff")) {
             g_test_tc = -1;
         } else if (arg_is(p, "wel2.test=tcon")) {
@@ -1424,6 +1442,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
             fatal_msg("M1 platform without HCR_EL2.E2H: the layer cannot run here");
         g_cpuif_trap = true;
         g_catch = true;                         /* M3a: bootmgr's UNDEF at EL1 was invisible; wel2.catch=0 overrides */
+        g_hacr = WEL2_HACR_PMU;                 /* HACR_EL2[56]: the PMUv3 accesses trap to EL2 instead of UNDEF at EL1 [hypothesis]; wel2.hacr=0 overrides */
         g_catch_mask = WEL2_CATCH_G_PMU;        /* real M1: debug / ACTLR / IMPDEF registers exist and must reach the hardware (RAZ/WI broke Windows) */
         g_tid3 = true;                          /* DESIGN 5.4: EDK2's GIC code and Windows read ID_AA64PFR0_EL1.GIC; wel2.tid3=0 overrides */
     }
@@ -1462,6 +1481,14 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     if (g_tid3) {
         g_hcr |= HCR_TID3;
         puts_("Watari EL2: HCR_EL2.TID3 set: ID registers emulated, ID_AA64PFR0_EL1.GIC presented as 1\n");
+    }
+    if (g_hacr && !g_plat->m1_memory) {
+        puts_("Watari EL2: WARNING: wel2.hacr ignored: HACR_EL2 is only programmed on the M1 (QEMU has none)\n");
+        g_hacr = 0;
+    }
+    if (g_hacr && !g_catch) {
+        wel2_fb_catch_enable(&g_fb);
+        catch_cpu_init(true);                   /* HACR only (wel2.catch=0): no trap bits, the PMU group is answered when it arrives */
     }
     if (g_catch) {
         g_hcr |= wel2_catch_hcr_bits(g_catch_mask);
@@ -1521,7 +1548,7 @@ void __attribute__((noreturn)) el2_secondary_main(void)
     if (g_plat->init_cpu(me))
         fatal_msg("AIC: WHOAMI of a secondary core differs from its index");
     cpuif_init_cpu();
-    if (g_catch)
+    if (g_catch || g_hacr)
         catch_cpu_init(false);
 
     big_lock();
