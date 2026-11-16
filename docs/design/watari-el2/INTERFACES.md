@@ -206,6 +206,7 @@ Bench (QEMU TCG, WinPE from RAM disk, `wel2.catch=pmu`, SMP 4, `CNTFRQ` = 1 GHz 
 | `vp1` | `vpmu=global`, PMUSERENR virtual only | stop code `0xC000021A`, SYSTEM_RESET at ~45 s guest time (shot-0003) |
 | `vp2` | `vpmu=global` + hardware PMUSERENR mirror | Setup "Installazione di Windows 11 / Attendere" at 162 s (shot-0006), no SYSTEM_RESET |
 | `vp3` | `vpmu=percore` + hardware PMUSERENR mirror | Setup "Attendere" at 161 s (shot-0006), no SYSTEM_RESET |
+| `vp4` | as `vp2`, with the firmware rebuilt from the committed tree (global PMU in the EDK2 safety net too) | Setup "Attendere" at ~160 s (shot-0006), no SYSTEM_RESET |
 
 Conclusion: the PMUSERENR mirror is the fix; the global counter is kept as the default because it is monotonic on every core by construction (per-core also passes on the bench). Variants (a) `nouser`, (b) `frq1`, (c) `n6` were not needed (and `frq1` is identical on this QEMU).
 
