@@ -52,8 +52,10 @@ class FakeU:
     """A HACR_EL2 whose writable bits are `writable`; the EL1 PMCCNTR access behaves as `el1_mode`:
     'ec3f' / 'ec18' (arrives at EL2: ESR_EL2 / AFSR1_EL2 change, the guard counts), 'undef' (counted, ESR_EL2 unchanged), 'ran'."""
 
-    def __init__(self, p, hacr=0x20, writable=~0, el=2, el1_mode="ec3f", fail_read=False):
+    def __init__(self, p, hacr=0x20, writable=~0, el=2, el1_mode="ec3f", fail_read=False, pmcr0=0x1, pmcr1=0x10100, pmc0_step=3000000,
+                 pmc0_fault=False):
         self.p, self.hacr, self.writable, self.el, self.mode, self.fail_read = p, hacr, writable, el, el1_mode, fail_read
+        self.pmcr0, self.pmcr1, self.pmc0, self.step, self.pmc0_fault, self.cnt = pmcr0, pmcr1, 1000, pmc0_step, pmc0_fault, 5000
         self.esr, self.afsr1 = 0, 0
         self.reads, self.writes, self.el1_calls = [], [], 0
 
@@ -81,6 +83,22 @@ class FakeU:
                 self.p.exc += 1
                 return 0
             return self.hacr
+        if name == "PMCR0":
+            return self.pmcr0
+        if name == "PMCR1":
+            return self.pmcr1
+        if name == "CNTFRQ_EL0":
+            return 24000000
+        if name == "CNTPCT_EL0":
+            v, self.cnt = self.cnt, self.cnt + 48000          # 2 ms between the two samples
+            return v
+        if name == "PMC0":
+            if self.pmc0_fault:
+                self.p.exc += 1
+                return 0
+            v = self.pmc0
+            self.pmc0 += self.step if (self.pmcr0 & 1) and (self.pmcr1 & 0x10100) else 0
+            return v
         if name == "ESR_EL2":
             return self.esr
         if name == "AFSR1_EL2":
@@ -98,7 +116,7 @@ def go(el1=False, **kw):
     p = FakeProxy()
     u = FakeU(p, **kw)
     lines = []
-    rec = hp.run(p, u, lines.append, "ON", "OFF", el1)
+    rec = hp.run(p, u, lines.append, "ON", "OFF", el1, delay=lambda: None)
     return p, u, rec, "\n".join(lines)
 
 
@@ -141,6 +159,21 @@ u = BoomU(p)
 lines = []
 hp.run(p, u, lines.append, "ON", "OFF", True)
 check(u.hacr == 0x20 and "proxy error" in "\n".join(lines) and p.log[-1] == ("guard", "OFF"), "a proxy error at the EL1 step: HACR_EL2 restored, guard off, verdict says proxy error")
+
+# the Apple PMU check: read only (the fake asserts that only HACR_EL2 is ever written), verdicts told apart
+p, u, rec, txt = go()
+check(rec["pmu"]["advances"] and rec["pmu"]["cycles_per_ms"] == 3000000 // 2 and "PMC0 advances" in txt, "PMC0 advances: rate reported (cycles per ms vs CNTPCT)")
+check(all(w[0] == "HACR_EL2" for w in u.writes) and ("PMC0", None) in u.reads and ("PMCR0", None) in u.reads and ("PMCR1", None) in u.reads,
+      "the PMU is only read (PMCR0, PMCR1, PMC0), never written")
+p, u, rec, txt = go(pmcr0=0, pmcr1=0)
+check(not rec["pmu"]["advances"] and "not enabled in this context" in txt and "the layer enables them itself" in txt, "PMC0 disabled in the proxy context: reported, no PMU write")
+check(all(w[0] == "HACR_EL2" for w in u.writes), "no PMU write when counter 0 is disabled")
+p, u, rec, txt = go(pmc0_step=0)
+check(not rec["pmu"]["advances"] and "although PMCR0 / PMCR1 enable it" in txt, "PMC0 enabled but stuck: told apart from disabled")
+p, u, rec, txt = go(pmc0_fault=True)
+check(rec["pmu"]["advances"] is False and "cannot be read" in txt and u.hacr == 0x20, "PMC0 read faults: reported, HACR_EL2 still restored")
+p, u, rec, txt = go(el=1)
+check("pmu" not in rec and u.writes == [], "not at EL2: the PMU is not read either")
 
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):

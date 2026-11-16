@@ -10,6 +10,8 @@ docs/design/watari-el2/hacr56-pmu.md. HACR_EL2 is architectural: S3_4_C1_C1_7 [v
 What it does, on the BOOT CORE only (m1n1 runs at EL2 there):
   1. CurrentEL must be 2, else it stops before any write.
   2. reads HACR_EL2, ESR_EL2, AFSR1_EL2 (under the proxy exception guard; a faulting read is reported, nothing is written).
+  2b. READ-ONLY Apple PMU check: PMCR0, PMCR1, PMC0 twice around a short delay (plus CNTPCT / CNTFRQ): does PMC0 advance, and at what rate
+     versus CNTPCT. No write to any PMU register: if the proxy context has counter 0 disabled it says so (the layer enables it itself).
   3. HACR_EL2 |= bit 56, reads it back, reports which bits stuck. This is the DEFAULT and the only mode of the monday.py rung HACR0.
   4. only with --el1: runs `mrs xN, PMCCNTR_EL0` AT EL1 through the proxy's el1_call (u.mrs(enc, call="el1"), as tools/m3a/el1_ctrl.py does)
      under the exception guard, then reads ESR_EL2 / AFSR1_EL2 again and reports: it arrived at EL2 (EC 0x18 or 0x3F, with AFSR1), it ran
@@ -26,6 +28,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 # name -> (op0, op1, CRn, CRm, op2)   [verified: llvm-mc encodes HACR_EL2 as S3_4_C1_C1_7, AFSR1_EL2 as S3_4_C5_C1_1; Arm ARM D24.2]
 ENC = {
@@ -34,7 +37,15 @@ ENC = {
     "ESR_EL2": (3, 4, 5, 2, 0),
     "AFSR1_EL2": (3, 4, 5, 1, 1),
     "PMCCNTR_EL0": (3, 3, 9, 13, 0),
+    # the Apple PMU, READ ONLY here [hypothesis: encodings from the layer's notes, include/wel2_apple_sysreg.h; PMCR0 [verified: Linux v6.12 apple_m1_pmu.h]]
+    "PMCR0": (3, 1, 15, 0, 0),
+    "PMCR1": (3, 1, 15, 1, 0),
+    "PMC0": (3, 2, 15, 0, 0),
+    "CNTPCT_EL0": (3, 3, 14, 0, 1),
+    "CNTFRQ_EL0": (3, 3, 14, 0, 0),
 }
+PMCR0_CTR0_EN = 1 << 0
+PMCR1_CTR0_EL0, PMCR1_CTR0_EL1 = 1 << 8, 1 << 16
 HACR_PMU = 1 << 56
 MASK64 = 0xffffffffffffffff
 
@@ -89,7 +100,50 @@ def classify_el1(value, err, count, esr_before, esr_after, afsr1_after):
     return "no verdict"
 
 
-def run(p, u, out, guard_on, guard_off, el1=False):
+def pmu_verdict(pmcr0, pmcr1, a, b, c0, c1, frq):
+    """(verdict text, cycles per ms or None, ratio PMC0/CNTPCT or None) from two PMC0 samples a, b taken at CNTPCT c0, c1."""
+    enabled = pmcr0 is not None and pmcr1 is not None and bool(pmcr0 & PMCR0_CTR0_EN) and bool(pmcr1 & (PMCR1_CTR0_EL0 | PMCR1_CTR0_EL1))
+    if a is None or b is None:
+        return "PMC0 cannot be read here (faulted): the layer's init will report it", None, None
+    d = (b - a) & MASK64
+    if d == 0:
+        if not enabled:
+            return ("PMC0 does NOT advance: counter 0 is not enabled in this context (PMCR0 bit 0 / PMCR1 EL0|EL1 enables read 0); "
+                    "the layer enables them itself, this probe never writes the PMU"), None, None
+        return ("PMC0 does NOT advance although PMCR0 / PMCR1 enable it here: it may not count at EL2 (the layer then decides at the first "
+                "guest read) or it is stuck [hypothesis]"), None, None
+    dc = (c1 - c0) & MASK64 if c0 is not None and c1 is not None else 0
+    if not dc or not frq:
+        return "PMC0 advances by %d (no CNTPCT to compare with)" % d, None, None
+    per_ms = d * frq // (dc * 1000)
+    return "PMC0 advances: %d cycles per ms (~%.2f GHz, %.1f x CNTPCT)" % (per_ms, d * frq / dc / 1e9, d / dc), per_ms, d / dc
+
+
+def pmu_check(pr, out, rec, delay):
+    """READ ONLY: PMCR0, PMCR1, PMC0 twice around `delay()` (and CNTPCT / CNTFRQ for the rate) on the boot core. Writes nothing."""
+    out("== Apple PMU check (READ ONLY; the probe never writes the PMU), boot core")
+    vals = {}
+    for n in ("PMCR0", "PMCR1", "CNTFRQ_EL0"):
+        v, err = pr.mrs(n)
+        vals[n] = v
+        out("%-10s %s" % (n, "FAULTED (%s)" % err if v is None else "= 0x%016x" % v))
+        if v is not None:
+            rec["regs"][n] = "0x%x" % v
+        else:
+            rec["faulted"][n] = err
+    c0, _ = pr.mrs("CNTPCT_EL0")
+    a, ea = pr.mrs("PMC0")
+    delay()
+    b, eb = pr.mrs("PMC0")
+    c1, _ = pr.mrs("CNTPCT_EL0")
+    out("PMC0 samples: %s then %s (CNTPCT %s then %s)" % tuple("?" if x is None else "0x%x" % x for x in (a, b, c0, c1)))
+    text, per_ms, ratio = pmu_verdict(vals["PMCR0"], vals["PMCR1"], a, b, c0, c1, vals["CNTFRQ_EL0"])
+    out("PMC0 verdict: " + text)
+    rec["pmu"] = {"pmc0_samples": [a, b], "cntpct_samples": [c0, c1], "advances": a is not None and b is not None and a != b,
+                  "cycles_per_ms": per_ms, "ratio_vs_cntpct": ratio, "verdict": text}
+
+
+def run(p, u, out, guard_on, guard_off, el1=False, delay=None):
     rec = {"regs": {}, "faulted": {}, "mode": "el1" if el1 else "readback-only", "cores_touched": "boot core only"}
     pr = None
     guard_set = False
@@ -126,6 +180,7 @@ def run(p, u, out, guard_on, guard_off, el1=False):
             out("HACR_EL2 cannot be read here -> stop, nothing written")
             rec["stopped"] = "HACR_EL2 unreadable"
             return rec
+        pmu_check(pr, out, rec, delay or (lambda: time.sleep(0.002)))
         old = vals["HACR_EL2"]
         wrote = True                            # before the write: a half-done write is restored too
         werr = pr.msr("HACR_EL2", old | HACR_PMU)
@@ -180,6 +235,7 @@ def run(p, u, out, guard_on, guard_off, el1=False):
 def dry_run(out, el1=False):
     out("hacr_probe DRY RUN: no proxy call is made")
     out("would, on the boot core (stop before any write unless CurrentEL == 2): read HACR_EL2 (S3_4_C1_C1_7), ESR_EL2, AFSR1_EL2")
+    out("then READ ONLY: PMCR0 (S3_1_C15_C0_0), PMCR1 (S3_1_C15_C1_0), PMC0 (S3_2_C15_C0_0) twice around a short delay, CNTPCT / CNTFRQ: does PMC0 advance, at what rate")
     out("then HACR_EL2 |= 1<<56, read it back, report which bits stuck, ALWAYS write the old value back")
     out("then %s" % ("an EL1 `mrs PMCCNTR_EL0` through el1_call under the exception guard, ESR_EL2 / AFSR1_EL2 afterwards" if el1 else
                      "nothing more (--el1 not given: readback only)"))
@@ -207,7 +263,12 @@ def main(argv=None):
     p = M1N1Proxy(iface, debug=False)
     bootstrap_port(iface, p)
     u = ProxyUtils(p)
-    rec = run(p, u, out, GUARD.SKIP | GUARD.SILENT, GUARD.OFF, a.el1)
+    def delay():
+        try:
+            p.udelay(2000)                       # [hypothesis] M1N1Proxy.udelay(usec) exists; else the host-side sleep (USB latency dominates anyway)
+        except Exception:
+            time.sleep(0.002)
+    rec = run(p, u, out, GUARD.SKIP | GUARD.SILENT, GUARD.OFF, a.el1, delay)
     jpath = os.path.splitext(a.out)[0] + ".json"
     with open(jpath, "w") as jf:
         json.dump(rec, jf, indent=1, sort_keys=True)
