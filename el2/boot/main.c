@@ -263,6 +263,11 @@ static void hvc_console_write(void *ctx, const uint8_t *bytes, unsigned len)
 
 static struct wel2_hvc_counters g_hvc_cnt;      /* WEL2_CONSOLE_WRITE counts (handle_hvc holds the big lock) */
 
+uint64_t hvc_guest_exc_count(void)
+{
+    return g_hvc_cnt.guest_exc;
+}
+
 static void hvc_stats_fill(void *ctx, struct wel2_stats *out)
 {
     (void)ctx;
@@ -270,26 +275,21 @@ static void hvc_stats_fill(void *ctx, struct wel2_stats *out)
     catch_stats_fill(out);
 }
 
-/* WEL2_REPORT_EXC: the line to every console sink, the registers big on the panel, and the last-error text. */
+/* WEL2_REPORT_EXC (the first WEL2_EXC_REPORT_MAX only, hvc_vendor.c): the line to every console sink, the registers on the panel.
+ * With the catch area on, the area shows them and LAST ERROR is left alone; without it they go to LAST ERROR as an automatic text
+ * (kind 1), which a later fatal() always replaces: a guest exception must never hide the reason of the layer's own death. */
 static void hvc_guest_exc(void *ctx, const struct wel2_guest_exc *e, const char *line, unsigned n)
 {
-    char l1[WEL2_EXC_PANEL_MAX], l2[WEL2_EXC_PANEL_MAX], err[WEL2_FB_ERR_MAX];
-    unsigned k = 0;
+    char row[WEL2_EXC_PANEL_MAX];
 
     (void)ctx;
     (void)n;
     puts_(line);
     puts_("\n");
-    wel2_hvc_exc_panel(e, l1, sizeof(l1), l2, sizeof(l2));
-    wel2_fb_catch_guest_exc(&g_fb, l1, l2);
-    for (const char *p = l1; *p && k + 1 < sizeof(err); p++)
-        err[k++] = *p;
-    if (k + 1 < sizeof(err))
-        err[k++] = ' ';
-    for (const char *p = l2; *p && k + 1 < sizeof(err); p++)
-        err[k++] = *p;
-    err[k] = 0;
-    wel2_fb_set_error(&g_fb, err);
+    wel2_hvc_exc_panel(e, row, sizeof(row));
+    wel2_fb_catch_guest_exc(&g_fb, row);
+    if (!g_fb.catch_on)
+        wel2_fb_set_error_auto(&g_fb, row);
 }
 
 static unsigned hvc_core_id(void *ctx)
@@ -1449,7 +1449,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     }
     if (g_catch) {
         g_hcr |= WEL2_HCR_CATCH;
-        wel2_fb_catch_enable(&g_fb);            /* before the hand-over: the band then includes the catch area */
+        wel2_fb_catch_enable(&g_fb);            /* no-op when stage1.c already decided (it may have declined: then no area, logging stays) */
         puts_("Watari EL2: wel2.catch=1: HCR_EL2.TIDCP|TACR set; PMU / debug / IMPDEF / ACTLR_EL1 accesses are caught (RAZ/WI)\n");
         catch_cpu_init(true);
     }

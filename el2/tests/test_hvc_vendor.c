@@ -387,7 +387,7 @@ static void t_report_exc(void)
 {
     struct wel2_hvc_ops o = ops();
     uint64_t x[6] = { WEL2_REPORT_EXC, 0x02000000u, 0xfffff800012345ull, 0xdeadbeef00ull, 0x600003c5u, WEL2_EXC_SYNC };
-    char l1[WEL2_EXC_PANEL_MAX], l2[WEL2_EXC_PANEL_MAX];
+    char l1[WEL2_EXC_PANEL_MAX];
 
     reset();
     memset(&g_cnt, 0, sizeof(g_cnt));
@@ -415,9 +415,11 @@ static void t_report_exc(void)
         CHECK_EQ(g_cnt.guest_exc, 2);
     }
     /* the panel rows */
-    wel2_hvc_exc_panel(&g_exc, l1, sizeof(l1), l2, sizeof(l2));
-    CHECK(!strcmp(l1, "GUEST EXCEPTION T7 ESR 0x96000045 EC 0x25"));
-    CHECK(!strcmp(l2, "ELR 0x0000000000001000 FAR 0x0000000000002000"));
+    wel2_hvc_exc_panel(&g_exc, l1, sizeof(l1));
+    CHECK(!strcmp(l1, "GUEST EXCEPTION ESR 0x96000045 ELR 0x0000000000001000 FAR 0x0000000000002000"));
+    CHECK(strlen(l1) < WEL2_EXC_PANEL_MAX);
+    wel2_hvc_exc_panel(&g_exc, l1, 20);                     /* cut and terminated */
+    CHECK_EQ(strlen(l1), 19);
     /* WEL2_STATS carries the counter */
     {
         struct wel2_stats st;
@@ -427,6 +429,34 @@ static void t_report_exc(void)
         CHECK_EQ(y[0], 0);
         memcpy(&st, &g_ram[0x400], sizeof(st));
         CHECK_EQ(st.guest_exc, 2);
+    }
+}
+
+/* A guest that faults in a loop: every call is counted, only the first WEL2_EXC_REPORT_MAX reach the sinks. */
+static void t_report_exc_rate_limit(void)
+{
+    struct wel2_hvc_ops o = ops();
+
+    reset();
+    memset(&g_cnt, 0, sizeof(g_cnt));
+    g_exc_calls = 0;
+    o.guest_exc = f_exc;
+    for (unsigned i = 0; i < 100; i++) {
+        uint64_t x[6] = { WEL2_REPORT_EXC, 0x02000000u, 0x1000 + i, 0, 0, WEL2_EXC_SYNC };
+
+        CHECK(wel2_hvc_vendor(&o, x));
+        CHECK_EQ(x[0], WEL2_HVC_SUCCESS);                    /* the guest never sees a difference */
+    }
+    CHECK_EQ(g_exc_calls, WEL2_EXC_REPORT_MAX);
+    CHECK_EQ(g_exc.elr, 0x1000 + WEL2_EXC_REPORT_MAX - 1);   /* the last one that was printed */
+    CHECK_EQ(g_cnt.guest_exc, 100);                          /* all counted */
+    {
+        struct wel2_stats st;
+        uint64_t y[6] = { WEL2_STATS, RAM_BASE + 0x400, sizeof(st), 0 };
+
+        CHECK(wel2_hvc_vendor(&o, y));
+        memcpy(&st, &g_ram[0x400], sizeof(st));
+        CHECK_EQ(st.guest_exc, 100);                         /* ... and reported in WEL2_STATS */
     }
 }
 
@@ -469,6 +499,7 @@ int main(void)
     RUN(t_console_all_bytes);
     RUN(t_missing_sinks);
     RUN(t_report_exc);
+    RUN(t_report_exc_rate_limit);
     RUN(t_report_exc_fallback);
     TESTS_DONE();
 }

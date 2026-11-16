@@ -11,6 +11,7 @@
 
 bool g_catch;                           // wel2.catch=1|0; default on the M1, off on QEMU (main.c)
 static struct wel2_catch_tab g_tab;     // under the big lock (el2_exception)
+static struct wel2_catch_cpu g_ccpu[MAX_CPUS];   // per-core emulation state (OS lock), same lock
 
 // Every core, before it enters the guest: MDCR_EL2 |= the trap bits. Only ORed in: HPMN and everything else keep the value
 // the firmware left. With HCR_EL2.E2H = 1 an EL2 access to MDCR_EL2 is MDCR_EL2 itself (only the *_EL1 names are redirected).
@@ -33,20 +34,46 @@ void catch_cpu_init(bool log)
 bool catch_trap(struct frame *f)
 {
     struct wel2_sysreg_enc e;
+    struct wel2_catch_cpu *cc = &g_ccpu[this_cpu() < MAX_CPUS ? this_cpu() : 0];
     unsigned idx = 0;
+    char line[WEL2_CATCH_LINE_MAX];
 
     if (!g_catch || !wel2_catch_decode(f->esr & 0x1ffffff, &e) || wel2_catch_classify(&e) == WEL2_CATCH_NONE)
         return false;
-    if (wel2_catch_record(&g_tab, &e, f->elr, this_cpu(), &idx) == WEL2_CATCH_REC_NEW) {
-        char line[WEL2_CATCH_LINE_MAX];
-
+    switch (wel2_catch_record(&g_tab, &e, f->elr, this_cpu(), &idx)) {
+    case WEL2_CATCH_REC_NEW:
         wel2_catch_format(line, sizeof(line), "CATCH", &e, f->elr, this_cpu(), 1);
+        break;
+    case WEL2_CATCH_REC_OVERFLOW:                   // the table is full: still say it, rate limited (WEL2_CATCH_OVF_LINES)
+        wel2_catch_format_overflow(line, sizeof(line), &e, f->elr, this_cpu());
+        break;
+    case WEL2_CATCH_REC_OVERFLOW_CAP:
+        {
+            const char *m = WEL2_CATCH_OVF_NOTICE;
+            unsigned k = 0;
+
+            while (m[k] && k + 1 < sizeof(line)) {
+                line[k] = m[k];
+                k++;
+            }
+            line[k] = 0;
+        }
+        break;
+    default:
+        line[0] = 0;
+        break;
+    }
+    if (line[0]) {
         puts_(line);
         puts_("\n");
         wel2_fb_catch_note(&g_fb, line);
     }
-    if (e.rd && e.rt != 31)
-        f->x[e.rt] = wel2_catch_value(&e);
+    if (e.rd) {
+        if (e.rt != 31)
+            f->x[e.rt] = wel2_catch_read(cc, &e);
+    } else {
+        wel2_catch_write(cc, &e, e.rt == 31 ? 0 : f->x[e.rt]);
+    }
     f->elr += 4;
     return true;
 }
