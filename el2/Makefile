@@ -11,6 +11,7 @@ TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif i
 .PHONY: test clean
 test: $(addprefix $(BUILD)/test_,$(TESTS)) $(BUILD)/fdt_m1_dump
 	@set -e; for t in $(addprefix $(BUILD)/test_,$(TESTS)); do ./$$t; done
+	@$(CC) $(WARN) -DWEL2_INJECT_HOST boot/inject_undef.c boot/test_inject_undef.c -o $(BUILD)/test_inject_undef && ./$(BUILD)/test_inject_undef
 	@# T6b: smoke run of the host dump tool on the fixture the FDT test wrote (never prints identifying properties)
 	@./$(BUILD)/fdt_m1_dump $(BUILD)/fx_j293.dtb > $(BUILD)/fx_j293.out
 	@grep -q 'cpu 7 reg=0x10103' $(BUILD)/fx_j293.out && grep -q 'framebuffer base=' $(BUILD)/fx_j293.out
