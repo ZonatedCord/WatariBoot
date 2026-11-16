@@ -16,6 +16,18 @@ static struct wel2_catch_cpu g_ccpu[MAX_CPUS];   // per-core emulation state (OS
 static struct wel2_catch_cpu g_gpmu;             // the ONE virtual PMU of wel2.vpmu=global (all cores), same lock
 uint32_t g_vpmu = WEL2_VPMU_GLOBAL;              // wel2.vpmu flags (main.c parses the argument)
 
+// PMUSERENR_EL0 exists only with FEAT_PMUv3: ID_AA64DFR0_EL1.PMUVer [11:8] is 0 (none) or 0xF (IMPLEMENTATION DEFINED PMU)
+// otherwise [verified: Arm ARM D24.2 ID_AA64DFR0_EL1]. On a core without it (the M1 [hypothesis]) an EL2 write of it would be
+// UNDEFINED, so the mirror below is skipped there.
+static bool hw_has_pmuv3(void)
+{
+    uint64_t d;
+
+    __asm__ volatile("mrs %0, id_aa64dfr0_el1" : "=r"(d));
+    d = (d >> 8) & 0xf;
+    return d != 0 && d != 0xf;
+}
+
 // Every core, before it enters the guest: MDCR_EL2 |= the trap bits. Only ORed in: HPMN and everything else keep the value
 // the firmware left. With HCR_EL2.E2H = 1 an EL2 access to MDCR_EL2 is MDCR_EL2 itself (only the *_EL1 names are redirected).
 // The read-back shows which bits stuck: a trap bit that is RES0 on this CPU (e.g. TPM without a PMU) reads back as 0 [hypothesis].
@@ -26,7 +38,7 @@ void catch_cpu_init(bool log)
     g_gpmu.vflags = g_vpmu;
     for (unsigned i = 0; i < MAX_CPUS; i++)
         g_ccpu[i].vflags = g_vpmu;
-    if ((g_vpmu & WEL2_VPMU_UALL) && !(g_vpmu & WEL2_VPMU_NOUSER) && (g_catch_mask & WEL2_CATCH_G_PMU))
+    if ((g_vpmu & WEL2_VPMU_UALL) && !(g_vpmu & WEL2_VPMU_NOUSER) && (g_catch_mask & WEL2_CATCH_G_PMU) && hw_has_pmuv3())
         __asm__ volatile("msr pmuserenr_el0, %0" : : "r"(0xfull));
     __asm__ volatile("mrs %0, mdcr_el2" : "=r"(before));
     __asm__ volatile("msr mdcr_el2, %0; isb" : : "r"(before | wel2_catch_mdcr_bits(g_catch_mask)));
@@ -101,7 +113,7 @@ bool catch_trap(struct frame *f)
     }
     // The hardware PMUSERENR_EL0 of this core follows the virtual one: with EN = 0 an EL0 read of PMCCNTR_EL0 is UNDEFINED at EL1
     // (the process dies) even though the guest enabled it; with EN = 1 it reaches us through MDCR_EL2.TPM and is answered above.
-    if (wel2_catch_classify(&e) == WEL2_CATCH_PMU && !(g_vpmu & (WEL2_VPMU_NOUSER | WEL2_VPMU_UALL))) {
+    if (wel2_catch_classify(&e) == WEL2_CATCH_PMU && !(g_vpmu & (WEL2_VPMU_NOUSER | WEL2_VPMU_UALL)) && hw_has_pmuv3()) {
         uint64_t u = cc->pmuserenr;
 
         __asm__ volatile("msr pmuserenr_el0, %0" : : "r"(u));
