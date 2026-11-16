@@ -302,6 +302,18 @@ bool wel2_vpmu_parse(const char *val, uint32_t *flags, const char **end)
 			f |= WEL2_VPMU_UNDEF;
 		} else if (tok_is(p, n, "uall")) {
 			f |= WEL2_VPMU_UALL;
+		} else if (tok_is(p, n, "src=pmc0")) {
+			f = (f & ~WEL2_VPMU_SRC_TIMER) | WEL2_VPMU_SRC_PMC0;
+		} else if (tok_is(p, n, "src=timer")) {
+			f = (f & ~WEL2_VPMU_SRC_PMC0) | WEL2_VPMU_SRC_TIMER;
+		} else if (tok_is(p, n, "nosync")) {
+			f |= WEL2_VPMU_NOSYNC;
+		} else if (tok_is(p, n, "sync")) {
+			f &= ~WEL2_VPMU_NOSYNC;
+		} else if (tok_is(p, n, "hiwater")) {
+			f |= WEL2_VPMU_HIWATER;
+		} else if (tok_is(p, n, "run")) {
+			f |= WEL2_VPMU_RUN;
 		} else if (tok_is(p, n, "n6")) {
 			f |= WEL2_VPMU_N6;
 		} else {

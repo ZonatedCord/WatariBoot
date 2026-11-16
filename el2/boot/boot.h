@@ -77,6 +77,7 @@ extern bool g_tid3;                /* idreg.c: HCR_EL2.TID3 set */
 extern unsigned g_idreg_n;         /* idreg.c: ID-register reads emulated */
 bool idreg_trap(struct frame *f);  /* idreg.c: a trapped read of the TID3 group (EC 0x18) */
 extern uint32_t g_vpmu;            /* catch.c: wel2.vpmu flags (WEL2_VPMU_*) */
+extern bool g_vpmu_m1;             /* catch.c: the M1 platform (the Apple PMU registers exist; default PMCCNTR source = PMC0). Set by main.c */
 extern uint32_t g_catch_mask;      /* catch.c: enabled groups (WEL2_CATCH_G_*), 0 when g_catch is false */
 extern bool g_catch;               /* catch.c: wel2.catch=1 (default on the M1): HCR_EL2.TIDCP|TACR and MDCR_EL2 trap bits set */
 struct wel2_stats;

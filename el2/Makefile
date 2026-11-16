@@ -5,8 +5,8 @@ CC      ?= clang
 WARN    := -std=c11 -Wall -Wextra -Werror
 INC     := -Iinclude
 BUILD   := build
-LIBSRC  := vgic/vgic.c vgic/vcif.c vgic/intr_map.c vgic/pirq.c vgic/pirq_guard.c vgic/pirq_aic.c vgic/v2m.c vgic/ram_map.c vgic/pt.c vgic/maps.c vgic/uart.c vgic/fb.c vgic/cpu_start.c vgic/apple_fiq.c vgic/idreg_tbl.c vgic/guest_place.c vgic/fdt_build.c vgic/pmlog.c vgic/sysreg_catch.c
-TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif intr_map ram_map pirq_guard pirq_aic v2m pirq_eoi pt core_index uart_s5l fb fdt_m1 cpu_start apple_fiq hvc_vendor plat idreg chk guest_place fdt_build vmpidr pmlog sysreg_catch
+LIBSRC  := vgic/vgic.c vgic/vcif.c vgic/intr_map.c vgic/pirq.c vgic/pirq_guard.c vgic/pirq_aic.c vgic/v2m.c vgic/ram_map.c vgic/pt.c vgic/maps.c vgic/uart.c vgic/fb.c vgic/cpu_start.c vgic/apple_fiq.c vgic/idreg_tbl.c vgic/guest_place.c vgic/fdt_build.c vgic/pmlog.c vgic/sysreg_catch.c vgic/vpmu_pmc0.c
+TESTS   := vgic_dist vgic_redist vgic_delivery vgic_sgi vgic_smp vgic_lpi vcif intr_map ram_map pirq_guard pirq_aic v2m pirq_eoi pt core_index uart_s5l fb fdt_m1 cpu_start apple_fiq hvc_vendor plat idreg chk guest_place fdt_build vmpidr pmlog sysreg_catch vpmu_pmc0
 
 .PHONY: test clean
 test: $(addprefix $(BUILD)/test_,$(TESTS)) $(BUILD)/fdt_m1_dump
@@ -81,6 +81,9 @@ $(BUILD)/pmlog.o: vgic/pmlog.c include/wel2_pmlog.h | $(BUILD)
 $(BUILD)/sysreg_catch.o: vgic/sysreg_catch.c include/wel2_sysreg_catch.h | $(BUILD)
 	$(CC) $(WARN) -ffreestanding -O2 $(INC) -c $< -o $@
 
+$(BUILD)/vpmu_pmc0.o: vgic/vpmu_pmc0.c include/wel2_vpmu_pmc0.h include/wel2_sysreg_catch.h include/wel2_apple_sysreg.h | $(BUILD)
+	$(CC) $(WARN) -ffreestanding -O2 $(INC) -c $< -o $@
+
 $(BUILD)/fdt_build.o: vgic/fdt_build.c include/wel2_fdt_build.h include/wel2_maps.h | $(BUILD)
 	$(CC) $(WARN) -ffreestanding -O2 $(INC) -c $< -o $@
 
@@ -94,7 +97,7 @@ $(BUILD)/fdt_m1.o: boot/fdt_m1.c boot/fdt_m1.h boot/fdt.h include/wel2_fb.h | $(
 $(BUILD)/fdt_m1_dump: ../tools/m3a/fdt_m1_dump.c $(BUILD)/fdt_m1.o $(BUILD)/fdt.o $(BUILD)/fb.o $(BUILD)/ram_map.o | $(BUILD)
 	$(CC) $(WARN) -O1 $(INC) -Iboot ../tools/m3a/fdt_m1_dump.c $(BUILD)/fdt_m1.o $(BUILD)/fdt.o $(BUILD)/fb.o $(BUILD)/ram_map.o -o $@
 
-LIBOBJ := $(BUILD)/hvc_vendor.o $(BUILD)/fdt_m1.o $(BUILD)/uart.o $(BUILD)/fb.o $(BUILD)/fdt.o $(BUILD)/vgic.o $(BUILD)/vcif.o $(BUILD)/intr_map.o $(BUILD)/pirq.o $(BUILD)/pirq_guard.o $(BUILD)/pirq_aic.o $(BUILD)/v2m.o $(BUILD)/ram_map.o $(BUILD)/pt.o $(BUILD)/maps.o $(BUILD)/cpu_start.o $(BUILD)/apple_fiq.o $(BUILD)/idreg_tbl.o $(BUILD)/guest_place.o $(BUILD)/fdt_build.o $(BUILD)/pmlog.o $(BUILD)/sysreg_catch.o
+LIBOBJ := $(BUILD)/hvc_vendor.o $(BUILD)/fdt_m1.o $(BUILD)/uart.o $(BUILD)/fb.o $(BUILD)/fdt.o $(BUILD)/vgic.o $(BUILD)/vcif.o $(BUILD)/intr_map.o $(BUILD)/pirq.o $(BUILD)/pirq_guard.o $(BUILD)/pirq_aic.o $(BUILD)/v2m.o $(BUILD)/ram_map.o $(BUILD)/pt.o $(BUILD)/maps.o $(BUILD)/cpu_start.o $(BUILD)/apple_fiq.o $(BUILD)/idreg_tbl.o $(BUILD)/guest_place.o $(BUILD)/fdt_build.o $(BUILD)/pmlog.o $(BUILD)/sysreg_catch.o $(BUILD)/vpmu_pmc0.o
 
 $(BUILD)/test_%: tests/test_%.c tests/test.h tests/fake_pirq.h tests/fake_aic.h tests/fdt_build.h tests/fake_apple_sysreg.h tests/fx_j293.h $(LIBOBJ) | $(BUILD)
 	$(CC) $(WARN) -O1 -g $(INC) -pthread -Itests -Iboot $< $(LIBOBJ) -o $@

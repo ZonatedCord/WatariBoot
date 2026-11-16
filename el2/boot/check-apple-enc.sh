@@ -58,6 +58,9 @@ ipi_sr wr 3 5 15 1 1
 ipi_rr_global wr 3 5 15 0 1
 pmcr0 rd 3 1 15 0 0
 pmcr0 wr 3 1 15 0 0
+pmcr1 rd 3 1 15 1 0
+pmcr1 wr 3 1 15 1 0
+pmc0 rd 3 2 15 0 0
 upmcr0 rd 3 7 15 0 4
 upmcr0 wr 3 7 15 0 4
 upmsr rd 3 7 15 6 4

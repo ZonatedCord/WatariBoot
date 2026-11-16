@@ -31,6 +31,9 @@ SR_WR(ipi_sr,         "S3_5_C15_C1_1")
 SR_WR(ipi_rr_global,  "S3_5_C15_C0_1")      /* write only */
 SR_RD(pmcr0,          "S3_1_C15_C0_0")
 SR_WR(pmcr0,          "S3_1_C15_C0_0")
+SR_RD(pmcr1,          "S3_1_C15_C1_0")
+SR_WR(pmcr1,          "S3_1_C15_C1_0")
+SR_RD(pmc0,           "S3_2_C15_C0_0")      /* read only here: the layer never writes the hardware counter */
 SR_RD(upmcr0,         "S3_7_C15_C0_4")
 SR_WR(upmcr0,         "S3_7_C15_C0_4")
 SR_RD(upmsr,          "S3_7_C15_C6_4")      /* read only */
@@ -47,6 +50,8 @@ uint64_t apple_sr_rd_cnthv_ctl(void);
 uint64_t apple_sr_rd_cnthp_ctl(void);
 uint64_t apple_sr_rd_ipi_sr(void);
 uint64_t apple_sr_rd_pmcr0(void);
+uint64_t apple_sr_rd_pmcr1(void);
+uint64_t apple_sr_rd_pmc0(void);
 uint64_t apple_sr_rd_upmcr0(void);
 uint64_t apple_sr_rd_upmsr(void);
 uint64_t apple_sr_rd_ich_hcr(void);
@@ -64,6 +69,8 @@ static uint64_t real_rd(void *ctx, enum apple_sr id)
 	case APPLE_SR_CNTHP_CTL:      return apple_sr_rd_cnthp_ctl();
 	case APPLE_SR_IPI_SR:         return apple_sr_rd_ipi_sr();
 	case APPLE_SR_PMCR0:          return apple_sr_rd_pmcr0();
+	case APPLE_SR_PMCR1:          return apple_sr_rd_pmcr1();
+	case APPLE_SR_PMC0:           return apple_sr_rd_pmc0();
 	case APPLE_SR_UPMCR0:         return apple_sr_rd_upmcr0();
 	case APPLE_SR_UPMSR:          return apple_sr_rd_upmsr();
 	case APPLE_SR_ICH_HCR:        return apple_sr_rd_ich_hcr();
@@ -85,10 +92,11 @@ static void real_wr(void *ctx, enum apple_sr id, uint64_t v)
 	case APPLE_SR_IPI_SR:         apple_sr_wr_ipi_sr(v); break;
 	case APPLE_SR_IPI_RR_GLOBAL:  apple_sr_wr_ipi_rr_global(v); break;
 	case APPLE_SR_PMCR0:          apple_sr_wr_pmcr0(v); break;
+	case APPLE_SR_PMCR1:          apple_sr_wr_pmcr1(v); break;
 	case APPLE_SR_UPMCR0:         apple_sr_wr_upmcr0(v); break;
 	case APPLE_SR_ICH_HCR:        apple_sr_wr_ich_hcr(v); break;
 	case APPLE_SR_HACR_EL2:       apple_sr_wr_hacr_el2(v); break;
-	default:                      break;        /* UPMSR and ICH_MISR are read-only */
+	default:                      break;        /* PMC0, UPMSR and ICH_MISR are read-only */
 	}
 }
 

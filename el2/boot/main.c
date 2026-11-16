@@ -1166,7 +1166,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
  *   wel2.hold=1          do not reset at the end of a step or of the guest (wel2.step=2, the guest's SYSTEM_RESET): paint the final
  *                        state, print the HOLD message and park, so the screen can be photographed (not wel2.step=1)
  *   wel2.hacr=<hex mask>   HACR_EL2 |= mask on every core (default on the M1: 0x100000000000000 = bit 56, routes the PMUv3 accesses to EL2; 0 = off; ignored off the M1)
- *   wel2.vpmu=percore|global[,nouser][,frq1][,n6]   virtual PMU of catch mode (default global: one always-running PMCCNTR = scaled CNTPCT shared by all cores)
+ *   wel2.vpmu=percore|global[,nouser][,frq1][,n6][,src=pmc0|src=timer][,nosync][,hiwater][,run]   virtual PMU of catch mode (default global; PMCCNTR source: the M1's own cycle counter PMC0 on the M1, CNTPCT scaled to 1 GHz elsewhere; sync = every core starts at the boot core's value)
  *   wel2.catch=0|1|0x<mask>|pmu,dbg,impdef,actlr   catch mode (1 = all groups; mask bit0 PMU, bit1 debug, bit2 IMPDEF, bit3 ACTLR; default on the M1: pmu): trap PMU / debug / IMPLEMENTATION DEFINED registers and ACTLR_EL1 (HCR_EL2.TIDCP|TACR, MDCR_EL2.TPM|TPMCR|TDA|TDOSA|TDRA),
  *                        answer them RAZ/WI and log the first access of each distinct encoding (default: on on the M1, off on QEMU)
  *   wel2.tid3=1|0        HCR_EL2.TID3: emulate the ID register group, GIC forced to 1 (default: on on the M1, off on QEMU)
@@ -1222,7 +1222,7 @@ static void parse_bootargs(uint64_t fdt)
             if (wel2_vpmu_parse(p + 10, &v, 0))
                 g_vpmu = v;
             else
-                puts_("Watari EL2: WARNING: bad wel2.vpmu value (percore|global[,nouser][,frq1][,n6]), keeping the default\n");
+                puts_("Watari EL2: WARNING: bad wel2.vpmu value (percore|global[,nouser][,frq1][,n6][,src=pmc0|timer][,nosync][,hiwater][,run]), keeping the default\n");
         } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'h' && p[6] == 'a' && p[7] == 'c' &&
                    p[8] == 'r' && p[9] == '=') {
             uint64_t hm;
@@ -1444,6 +1444,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
         g_catch = true;                         /* M3a: bootmgr's UNDEF at EL1 was invisible; wel2.catch=0 overrides */
         g_hacr = WEL2_HACR_PMU;                 /* HACR_EL2[56]: the PMUv3 accesses trap to EL2 instead of UNDEF at EL1 [hypothesis]; wel2.hacr=0 overrides */
         g_catch_mask = WEL2_CATCH_G_PMU;        /* real M1: debug / ACTLR / IMPDEF registers exist and must reach the hardware (RAZ/WI broke Windows) */
+        g_vpmu_m1 = true;                       /* wel2.vpmu src default = pmc0 (docs/design/watari-el2/pmc0-vpmu.md); QEMU keeps the timer source and never touches the Apple registers */
         g_tid3 = true;                          /* DESIGN 5.4: EDK2's GIC code and Windows read ID_AA64PFR0_EL1.GIC; wel2.tid3=0 overrides */
     }
     parse_bootargs(fdt);

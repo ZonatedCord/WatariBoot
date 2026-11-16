@@ -112,7 +112,12 @@ struct wel2_catch_cpu {
 #define WEL2_VPMU_N6     8u      /* PMCR_EL0.N reads 6 (the event counters stay RAZ/WI) */
 #define WEL2_VPMU_UALL   16u     /* the hardware PMUSERENR_EL0 of every core is 0xF from the start (EL0 accesses reach EL2 via TPM instead of UNDEF at EL1) */
 #define WEL2_VPMU_UNDEF  32u     /* bench only: a trapped PMU access is reflected to guest EL1 as UNDEFINED (EC 0x00), like the M1 (boot/inject_undef.c) */
-/* Parse wel2.vpmu= (comma list percore|global|nouser|frq1|n6; default global). false on a bad value (flags untouched). */
+#define WEL2_VPMU_SRC_PMC0  64u   /* src=pmc0: PMCCNTR from the core's own IMPLEMENTATION DEFINED cycle counter (include/wel2_vpmu_pmc0.h) */
+#define WEL2_VPMU_SRC_TIMER 128u  /* src=timer: PMCCNTR from CNTPCT (the default off the M1); neither bit = the platform default */
+#define WEL2_VPMU_NOSYNC    256u  /* nosync: do not start every core's counter at the boot core's value (sync is the default) */
+#define WEL2_VPMU_HIWATER   512u  /* hiwater: a core's counter never reads below the highest value any core returned (bench option) */
+#define WEL2_VPMU_RUN       1024u /* run: the PMC0 counter runs whatever PMCR.E / PMCNTENSET.C say (the timer source always does) */
+/* Parse wel2.vpmu= (comma list percore|global|nouser|frq1|n6|src=pmc0|src=timer|nosync|sync|hiwater|run; default global). false on a bad value (flags untouched). */
 bool wel2_vpmu_parse(const char *val, uint32_t *flags, const char **end);
 #define WEL2_PMCR_E     (1u << 0)
 #define WEL2_PMCR_C     (1u << 2)

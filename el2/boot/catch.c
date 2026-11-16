@@ -9,6 +9,7 @@
 #include "wel2_hvc.h"
 #include "wel2_sysreg_catch.h"
 #include "wel2_apple_sysreg.h"
+#include "wel2_vpmu_pmc0.h"
 
 uint64_t g_hacr;                        // wel2.hacr mask ORed into HACR_EL2 on every core (M1: bit 56, main.c); 0 = never touched
 static uint64_t g_hacr_rb[MAX_CPUS];    // HACR_EL2 read back per core after the write (0 = not programmed)
@@ -25,6 +26,20 @@ static struct wel2_catch_tab g_tab;     // under the big lock (el2_exception)
 static struct wel2_catch_cpu g_ccpu[MAX_CPUS];   // per-core emulation state (OS lock; the PMU too when wel2.vpmu=percore), same lock
 static struct wel2_catch_cpu g_gpmu;             // the ONE virtual PMU of wel2.vpmu=global (all cores), same lock
 uint32_t g_vpmu = WEL2_VPMU_GLOBAL;              // wel2.vpmu flags (main.c parses the argument)
+bool g_vpmu_m1;                                  // the M1: Apple PMU registers exist, the PMCCNTR source defaults to PMC0 (main.c)
+
+// PMC0-backed PMCCNTR (docs/design/watari-el2/pmc0-vpmu.md). The hardware is reached only through apple_sysreg_real; off the M1 nothing here runs.
+static struct wel2_vpmu_sh g_vsh;                // shared by all cores, under the big lock
+static struct wel2_vpmu_core g_vcore[MAX_CPUS];  // per-core offset / state, each touched only by its own core (and the stats at the end)
+static uint64_t g_vper_ms[MAX_CPUS];             // PMC0 cycles per millisecond measured at init (the panel's sanity number)
+static int g_vboot = -1;                         // the first core to initialise: the sync reference
+
+static bool vpmu_pmc0_wanted(void)               // src=pmc0 asked for (explicitly or by the platform default) and possible
+{
+    if (!g_vpmu_m1 || !(g_vpmu & WEL2_VPMU_GLOBAL))
+        return false;
+    return (g_vpmu & WEL2_VPMU_SRC_PMC0) || !(g_vpmu & WEL2_VPMU_SRC_TIMER);
+}
 
 // PMUSERENR_EL0 exists only with FEAT_PMUv3: ID_AA64DFR0_EL1.PMUVer [11:8] is 0 (none) or 0xF (IMPLEMENTATION DEFINED PMU)
 // otherwise [verified: Arm ARM D24.2 ID_AA64DFR0_EL1]. On a core without it (the M1 [hypothesis]) an EL2 write of it would be
@@ -44,8 +59,11 @@ static bool hw_has_pmuv3(void)
 static void status_draw(void)
 {
     char line[WEL2_CATCH_LINE_MAX];
+    unsigned k, b = g_vboot >= 0 ? (unsigned)g_vboot : 0;
 
-    wel2_catch_status_format(line, sizeof(line), g_mdcr_stuck, g_hacr_rb[this_cpu() < MAX_CPUS ? this_cpu() : 0], g_tab.total,
+    k = wel2_vpmu_src_format(line, sizeof(line), (enum wel2_pmc0_state)g_vcore[b].state, vpmu_pmc0_wanted(), g_vper_ms[b]);
+    line[k++] = ' ';
+    wel2_catch_status_format(line + k, sizeof(line) - k, g_mdcr_stuck, g_hacr_rb[this_cpu() < MAX_CPUS ? this_cpu() : 0], g_tab.total,
                              g_have_last ? &g_last : 0);
     wel2_fb_catch_status(&g_fb, line);
     puts_("Watari EL2: catch status: ");
@@ -73,6 +91,60 @@ static void hacr_cpu_init(bool log)
     }
 }
 
+static uint64_t wait_1ms(void *ctx)             // spin about 1 ms of the system counter; returns the ticks it took
+{
+    uint64_t t0, t, frq;
+
+    (void)ctx;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
+    __asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(t0));
+    do {
+        __asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(t));
+    } while (t - t0 < (frq ? frq / 1000 : 24000));
+    return t - t0;
+}
+
+// This core: enable PMC0 at EL0 / EL1 (read-modify-write, the FIQ module's PMCR0 bits stay), check it counts, start its software offset.
+static void vpmu_core_init(bool log)
+{
+    unsigned me = this_cpu() < MAX_CPUS ? this_cpu() : 0;
+    struct wel2_pmc0_init r;
+    uint64_t frq;
+    bool boot;
+
+    if (!vpmu_pmc0_wanted())
+        return;
+    wel2_pmc0_hw_init(&apple_sysreg_real, wait_1ms, 0, &r);
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
+    big_lock();
+    g_vsh.flags = g_vpmu;
+    boot = g_vboot < 0;
+    if (boot)
+        g_vboot = (int)me;
+    wel2_vpmu_core_init(&g_vsh, &g_vcore[me], boot, r.s1, r.state);
+    g_vper_ms[me] = wel2_pmc0_per_ms(r.s1 - r.s0, r.ticks, frq);
+    big_unlock();
+    puts_("Watari EL2: vpmu: PMCR0 ");
+    puthex(r.pmcr0_before);
+    puts_(" -> ");
+    puthex(r.pmcr0_after);
+    puts_("  PMCR1 ");
+    puthex(r.pmcr1_before);
+    puts_(" -> ");
+    puthex(r.pmcr1_after);
+    puts_("  PMC0 ");
+    puthex(r.s0);
+    puts_(" -> ");
+    puthex(r.s1);
+    put_kv(" cycles/ms = ", g_vper_ms[me]);
+    puts_(r.state == WEL2_PMC0_OK ? "Watari EL2: vpmu: src=pmc0 live" :
+          r.state == WEL2_PMC0_PENDING ? "Watari EL2: vpmu: PMC0 did not move at EL2: decided at the first guest read" :
+          "Watari EL2: vpmu: PMC0 unusable: this core falls back to the timer source");
+    put_kn(" core ", me, "\n");
+    if (log)
+        status_draw();
+}
+
 void catch_cpu_init(bool log)
 {
     uint64_t before, after;
@@ -82,6 +154,7 @@ void catch_cpu_init(bool log)
         g_ccpu[i].vflags = g_vpmu;
     if (g_hacr)
         hacr_cpu_init(log);
+    vpmu_core_init(log);
     if (!g_catch) {                                  // HACR-only (wel2.catch=0): no MDCR / HCR trap bits, the status row still shows
         if (log)
             status_draw();
@@ -162,11 +235,32 @@ static bool catch_handle(struct frame *f, const struct wel2_sysreg_enc *ep)
     {
         uint64_t cnt, frq;
 
+        struct wel2_vpmu_core *vc = &g_vcore[this_cpu() < MAX_CPUS ? this_cpu() : 0];
+        bool pmc0 = false;
+        uint64_t p0 = 0;
+
         __asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(cnt));    // the shared physical counter: the cycle counter is derived from it
         __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
+        if (cc == &g_gpmu && (vc->state == WEL2_PMC0_PENDING || vc->state == WEL2_PMC0_OK)) {
+            enum wel2_pmc0_state was = (enum wel2_pmc0_state)vc->state, now;
+
+            p0 = apple_sysreg_real.rd(0, APPLE_SR_PMC0);             // read only: PMC0 is never written, stopped or zeroed
+            now = wel2_vpmu_resolve(vc, p0);
+            if (now != was) {
+                puts_(now == WEL2_PMC0_OK ? "Watari EL2: vpmu: PMC0 counts at the guest's EL: src=pmc0 live"
+                                          : "Watari EL2: vpmu: PMC0 still did not move: falling back to the timer source");
+                put_kn(" core ", this_cpu(), "\n");
+                g_status_t = 0;
+                line[0] = line[0] ? line[0] : 'R';                   // force a status redraw below (the text itself is not used)
+            }
+            pmc0 = now == WEL2_PMC0_OK;
+        }
         if (e.rd) {
             if (e.rt != 31)
-                f->x[e.rt] = wel2_catch_read(cc, &e, cnt, frq);
+                f->x[e.rt] = pmc0 && wel2_vpmu_is_ccntr(&e) ? wel2_vpmu_read(&g_vsh, vc, cc, (int)this_cpu() == g_vboot, p0)
+                                                            : wel2_catch_read(cc, &e, cnt, frq);
+        } else if (pmc0) {
+            wel2_vpmu_write(&g_vsh, vc, cc, &e, e.rt == 31 ? 0 : f->x[e.rt], p0, cnt, frq);
         } else {
             wel2_catch_write(cc, &e, e.rt == 31 ? 0 : f->x[e.rt], cnt, frq);
         }
@@ -254,6 +348,13 @@ void catch_stats(void)
         g_status_t = 0;
         status_draw();
     }
+    for (unsigned i = 0; i < MAX_CPUS; i++)
+        if (g_vcore[i].state != WEL2_PMC0_OFF) {
+            puts_("Watari EL2: stats: vpmu core ");
+            puthex(i);
+            puts_(g_vcore[i].state == WEL2_PMC0_OK ? " src=pmc0" : g_vcore[i].state == WEL2_PMC0_PENDING ? " src=pmc0 (never read)" : " src=timer (fallback)");
+            put_kv(" cycles/ms = ", g_vper_ms[i]);
+        }
     wel2_catch_format_summary(line, sizeof(line), &g_tab);
     puts_("Watari EL2: stats: ");
     puts_(line);
