@@ -298,6 +298,8 @@ bool wel2_vpmu_parse(const char *val, uint32_t *flags, const char **end)
 			f |= WEL2_VPMU_NOUSER;
 		} else if (tok_is(p, n, "frq1")) {
 			f |= WEL2_VPMU_FRQ1;
+		} else if (tok_is(p, n, "undef")) {
+			f |= WEL2_VPMU_UNDEF;
 		} else if (tok_is(p, n, "uall")) {
 			f |= WEL2_VPMU_UALL;
 		} else if (tok_is(p, n, "n6")) {

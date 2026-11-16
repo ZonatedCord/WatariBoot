@@ -4,11 +4,11 @@
     "2a07d291d919": {
       "models": {
         "claude-opus-5-5": {
-          "cache_read": 93322407,
-          "cache_write_1h": 849814,
+          "cache_read": 129381856,
+          "cache_write_1h": 932658,
           "cache_write_5m": 0,
-          "input": 642,
-          "output": 232566
+          "input": 764,
+          "output": 286122
         },
         "claude-sonnet-5-5": {
           "cache_read": 1629197,
@@ -41,6 +41,17 @@
         }
       }
     },
+    "69a49ca38bd9": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 1309201,
+          "cache_write_1h": 196406,
+          "cache_write_5m": 0,
+          "input": 34,
+          "output": 18630
+        }
+      }
+    },
     "7d8c52c0a532": {
       "models": {
         "claude-opus-5-5": {
@@ -52,6 +63,17 @@
         }
       }
     },
+    "bec19a890199": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 48452368,
+          "cache_write_1h": 352250,
+          "cache_write_5m": 0,
+          "input": 386,
+          "output": 129963
+        }
+      }
+    },
     "d40e35f8576d": {
       "models": {
         "claude-opus-5-5": {
@@ -60,6 +82,46 @@
           "cache_write_5m": 0,
           "input": 22,
           "output": 7532
+        }
+      }
+    },
+    "d4a7c8b8ce5e": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 387307,
+          "cache_write_1h": 127758,
+          "cache_write_5m": 0,
+          "input": 14,
+          "output": 5037
+        }
+      }
+    },
+    "eda6a6f2988c": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 16802279,
+          "cache_write_1h": 182500,
+          "cache_write_5m": 0,
+          "input": 212,
+          "output": 79275
+        }
+      }
+    },
+    "f849009593ac": {
+      "models": {
+        "claude-haiku-5-5": {
+          "cache_read": 4172,
+          "cache_write_1h": 0,
+          "cache_write_5m": 7004,
+          "input": 4,
+          "output": 1106
+        },
+        "claude-opus-5-5": {
+          "cache_read": 2602368,
+          "cache_write_1h": 165559,
+          "cache_write_5m": 0,
+          "input": 44,
+          "output": 28608
         }
       }
     }

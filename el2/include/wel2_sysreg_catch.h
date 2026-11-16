@@ -111,6 +111,7 @@ struct wel2_catch_cpu {
 #define WEL2_VPMU_FRQ1   4u      /* PMCCNTR = CNTPCT_EL0, 1:1, instead of a nominal 1 GHz */
 #define WEL2_VPMU_N6     8u      /* PMCR_EL0.N reads 6 (the event counters stay RAZ/WI) */
 #define WEL2_VPMU_UALL   16u     /* the hardware PMUSERENR_EL0 of every core is 0xF from the start (EL0 accesses reach EL2 via TPM instead of UNDEF at EL1) */
+#define WEL2_VPMU_UNDEF  32u     /* bench only: a trapped PMU access is reflected to guest EL1 as UNDEFINED (EC 0x00), like the M1 (boot/inject_undef.c) */
 /* Parse wel2.vpmu= (comma list percore|global|nouser|frq1|n6; default global). false on a bad value (flags untouched). */
 bool wel2_vpmu_parse(const char *val, uint32_t *flags, const char **end);
 #define WEL2_PMCR_E     (1u << 0)

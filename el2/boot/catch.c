@@ -127,6 +127,8 @@ static bool catch_handle(struct frame *f, const struct wel2_sysreg_enc *ep)
 
     if (!wel2_catch_enabled(eff_mask(), wel2_catch_classify(&e)))
         return false;
+    if ((g_vpmu & WEL2_VPMU_UNDEF) && wel2_catch_classify(&e) == WEL2_CATCH_PMU && wel2_inject_undef(f))
+        return true;                                 // bench-only: the guest sees the UNDEF of the M1 (inject_undef.c); not counted
     if ((g_vpmu & WEL2_VPMU_GLOBAL) && wel2_catch_classify(&e) == WEL2_CATCH_PMU)
         cc = &g_gpmu;                                // one PMU for all cores: a migrating thread sees one monotonic counter
     switch (wel2_catch_record(&g_tab, &e, f->elr, this_cpu(), &idx)) {

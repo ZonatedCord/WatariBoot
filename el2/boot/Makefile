@@ -17,7 +17,7 @@ ASFLAGS := --target=aarch64-none-elf -g -I../include
 
 OBJS := $(OUT)/start.o $(OUT)/util.o $(OUT)/stage1.o $(OUT)/main.o $(OUT)/gic_phys.o $(OUT)/cpuif.o $(OUT)/psci.o \
         $(OUT)/pirq_qemu.o $(OUT)/plat_qemu.o $(OUT)/plat_m1.o $(OUT)/plat_select.o $(OUT)/fdt.o $(OUT)/fdt_m1.o $(OUT)/vgic.o $(OUT)/vcif.o $(OUT)/intr_map.o $(OUT)/pirq.o $(OUT)/pirq_aic.o $(OUT)/v2m.o $(OUT)/ram_map.o $(OUT)/pt.o $(OUT)/maps.o $(OUT)/uart.o $(OUT)/fb.o \
-        $(OUT)/apple_fiq.o $(OUT)/apple_sysreg.o $(OUT)/cpu_start.o $(OUT)/hvc_vendor.o $(OUT)/idreg.o $(OUT)/catch.o $(OUT)/sysreg_catch.o $(OUT)/idreg_tbl.o $(OUT)/guest_place.o $(OUT)/fdt_build.o $(OUT)/pmlog.o $(PAYLOAD_OBJS)
+        $(OUT)/apple_fiq.o $(OUT)/apple_sysreg.o $(OUT)/cpu_start.o $(OUT)/hvc_vendor.o $(OUT)/idreg.o $(OUT)/catch.o $(OUT)/inject_undef.o $(OUT)/sysreg_catch.o $(OUT)/idreg_tbl.o $(OUT)/guest_place.o $(OUT)/fdt_build.o $(OUT)/pmlog.o $(PAYLOAD_OBJS)
 
 # The image is a PIE linked at 0 (linker.ld) and relocated by start.S: -fpie with hidden visibility and direct access
 # to external data keeps every reference PC-relative (adrp/add), so the code needs no GOT before the relocation.
