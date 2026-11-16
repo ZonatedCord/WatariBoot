@@ -51,3 +51,9 @@
   ## T21: check the CRC-32 of the RAM disk image against its trailer before registering it (a mismatch is never ignored;
   #  FALSE skips the check, for a run that cannot wait for it).
   gWatariM1TokenSpaceGuid.PcdWatariRamDiskVerify|TRUE|BOOLEAN|0x00000004
+
+  ## M3a safety net: the firmware's EL1 synchronous handler emulates (RAZ/WI) PMU, debug, AMU and RNDR system-register
+  #  accesses that raise EC 0x00 (UNDEFINED) from code that is not ours (bootmgr/winload while EDK2's vectors are still
+  #  installed), then resumes at ELR + 4. FALSE builds the stock behaviour (report, dump, dead loop).
+  #  docs/adr/draft-f01-interop-reading.md, "Runtime emulation".
+  gWatariM1TokenSpaceGuid.PcdWatariEl1SysregEmulation|TRUE|BOOLEAN|0x00000005

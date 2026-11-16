@@ -19,3 +19,9 @@ On the real M1 (2026-11-16, M3a Monday), Windows bootmgr, started by our EDK2, t
 ## Consequences
 - F-01 stays the default. This exception applies only after step 1, is recorded per use in the session diary (what was read, by whom, why), and is limited to the boot path (bootmgr, winload, early kernel/HAL).
 - [hypothesis] The Windows licence terms forbid reverse engineering "except where applicable law permits"; Art. 6 is the applicable law for EU contributors. A legal opinion should be sought before any publication beyond the repo.
+
+## Runtime emulation (added 2026-11-16, decision by Marco)
+At runtime, when the firmware's EL1 synchronous handler takes EC 0x00 (unknown/UNDEFINED) from code that is not ours (bootmgr/winload while EDK2's vectors are still installed), it may read the single 32-bit instruction word at ELR, only to decide whether it is a system-register access it can emulate. Nothing about that code is stored, logged or published except the decoded system-register encoding (op0, op1, CRn, CRm, op2, direction) and the PC. The raw instruction word and any other code bytes are never logged or printed.
+- Implemented in `edk2-apple/WatariM1Pkg/Library/WatariCpuExceptionHandlerLib/` (`WatariSysregEmu.h`, host test in `tests/`); built off with `PcdWatariEl1SysregEmulation = FALSE`.
+- Emulated groups (RAZ/WI): PMU, debug (OSLSR_EL1 reads 0x8), AMU, RNDR/RNDRRS (reads 0, NZCV set to 0b0100 = failure). Everything else keeps the report, dump and dead loop.
+- Once Windows installs its own VBAR_EL1 this path no longer applies; the EL2 catch mode covers that phase if the CPU routes the trap.

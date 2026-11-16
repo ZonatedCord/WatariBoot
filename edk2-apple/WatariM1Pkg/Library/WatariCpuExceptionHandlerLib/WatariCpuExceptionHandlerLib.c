@@ -20,6 +20,7 @@
 #include <Library/BaseLib.h>
 #include <Library/CpuExceptionHandlerLib.h>
 #include <Library/DebugLib.h>
+#include <Library/PcdLib.h>
 #include <Library/PeCoffGetEntryPointLib.h>
 #include <Library/PrintLib.h>
 #include <Library/SerialPortLib.h>
@@ -27,6 +28,7 @@
 
 #include <CpuExceptionHelpers.h>
 #include "ExceptionSupport.h"
+#include "WatariSysregEmu.h"
 
 //
 // Maximum number of characters to print to serial (UINT8s) and to console if
@@ -348,6 +350,110 @@ ArchVectorConfig (
   return EFI_SUCCESS;
 }
 
+//
+// EL1 system-register safety net (docs/adr/draft-f01-interop-reading.md, "Runtime emulation").
+//
+// When the firmware's EL1 synchronous vector takes EC 0x00 (UNDEFINED) from code that is not ours
+// (bootmgr/winload run with EDK2's VBAR_EL1 still installed), the 32-bit word at ELR is read ONLY to
+// decide whether it is an MRS/MSR (register) of an emulated group (PMU, debug, AMU, RNDR; see
+// WatariSysregEmu.h). If so the access is emulated (reads give 0, OSLSR_EL1 gives 0x8, RNDR reports
+// failure through NZCV; writes are ignored), ELR advances by 4 and the exception returns without a dump.
+// The word itself is never stored, logged or printed: the console line carries only the decoded
+// encoding and the PC. Anything else falls through to the stock report / dump / dead loop.
+//
+// Once Windows installs its own VBAR_EL1 this code no longer sees the exception; the EL2 catch mode
+// covers that phase if the CPU routes the trap there.
+//
+// Concurrency: the handler may run on several cores at once. The seen-table and its count are updated
+// without a lock on purpose; the worst outcome is a duplicate console line or a lost table entry, never a
+// wrong emulation (the emulation touches only this core's own saved context). The line counter is
+// atomic so the 32-line cap holds.
+//
+#define WATARI_EMU_SEEN_MAX  16
+#define WATARI_EMU_LINES_MAX 32
+
+STATIC UINT32  mEmuSeen[WATARI_EMU_SEEN_MAX];
+STATIC UINT32  mEmuSeenCount;
+STATIC UINT32  mEmuLines;
+
+/**
+  Tries to emulate a system-register access that raised EC 0x00. Returns TRUE if the saved context was
+  updated and the exception can simply return.
+**/
+STATIC
+BOOLEAN
+WatariTryEmulateSysreg (
+  IN EFI_SYSTEM_CONTEXT_AARCH64  *Context
+  )
+{
+  UINT32         Word;
+  UINT32         Key;
+  UINT32         Count;
+  UINT32         Idx;
+  UINT32         Line;
+  WATARI_SYSREG  R;
+  CHAR8          Buffer[MAX_PRINT_CHARS];
+  UINTN          CharCount;
+
+  if (!FixedPcdGetBool (PcdWatariEl1SysregEmulation)) {
+    return FALSE;
+  }
+
+  if (((Context->ESR >> 26) & 0x3F) != 0x00) {
+    return FALSE;
+  }
+
+  // AArch64 only (SPSR.M[4] = 0) and from EL0t, EL1t or EL1h.
+  if (((Context->SPSR & 0x10) != 0) || (((Context->SPSR & 0xF) != 0x0) && ((Context->SPSR & 0xF) != 0x4) && ((Context->SPSR & 0xF) != 0x5))) {
+    return FALSE;
+  }
+
+  if ((Context->ELR & 3) != 0) {
+    return FALSE;
+  }
+
+  // EC 0x00 is not an instruction abort, so the word at ELR was fetched and is mapped.
+  Word = *(volatile UINT32 *)(UINTN)Context->ELR;
+
+  if (!WatariSysregEmulate (Word, &Context->X0, &Context->SPSR, &R)) {
+    return FALSE;
+  }
+
+  Context->ELR += 4;
+
+  Key   = WatariSysregKey (&R);
+  Count = mEmuSeenCount;
+  for (Idx = 0; (Idx < Count) && (Idx < WATARI_EMU_SEEN_MAX); Idx++) {
+    if (mEmuSeen[Idx] == Key) {
+      return TRUE;
+    }
+  }
+
+  if (Count < WATARI_EMU_SEEN_MAX) {
+    mEmuSeen[Count] = Key;
+    mEmuSeenCount   = Count + 1;
+  }
+
+  Line = __atomic_fetch_add (&mEmuLines, 1, __ATOMIC_RELAXED);
+  if (Line < WATARI_EMU_LINES_MAX) {
+    CharCount = AsciiSPrint (
+                  Buffer,
+                  sizeof (Buffer),
+                  "EL1EMU %c S%d_%d_C%d_C%d_%d PC=0x%016lx\n",
+                  R.IsRead ? 'R' : 'W',
+                  R.Op0,
+                  R.Op1,
+                  R.Crn,
+                  R.Crm,
+                  R.Op2,
+                  Context->ELR - 4
+                  );
+    SerialPortWrite ((UINT8 *)Buffer, CharCount);
+  }
+
+  return TRUE;
+}
+
 /**
   Common C-level exception handler dispatched from ASM exception entry points.
   Invokes a registered handler for the given ExceptionType if one exists,
@@ -371,6 +477,10 @@ CommonCExceptionHandler (
   } else {
     DEBUG ((DEBUG_ERROR, "Unknown exception type %d\n", ExceptionType));
     ASSERT (FALSE);
+  }
+
+  if ((ExceptionType == EXCEPT_AARCH64_SYNCHRONOUS_EXCEPTIONS) && WatariTryEmulateSysreg (SystemContext.SystemContextAArch64)) {
+    return;
   }
 
   DumpCpuContext (ExceptionType, SystemContext);

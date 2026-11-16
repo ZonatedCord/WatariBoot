@@ -22,23 +22,29 @@
   ExceptionSupport.S | GCC
   ExceptionSupport.h
   CpuExceptionHelpers.h
+  WatariSysregEmu.h
   DxeCpuExceptionHelpers.c
 
 [Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
   UefiCpuPkg/UefiCpuPkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
 
 [LibraryClasses]
   ArmLib
   BaseLib
   DebugLib
   MemoryAllocationLib
+  PcdLib
   PeCoffGetEntryPointLib
   PrintLib
   SerialPortLib
   SynchronizationLib
   UefiLib
+
+[Pcd]
+  gWatariM1TokenSpaceGuid.PcdWatariEl1SysregEmulation  ## CONSUMES
 
 [Guids]
   gEfiDebugImageInfoTableGuid
