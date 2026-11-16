@@ -276,9 +276,56 @@ uint64_t wel2_catch_value(const struct wel2_sysreg_enc *e)
 	return 0;
 }
 
+// wel2.vpmu=: comma list of percore, global, nouser, frq1, n6 (see wel2_sysreg_catch.h). Default (empty) = global.
+bool wel2_vpmu_parse(const char *val, uint32_t *flags, const char **end)
+{
+	const char *p = val;
+	uint32_t f = 0;
+	bool ok = true, mode = false;
+
+	for (;;) {
+		unsigned n = 0;
+
+		while (p[n] && p[n] != ' ' && p[n] != ',')
+			n++;
+		if (tok_is(p, n, "global")) {
+			f |= WEL2_VPMU_GLOBAL;
+			mode = true;
+		} else if (tok_is(p, n, "percore")) {
+			f &= ~WEL2_VPMU_GLOBAL;
+			mode = true;
+		} else if (tok_is(p, n, "nouser")) {
+			f |= WEL2_VPMU_NOUSER;
+		} else if (tok_is(p, n, "frq1")) {
+			f |= WEL2_VPMU_FRQ1;
+		} else if (tok_is(p, n, "uall")) {
+			f |= WEL2_VPMU_UALL;
+		} else if (tok_is(p, n, "n6")) {
+			f |= WEL2_VPMU_N6;
+		} else {
+			ok = false;
+			break;
+		}
+		p += n;
+		if (*p != ',')
+			break;
+		p++;
+	}
+	if (end)
+		*end = p;
+	if (!ok)
+		return false;
+	if (!mode)
+		f |= WEL2_VPMU_GLOBAL;
+	*flags = f;
+	return true;
+}
+
 // ---- virtual PMUv3 (cycle counter only) -----------------------------------------------------------------------------
 static bool pmu_running(const struct wel2_catch_cpu *c)
 {
+	if (c->vflags & WEL2_VPMU_GLOBAL)       /* the global counter always runs: it is a clock, whatever PMCR / PMCNTENSET say */
+		return true;
 	return (c->pmcr & WEL2_PMCR_E) && (c->pmcnten & WEL2_PMU_CBIT);
 }
 
@@ -287,12 +334,14 @@ static uint64_t pmu_scaled(const struct wel2_catch_cpu *c, uint64_t cnt, uint64_
 {
 	uint64_t q, r, v;
 
+	if (c->vflags & WEL2_VPMU_FRQ1)          /* 1:1 with CNTPCT_EL0 (no PMCR.D divide either) */
+		return cnt;
 	if (!frq)
 		return 0;
 	q = cnt / frq;
 	r = cnt % frq;
 	v = q * 1000000000ull + (r * 1000000000ull) / frq;
-	return (c->pmcr & WEL2_PMCR_D) ? v / 64u : v;
+	return ((c->pmcr & WEL2_PMCR_D) && !(c->vflags & WEL2_VPMU_GLOBAL)) ? v / 64u : v;
 }
 
 uint64_t wel2_catch_pmccntr(const struct wel2_catch_cpu *c, uint64_t cnt, uint64_t frq)
@@ -303,6 +352,8 @@ uint64_t wel2_catch_pmccntr(const struct wel2_catch_cpu *c, uint64_t cnt, uint64
 // Set the counter to v keeping the running / frozen state of c as it is now.
 static void pmu_set(struct wel2_catch_cpu *c, uint64_t v, uint64_t cnt, uint64_t frq)
 {
+	if (c->vflags & WEL2_VPMU_GLOBAL)       /* global: PMCCNTR = scaled(CNTPCT), writes (PMCCNTR, PMCR.C) are ignored: monotonic everywhere */
+		return;
 	c->pmu_frozen = v;
 	c->pmu_base = v - pmu_scaled(c, cnt, frq);
 }
@@ -327,7 +378,7 @@ uint64_t wel2_catch_read(const struct wel2_catch_cpu *c, const struct wel2_sysre
 	if (e->op0 == 2 && e->op1 == 0 && e->crn == 1 && e->crm == 1 && e->op2 == 4)
 		return 8u | ((uint64_t)(c->oslk & 1u) << 1);
 	if (is_pmreg(e, 3, 12, 0))
-		return c->pmcr & WEL2_PMCR_KEEP;
+		return (c->pmcr & WEL2_PMCR_KEEP) | ((c->vflags & WEL2_VPMU_N6) ? 6u << 11 : 0);
 	if (is_pmreg(e, 3, 12, 1) || is_pmreg(e, 3, 12, 2))
 		return c->pmcnten;
 	if (is_pmreg(e, 3, 12, 3) || is_pmreg(e, 3, 14, 3))
@@ -339,7 +390,7 @@ uint64_t wel2_catch_read(const struct wel2_catch_cpu *c, const struct wel2_sysre
 	if (is_pmreg(e, 3, 13, 0))
 		return wel2_catch_pmccntr(c, cnt, frq);
 	if (is_pmreg(e, 3, 14, 0))
-		return c->pmuserenr;
+		return (c->vflags & WEL2_VPMU_NOUSER) ? 0 : c->pmuserenr;
 	if (e->op0 == 3 && e->op1 == 3 && e->crn == 14 && e->crm == 15 && e->op2 == 7)
 		return c->pmccfiltr;
 	return wel2_catch_value(e);
@@ -372,7 +423,8 @@ void wel2_catch_write(struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e,
 	} else if (is_pmreg(e, 3, 13, 0)) {                                             /* PMCCNTR_EL0 */
 		pmu_set(c, wval, cnt, frq);
 	} else if (is_pmreg(e, 3, 14, 0)) {                                             /* PMUSERENR_EL0 */
-		c->pmuserenr = (uint32_t)wval & 15u;
+		if (!(c->vflags & WEL2_VPMU_NOUSER))
+			c->pmuserenr = (uint32_t)wval & 15u;
 	} else if (e->op0 == 3 && e->op1 == 3 && e->crn == 14 && e->crm == 15 && e->op2 == 7) {   /* PMCCFILTR_EL0 */
 		c->pmccfiltr = wval;
 	}

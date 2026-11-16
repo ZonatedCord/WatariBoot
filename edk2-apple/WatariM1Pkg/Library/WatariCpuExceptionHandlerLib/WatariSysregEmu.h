@@ -135,8 +135,9 @@ WatariSysregEmulated (
 //
 // Virtual PMUv3, cycle counter only (N = 0 event counters). Same semantics as the Watari EL2 catch mode
 // (el2/vgic/sysreg_catch.c, docs/design/watari-el2/INTERFACES.md 7.5): PMCCNTR_EL0 is a running counter derived from
-// the shared system counter at a nominal 1 GHz (divided by 64 when PMCR.D): while PMCR.E and PMCNTENSET.C are both set it
-// reads Base + scaled(now); otherwise it reads the frozen value. A guest that calibrates against the cycle counter
+// the shared system counter at a nominal 1 GHz: it is ONE global clock that ALWAYS runs, whatever PMCR.E / PMCNTENSET.C /
+// PMCR.D say (so it is monotonic on every core), writes to PMCCNTR_EL0 and PMCR.C are ignored, and the control registers
+// read back what was written (wel2.vpmu=global of the layer). A guest that calibrates against the cycle counter
 // (bootmgr right after start) then sees it advance instead of reading 0 forever.
 // State: ONE global instance, not per core (the handler runs on the boot core while bootmgr runs; secondary cores run
 // firmware code only until Windows installs its own VBAR_EL1) [hypothesis]. Racing cores can at worst see a stale
@@ -166,7 +167,8 @@ WatariPmuRunning (
   IN CONST WATARI_PMU  *P
   )
 {
-  return ((P->Pmcr & WSE_PMCR_E) != 0) && ((P->PmCntEn & WSE_PMU_CBIT) != 0);
+  (VOID)P;
+  return TRUE;                           // global: always running
 }
 
 //
@@ -187,7 +189,8 @@ WatariPmuScaled (
   }
 
   V = (Cnt / Frq) * 1000000000ULL + ((Cnt % Frq) * 1000000000ULL) / Frq;
-  return ((P->Pmcr & WSE_PMCR_D) != 0) ? V / 64 : V;
+  (VOID)P;
+  return V;                              // PMCR.D does not slow the global clock
 }
 
 STATIC
@@ -210,8 +213,10 @@ WatariPmuSet (
   IN UINT64          Frq
   )
 {
-  P->Frozen = V;
-  P->Base   = V - WatariPmuScaled (P, Cnt, Frq);
+  (VOID)P;
+  (VOID)V;
+  (VOID)Cnt;
+  (VOID)Frq;                             // global: writes (PMCCNTR_EL0, PMCR.C) are ignored
 }
 
 // Change PMCR / PMCNTENSET without a jump of the counter value.

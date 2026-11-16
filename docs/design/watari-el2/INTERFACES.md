@@ -196,6 +196,19 @@ Logging: the first catch of each distinct (op0, op1, CRn, CRm, op2, direction) p
 
 `WEL2_REPORT_EXC`: only the first 8 reports reach the console and the panel; later ones are counted (`WEL2_STATS.guest_exc`, and a line in the final statistics) and otherwise silent. With the catch area on, the report does not touch `LAST ERROR`; without it, the text goes to `LAST ERROR` as an automatic text that a later `fatal()` always replaces, so a guest exception never hides the layer's own fatal reason.
 
+**Virtual PMU mode (`wel2.vpmu=percore|global[,nouser][,frq1][,n6][,uall]`, default `global`; update after the M3a QEMU bench).** `global`: ONE PMU state shared by all cores; `PMCCNTR_EL0 = scaled(CNTPCT_EL0)` always running whatever `PMCR.E` / `PMCNTENSET.C` / `PMCR.D` say (monotonic on every core), writes to `PMCCNTR` and `PMCR.C` ignored, the control registers read back what was written (`N` = 0). `percore` is the first behaviour (per-core state, start/stop/rebase). `nouser`: `PMUSERENR_EL0` reads 0, writes ignored. `frq1`: counter = `CNTPCT` 1:1. `n6`: `PMCR.N` reads 6, event counters RAZ/WI. `uall`: hardware `PMUSERENR_EL0` = 0xF on every core at start. **The bug the bench found:** `MDCR_EL2.TPM` traps the EL0 accesses that `PMUSERENR_EL0` allows, but the guest's write of `PMUSERENR_EL0` is trapped too, so the hardware register stayed 0 and an EL0 read of `PMCCNTR_EL0` was UNDEFINED at EL1 (a user process dies: `CRITICAL_PROCESS_DIED` / `0xC000021A`). Now every PMU trap copies the virtual `PMUSERENR` into the hardware register of the executing core (`catch.c`), so an allowed EL0 access reaches EL2 through `TPM` and is answered by the same path (frame, `Rt` write-back, `ELR += 4`: the exception entry is the same for EL0 and EL1 callers, EC 0x18 from a lower EL). The EDK2 safety net (`WatariSysregEmu.h`) has the same global always-running counter; PMUSERENR there is stored (no hardware register involved at EL1).
+
+Bench (QEMU TCG, WinPE from RAM disk, `wel2.catch=pmu`, SMP 4, `CNTFRQ` = 1 GHz on this QEMU so `frq1` equals the default there). Tags are run directories under `$WATARI_DATA/logs/winram/`.
+
+| Tag | Configuration | Outcome |
+|---|---|---|
+| (before) | `catch=pmu`, per-core counter, PMUSERENR only virtual | `CRITICAL_PROCESS_DIED` (0xEF), `PSCI SYSTEM_RESET` at ~2 min |
+| `vp1` | `vpmu=global`, PMUSERENR virtual only | stop code `0xC000021A`, SYSTEM_RESET at ~45 s guest time (shot-0003) |
+| `vp2` | `vpmu=global` + hardware PMUSERENR mirror | Setup "Installazione di Windows 11 / Attendere" at 162 s (shot-0006), no SYSTEM_RESET |
+| `vp3` | `vpmu=percore` + hardware PMUSERENR mirror | Setup "Attendere" at 161 s (shot-0006), no SYSTEM_RESET |
+
+Conclusion: the PMUSERENR mirror is the fix; the global counter is kept as the default because it is monotonic on every core by construction (per-core also passes on the bench). Variants (a) `nouser`, (b) `frq1`, (c) `n6` were not needed (and `frq1` is identical on this QEMU).
+
 ## 8. Backend interfaces (C)
 All tables are `const` and are selected in the composition root.
 

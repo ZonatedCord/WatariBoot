@@ -92,6 +92,7 @@ uint64_t wel2_catch_value(const struct wel2_sysreg_enc *e);
 /* Per-core state of the emulation: the OS Lock bit (OSLAR_EL1 sets / clears it, OSLSR_EL1.OSLK reads it back). Zero-initialise. */
 struct wel2_catch_cpu {
 	uint8_t oslk;
+	uint32_t vflags;             /* WEL2_VPMU_*: global (one clock for all cores) / nouser / frq1 / n6 */
 	/* Virtual PMUv3, cycle counter only (N = 0 event counters). The cycle counter is a running counter derived from the
 	 * shared system counter at a nominal 1 GHz (/64 when PMCR.D): value = pmu_base + scaled(now) while PMCR.E and
 	 * PMCNTENSET.C are both set, else pmu_frozen. */
@@ -105,6 +106,13 @@ struct wel2_catch_cpu {
 	uint64_t pmu_base;           /* running: PMCCNTR = pmu_base + scaled(now) (modulo 2^64) */
 	uint64_t pmu_frozen;         /* not running: PMCCNTR */
 };
+#define WEL2_VPMU_GLOBAL 1u      /* PMCCNTR = scaled(CNTPCT), always running, writes ignored; the state lives in ONE struct shared by all cores */
+#define WEL2_VPMU_NOUSER 2u      /* PMUSERENR_EL0 reads 0, writes ignored (EL0 never gets the counter) */
+#define WEL2_VPMU_FRQ1   4u      /* PMCCNTR = CNTPCT_EL0, 1:1, instead of a nominal 1 GHz */
+#define WEL2_VPMU_N6     8u      /* PMCR_EL0.N reads 6 (the event counters stay RAZ/WI) */
+#define WEL2_VPMU_UALL   16u     /* the hardware PMUSERENR_EL0 of every core is 0xF from the start (EL0 accesses reach EL2 via TPM instead of UNDEF at EL1) */
+/* Parse wel2.vpmu= (comma list percore|global|nouser|frq1|n6; default global). false on a bad value (flags untouched). */
+bool wel2_vpmu_parse(const char *val, uint32_t *flags, const char **end);
 #define WEL2_PMCR_E     (1u << 0)
 #define WEL2_PMCR_C     (1u << 2)
 #define WEL2_PMCR_D     (1u << 3)

@@ -69,7 +69,7 @@ int main(void)
   #define MRSX(op1,crm,op2) do { RESET(); now_cnt = NOW; CHECK(EMU(enc(1, 3, op1, 9, crm, op2, 2), x, &spsr, &r)); } while (0)
   pmu = (WATARI_PMU){ 0 };
   #define NOW (100ULL)
-  MRSX(3, 13, 0); CHECK(x[2] == 0);                                  // MRS PMCCNTR_EL0 first: 0
+  MRSX(3, 13, 0); CHECK(x[2] == 100000000000ULL / F);                // MRS PMCCNTR_EL0 first: scaled(100)
   MRSX(3, 12, 0); CHECK(x[2] == 0);                                  // PMCR: N = 0
   MSRX(3, 12, 2, 0xFFFFFFFFULL);                                     // PMCNTENCLR
   MSRX(3, 12, 3, 0xFFFFFFFFULL);                                     // PMOVSCLR
@@ -83,15 +83,15 @@ int main(void)
   MRSX(3, 14, 0); CHECK(x[2] == 15);
   #undef NOW
   #define NOW (5 * F)
-  MRSX(3, 13, 0); CHECK(x[2] == 0);                                  // E still clear: frozen
+  MRSX(3, 13, 0); CHECK(x[2] == 5000000000ULL);                      // global: runs although PMCR.E is clear
   #undef NOW
   #define NOW (1 * F)
-  MSRX(3, 12, 0, 0x41);                                              // E | LC: starts
+  MSRX(3, 12, 0, 0x41);                                              // E | LC: the control bits read back
   MRSX(3, 12, 0); CHECK(x[2] == 0x41);
-  MRSX(3, 13, 0); CHECK(x[2] == 0);
+  MRSX(3, 13, 0); CHECK(x[2] == 1000000000ULL);
   #undef NOW
   #define NOW (2 * F)
-  MRSX(3, 13, 0); CHECK(x[2] == 1000000000ULL);                      // one second = 1e9 cycles
+  MRSX(3, 13, 0); CHECK(x[2] == 2000000000ULL);                      // one second = 1e9 cycles
   #undef NOW
   saved = 0;
   for (now_cnt = F; now_cnt < 40 * F; now_cnt += 12345677ULL) {       // strictly increasing
@@ -100,31 +100,24 @@ int main(void)
     saved = x[2];
   }
   #define NOW (3 * F)
-  MSRX(3, 12, 2, 0x80000000ULL);                                     // PMCNTENCLR: freeze
-  MRSX(3, 13, 0); CHECK(x[2] == 2000000000ULL);
+  MSRX(3, 12, 2, 0x80000000ULL);                                     // PMCNTENCLR: does not freeze the global clock
+  MRSX(3, 13, 0); CHECK(x[2] == 3000000000ULL);
   #undef NOW
   #define NOW (9 * F)
-  MRSX(3, 13, 0); CHECK(x[2] == 2000000000ULL);
-  #undef NOW
-  #define NOW (10 * F)
-  MSRX(3, 12, 1, 0x80000000ULL);                                     // enable: continues
-  MRSX(3, 13, 0); CHECK(x[2] == 2000000000ULL);
+  MRSX(3, 13, 0); CHECK(x[2] == 9000000000ULL);
   #undef NOW
   #define NOW (11 * F)
-  MRSX(3, 13, 0); CHECK(x[2] == 3000000000ULL);
-  MSRX(3, 13, 0, 5000);                                              // write PMCCNTR
-  MRSX(3, 13, 0); CHECK(x[2] == 5000);
-  #undef NOW
-  #define NOW (12 * F)
-  MRSX(3, 13, 0); CHECK(x[2] == 5000 + 1000000000ULL);
-  MSRX(3, 12, 0, 0x45);                                              // C: reset, P/C read 0
-  MRSX(3, 13, 0); CHECK(x[2] == 0);
+  MSRX(3, 12, 1, 0x80000000ULL);
+  MSRX(3, 13, 0, 5000);                                              // write PMCCNTR: ignored
+  MRSX(3, 13, 0); CHECK(x[2] == 11000000000ULL);
+  MSRX(3, 12, 0, 0x45);                                              // PMCR.C: ignored, P/C read 0
+  MRSX(3, 13, 0); CHECK(x[2] == 11000000000ULL);
   MRSX(3, 12, 0); CHECK(x[2] == 0x41);
-  MSRX(3, 12, 0, 0x49);                                              // D: /64, no jump
+  MSRX(3, 12, 0, 0x49);                                              // D: read back, no slowdown
   MRSX(3, 12, 0); CHECK(x[2] == 0x49);
   #undef NOW
   #define NOW (13 * F)
-  MRSX(3, 13, 0); CHECK(x[2] == 1000000000ULL / 64);
+  MRSX(3, 13, 0); CHECK(x[2] == 13000000000ULL);
   MSRX(3, 14, 3, 0xFFFFFFFFULL);                                     // PMOVSSET / PMOVSCLR
   MRSX(3, 12, 3); CHECK(x[2] == 0x80000000ULL);
   MSRX(3, 12, 3, 0x80000000ULL);
@@ -144,8 +137,7 @@ int main(void)
   RESET(); now_cnt = 0; CHECK(!EMU(enc(1, 3, 0, 9, 13, 0, 2), x, &spsr, &r));   // op1 0 CRm 13: not PMU
   now_cnt = 30ULL * 86400 * F;                                        // 30 days: no 64-bit overflow
   pmu = (WATARI_PMU){ 0 };
-  { UINT64 t = now_cnt; now_cnt = 0; RESET(); x[1] = 1; EMU(enc(0, 3, 3, 9, 12, 0, 1), x, &spsr, &r);
-    x[1] = 0x80000000ULL; EMU(enc(0, 3, 3, 9, 12, 1, 1), x, &spsr, &r); now_cnt = t; EMU(enc(1, 3, 3, 9, 13, 0, 2), x, &spsr, &r);
+  { UINT64 t = now_cnt; now_cnt = t; EMU(enc(1, 3, 3, 9, 13, 0, 2), x, &spsr, &r);
     CHECK(x[2] == 30ULL * 86400 * 1000000000ULL); }
 
   printf("test_sysreg_emu: %d checks, %d failures\n", checks, fails);

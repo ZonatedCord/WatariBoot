@@ -1156,6 +1156,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
  *                        QEMU's Aff0 0..7 (start.S stack slot = Aff0). No-op on the M1. Default native.
  *   wel2.hold=1          do not reset at the end of a step or of the guest (wel2.step=2, the guest's SYSTEM_RESET): paint the final
  *                        state, print the HOLD message and park, so the screen can be photographed (not wel2.step=1)
+ *   wel2.vpmu=percore|global[,nouser][,frq1][,n6]   virtual PMU of catch mode (default global: one always-running PMCCNTR = scaled CNTPCT shared by all cores)
  *   wel2.catch=0|1|0x<mask>|pmu,dbg,impdef,actlr   catch mode (1 = all groups; mask bit0 PMU, bit1 debug, bit2 IMPDEF, bit3 ACTLR; default on the M1: pmu): trap PMU / debug / IMPLEMENTATION DEFINED registers and ACTLR_EL1 (HCR_EL2.TIDCP|TACR, MDCR_EL2.TPM|TPMCR|TDA|TDOSA|TDRA),
  *                        answer them RAZ/WI and log the first access of each distinct encoding (default: on on the M1, off on QEMU)
  *   wel2.tid3=1|0        HCR_EL2.TID3: emulate the ID register group, GIC forced to 1 (default: on on the M1, off on QEMU)
@@ -1204,6 +1205,14 @@ static void parse_bootargs(uint64_t fdt)
             } else {
                 puts_("Watari EL2: WARNING: bad wel2.catch value (0|1|0x<mask>|pmu,dbg,impdef,actlr), keeping the default\n");
             }
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'v' && p[6] == 'p' && p[7] == 'm' &&
+                   p[8] == 'u' && p[9] == '=') {
+            uint32_t v;
+
+            if (wel2_vpmu_parse(p + 10, &v, 0))
+                g_vpmu = v;
+            else
+                puts_("Watari EL2: WARNING: bad wel2.vpmu value (percore|global[,nouser][,frq1][,n6]), keeping the default\n");
         } else if (arg_is(p, "wel2.test=tcoff")) {
             g_test_tc = -1;
         } else if (arg_is(p, "wel2.test=tcon")) {

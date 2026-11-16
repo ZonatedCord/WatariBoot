@@ -415,6 +415,55 @@ static void t_pmu(void)
     }
 }
 
+static void t_vpmu_global(void)
+{
+    struct wel2_catch_cpu g = { .vflags = WEL2_VPMU_GLOBAL };
+    struct wel2_sysreg_enc pmcr = pe(3, 12, 0, 1), pmcrw = pe(3, 12, 0, 0), cens = pe(3, 12, 1, 0), cenc = pe(3, 12, 2, 0);
+    struct wel2_sysreg_enc cc = pe(3, 13, 0, 1), ccw = pe(3, 13, 0, 0), ue = pe(3, 14, 0, 0), ue_r = pe(3, 14, 0, 1);
+    uint32_t f = 0;
+    const char *end;
+
+    /* always running, from CNTPCT, whatever PMCR / PMCNTENSET say: monotonic and the same on every reader */
+    CHECK_EQ(rd_(&g, cc, 0), 0);
+    CHECK_EQ(rd_(&g, cc, 2 * F), 2000000000ull);
+    wr_(&g, cenc, 0x80000000u, 2 * F);
+    wr_(&g, pmcrw, 0, 2 * F);
+    CHECK_EQ(rd_(&g, cc, 3 * F), 3000000000ull);
+    wr_(&g, ccw, 5, 3 * F);                                         /* writes ignored */
+    CHECK_EQ(rd_(&g, cc, 3 * F), 3000000000ull);
+    wr_(&g, pmcrw, 0x45, 4 * F);                                    /* PMCR.C ignored too, D does not slow it */
+    wr_(&g, pmcrw, 0x49, 4 * F);
+    CHECK_EQ(rd_(&g, pmcr, 0), 0x49);                               /* the control bits read back */
+    CHECK_EQ(rd_(&g, cc, 5 * F), 5000000000ull);
+    wr_(&g, ue, 0xf, 0); CHECK_EQ(rd_(&g, ue_r, 0), 15);
+    wr_(&g, cens, 0x80000000u, 0);
+    {
+        uint64_t prev = 0, v;
+
+        for (uint64_t t = 0; t < 40 * F; t += 12345677ull) {
+            v = rd_(&g, cc, t);
+            CHECK(v >= prev);
+            prev = v;
+        }
+    }
+    /* variants */
+    g.vflags = WEL2_VPMU_GLOBAL | WEL2_VPMU_NOUSER;
+    wr_(&g, ue, 0xf, 0); CHECK_EQ(rd_(&g, ue_r, 0), 0);
+    g.vflags = WEL2_VPMU_GLOBAL | WEL2_VPMU_FRQ1;
+    CHECK_EQ(rd_(&g, cc, 7 * F + 3), 7 * F + 3);
+    g.vflags = WEL2_VPMU_GLOBAL | WEL2_VPMU_N6;
+    wr_(&g, pmcrw, 0x41, 0);
+    CHECK_EQ(rd_(&g, pmcr, 0), 0x41 | (6u << 11));
+    /* parser */
+    CHECK(wel2_vpmu_parse("global", &f, &end)); CHECK_EQ(f, WEL2_VPMU_GLOBAL);
+    CHECK(wel2_vpmu_parse("percore x=1", &f, &end)); CHECK_EQ(f, 0); CHECK_EQ(*end, ' ');
+    CHECK(wel2_vpmu_parse("nouser,frq1,n6", &f, &end)); CHECK_EQ(f, WEL2_VPMU_GLOBAL | 14u);
+    CHECK(wel2_vpmu_parse("percore,nouser", &f, &end)); CHECK_EQ(f, WEL2_VPMU_NOUSER);
+    f = 77;
+    CHECK(!wel2_vpmu_parse("bogus", &f, &end)); CHECK_EQ(f, 77);
+    CHECK(!wel2_vpmu_parse("global,", &f, &end));
+}
+
 static void t_groups(void)
 {
     uint32_t m = 99;
@@ -471,6 +520,7 @@ int main(void)
     RUN(t_values);
     RUN(t_oslock);
     RUN(t_pmu);
+    RUN(t_vpmu_global);
     RUN(t_names);
     RUN(t_table);
     RUN(t_format);
