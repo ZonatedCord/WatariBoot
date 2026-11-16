@@ -68,11 +68,17 @@ bool catch_trap(struct frame *f)
         puts_("\n");
         wel2_fb_catch_note(&g_fb, line);
     }
-    if (e.rd) {
-        if (e.rt != 31)
-            f->x[e.rt] = wel2_catch_read(cc, &e);
-    } else {
-        wel2_catch_write(cc, &e, e.rt == 31 ? 0 : f->x[e.rt]);
+    {
+        uint64_t cnt, frq;
+
+        __asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(cnt));    // the shared physical counter: the cycle counter is derived from it
+        __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
+        if (e.rd) {
+            if (e.rt != 31)
+                f->x[e.rt] = wel2_catch_read(cc, &e, cnt, frq);
+        } else {
+            wel2_catch_write(cc, &e, e.rt == 31 ? 0 : f->x[e.rt], cnt, frq);
+        }
     }
     f->elr += 4;
     return true;

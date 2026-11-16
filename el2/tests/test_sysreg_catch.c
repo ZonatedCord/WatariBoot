@@ -138,15 +138,15 @@ static void t_oslock(void)
     CHECK(wel2_catch_decode(iss(2, 0, 1, 0, 4, 1, 0), &oslar));
     CHECK(wel2_catch_decode(iss(2, 0, 1, 1, 4, 1, 1), &oslsr));
     CHECK(wel2_catch_decode(iss(1, 0, 15, 4, 2, 1, 1), &sysl));
-    CHECK_EQ(wel2_catch_read(&a, &oslsr), 8);                       /* clear at start */
-    wel2_catch_write(&a, &oslar, 1);                                /* lock */
-    CHECK_EQ(wel2_catch_read(&a, &oslsr), 0xa);                     /* OSLM[1] | OSLK */
-    CHECK_EQ(wel2_catch_read(&b, &oslsr), 8);                       /* the other core is unaffected */
-    wel2_catch_write(&a, &oslar, 0xfffffffeull);                    /* bit 0 clear: unlock */
-    CHECK_EQ(wel2_catch_read(&a, &oslsr), 8);
-    wel2_catch_write(&a, &oslsr, 1);                                /* a write to another register changes nothing */
-    CHECK_EQ(wel2_catch_read(&a, &oslsr), 8);
-    CHECK_EQ(wel2_catch_read(&a, &sysl), 0);
+    CHECK_EQ(wel2_catch_read(&a, &oslsr, 0, 1000000000ull), 8);                       /* clear at start */
+    wel2_catch_write(&a, &oslar, 1, 0, 1000000000ull);                                /* lock */
+    CHECK_EQ(wel2_catch_read(&a, &oslsr, 0, 1000000000ull), 0xa);                     /* OSLM[1] | OSLK */
+    CHECK_EQ(wel2_catch_read(&b, &oslsr, 0, 1000000000ull), 8);                       /* the other core is unaffected */
+    wel2_catch_write(&a, &oslar, 0xfffffffeull, 0, 1000000000ull);                    /* bit 0 clear: unlock */
+    CHECK_EQ(wel2_catch_read(&a, &oslsr, 0, 1000000000ull), 8);
+    wel2_catch_write(&a, &oslsr, 1, 0, 1000000000ull);                                /* a write to another register changes nothing */
+    CHECK_EQ(wel2_catch_read(&a, &oslsr, 0, 1000000000ull), 8);
+    CHECK_EQ(wel2_catch_read(&a, &sysl, 0, 1000000000ull), 0);
     CHECK_EQ(wel2_catch_value(&oslsr), 8);                          /* the stateless value is the unlocked one */
 }
 
@@ -290,6 +290,131 @@ static void t_bits(void)
     CHECK_EQ(WEL2_MDCR_CATCH & 0x1f, 0);                            /* HPMN untouched */
 }
 
+/* Virtual PMUv3 cycle counter: frq 24 MHz (the M1), so one tick = 41.666 ns; 1 GHz nominal cycles. */
+#define F 24000000ull
+static struct wel2_sysreg_enc pe(unsigned op1, unsigned crm, unsigned op2, unsigned rd)
+{
+    struct wel2_sysreg_enc e;
+
+    CHECK(wel2_catch_decode(iss(3, op1, 9, crm, op2, 1, rd), &e));
+    return e;
+}
+static uint64_t rd_(struct wel2_catch_cpu *c, struct wel2_sysreg_enc e, uint64_t now)
+{
+    return wel2_catch_read(c, &e, now, F);
+}
+static void wr_(struct wel2_catch_cpu *c, struct wel2_sysreg_enc e, uint64_t v, uint64_t now)
+{
+    wel2_catch_write(c, &e, v, now, F);
+}
+
+static void t_pmu(void)
+{
+    struct wel2_catch_cpu c = { 0 }, o = { 0 };
+    struct wel2_sysreg_enc pmcr = pe(3, 12, 0, 1), pmcrw = pe(3, 12, 0, 0), cens = pe(3, 12, 1, 0), cenc = pe(3, 12, 2, 0);
+    struct wel2_sysreg_enc cens_r = pe(3, 12, 1, 1), cenc_r = pe(3, 12, 2, 1), ovc = pe(3, 12, 3, 0), ovs = pe(3, 14, 3, 0);
+    struct wel2_sysreg_enc ov_r = pe(3, 12, 3, 1), ics = pe(0, 14, 1, 0), icc = pe(0, 14, 2, 0), ic_r = pe(0, 14, 1, 1);
+    struct wel2_sysreg_enc cc = pe(3, 13, 0, 1), ccw = pe(3, 13, 0, 0), sel = pe(3, 12, 5, 0), sel_r = pe(3, 12, 5, 1);
+    struct wel2_sysreg_enc ceid0 = pe(3, 12, 6, 1), ceid1 = pe(3, 12, 7, 1), swinc = pe(3, 12, 4, 0), xt = pe(3, 13, 1, 0);
+    struct wel2_sysreg_enc xt_r = pe(3, 13, 1, 1), xc = pe(3, 13, 2, 0), xc_r = pe(3, 13, 2, 1), ue = pe(3, 14, 0, 0);
+    struct wel2_sysreg_enc ue_r = pe(3, 14, 0, 1), mmir = pe(0, 14, 6, 1), cf_r, cf_w, ev_r, evt_w;
+
+    CHECK(wel2_catch_decode(iss(3, 3, 14, 15, 7, 1, 1), &cf_r));
+    CHECK(wel2_catch_decode(iss(3, 3, 14, 15, 7, 1, 0), &cf_w));
+    CHECK(wel2_catch_decode(iss(3, 3, 14, 9, 2, 1, 1), &ev_r));
+    CHECK(wel2_catch_decode(iss(3, 3, 14, 13, 2, 1, 0), &evt_w));
+    /* reset: stopped, zero, N = 0 */
+    CHECK_EQ(rd_(&c, pmcr, 0), 0);
+    CHECK_EQ(rd_(&c, cc, 5 * F), 0);
+    CHECK_EQ(rd_(&c, ceid0, 0), 0); CHECK_EQ(rd_(&c, ceid1, 0), 0); CHECK_EQ(rd_(&c, mmir, 0), 0);
+    CHECK_EQ(rd_(&c, ev_r, 0), 0); CHECK_EQ(rd_(&c, xt_r, 0), 0); CHECK_EQ(rd_(&c, xc_r, 0), 0);
+    /* bootmgr's sequence: clear everything, then enable the cycle counter */
+    wr_(&c, cenc, 0xffffffffu, 100); wr_(&c, ovc, 0xffffffffu, 100); wr_(&c, icc, 0xffffffffu, 100);
+    wr_(&c, pmcrw, 0, 100); wr_(&c, cf_w, 0x80000000u, 100);
+    wr_(&c, cens, 0x8000000fu, 100);                                /* event counter bits RAZ (N = 0) */
+    CHECK_EQ(rd_(&c, cens_r, 0), 0x80000000u); CHECK_EQ(rd_(&c, cenc_r, 0), 0x80000000u);
+    CHECK_EQ(rd_(&c, cc, 5 * F), 0);                                /* PMCR.E clear: still frozen at 0 */
+    wr_(&c, pmcrw, 0x41, 1 * F);                                    /* E | LC, counter starts at tick F */
+    CHECK_EQ(rd_(&c, pmcr, 0), 0x41);
+    CHECK_EQ(rd_(&c, cc, 1 * F), 0);
+    CHECK_EQ(rd_(&c, cc, 2 * F), 1000000000ull);                    /* one second later = 1e9 cycles */
+    CHECK_EQ(rd_(&c, cc, 2 * F + 12), 1000000000ull + 12ull * 1000000000ull / F);
+    {
+        uint64_t prev = 0, v;
+
+        for (uint64_t t = F; t < 40 * F; t += 12345677ull) {        /* strictly increasing with an odd step */
+            v = rd_(&c, cc, t);
+            CHECK(v >= prev);
+            if (t > F)
+                CHECK(v > prev);
+            prev = v;
+        }
+    }
+    /* disable: freezes; enable: continues from the frozen value */
+    wr_(&c, cenc, 0x80000000u, 3 * F);
+    CHECK_EQ(rd_(&c, cens_r, 0), 0);
+    CHECK_EQ(rd_(&c, cc, 3 * F), 2000000000ull);
+    CHECK_EQ(rd_(&c, cc, 9 * F), 2000000000ull);                    /* frozen */
+    wr_(&c, cens, 0x80000000u, 10 * F);
+    CHECK_EQ(rd_(&c, cc, 10 * F), 2000000000ull);
+    CHECK_EQ(rd_(&c, cc, 11 * F), 3000000000ull);
+    wr_(&c, pmcrw, 0x40, 11 * F);                                   /* PMCR.E clear freezes too */
+    CHECK_EQ(rd_(&c, cc, 20 * F), 3000000000ull);
+    wr_(&c, pmcrw, 0x41, 20 * F);
+    CHECK_EQ(rd_(&c, cc, 21 * F), 4000000000ull);
+    /* write PMCCNTR: reads continue from the written value, running and frozen */
+    wr_(&c, ccw, 5000, 30 * F);
+    CHECK_EQ(rd_(&c, cc, 30 * F), 5000);
+    CHECK_EQ(rd_(&c, cc, 31 * F), 5000 + 1000000000ull);
+    wr_(&c, cenc, 0x80000000u, 31 * F);
+    wr_(&c, ccw, 77, 40 * F);
+    CHECK_EQ(rd_(&c, cc, 50 * F), 77);
+    wr_(&c, cens, 0x80000000u, 50 * F);
+    CHECK_EQ(rd_(&c, cc, 51 * F), 77 + 1000000000ull);
+    /* PMCR.C resets the counter and keeps it running; C and P read as 0 */
+    wr_(&c, pmcrw, 0x45, 60 * F);
+    CHECK_EQ(rd_(&c, pmcr, 0), 0x41);
+    CHECK_EQ(rd_(&c, cc, 60 * F), 0);
+    CHECK_EQ(rd_(&c, cc, 61 * F), 1000000000ull);
+    /* PMCR.D: divide by 64, without a jump of the value when D changes */
+    wr_(&c, pmcrw, 0x49, 61 * F);
+    CHECK_EQ(rd_(&c, pmcr, 0), 0x49);
+    CHECK_EQ(rd_(&c, cc, 61 * F), 1000000000ull);
+    CHECK_EQ(rd_(&c, cc, 62 * F), 1000000000ull + 1000000000ull / 64);
+    wr_(&c, pmcrw, 0xfb, 62 * F);                                   /* every writable bit; P is an action and reads 0 */
+    CHECK_EQ(rd_(&c, pmcr, 0), 0xf9);
+    CHECK_EQ(WEL2_PMCR_KEEP, 0xf9);
+    /* the overflow flag and the interrupt enable: bit 31 only, SET / CLR semantics */
+    wr_(&c, ovs, 0x8000000fu, 0);
+    CHECK_EQ(rd_(&c, ov_r, 0), 0x80000000u);
+    wr_(&c, ovc, 0x80000000u, 0);
+    CHECK_EQ(rd_(&c, ov_r, 0), 0);
+    wr_(&c, ics, 0xffffffffu, 0);
+    CHECK_EQ(rd_(&c, ic_r, 0), 0x80000000u);
+    wr_(&c, icc, 0x7fffffffu, 0);
+    CHECK_EQ(rd_(&c, ic_r, 0), 0x80000000u);                        /* bit 31 not in the clear mask */
+    wr_(&c, icc, 0x80000000u, 0);
+    CHECK_EQ(rd_(&c, ic_r, 0), 0);
+    /* the plain registers */
+    wr_(&c, sel, 0xffffffffu, 0); CHECK_EQ(rd_(&c, sel_r, 0), 31);
+    wr_(&c, ue, 0xff, 0); CHECK_EQ(rd_(&c, ue_r, 0), 15);
+    wel2_catch_write(&c, &cf_w, 0x8c000000u, 0, F); CHECK_EQ(wel2_catch_read(&c, &cf_r, 0, F), 0x8c000000u);
+    wr_(&c, swinc, 0xffffffffu, 0); wr_(&c, xt, 0xffff, 0); wr_(&c, xc, 0xffff, 0);
+    wel2_catch_write(&c, &evt_w, 0xffff, 0, F);
+    CHECK_EQ(rd_(&c, xt_r, 0), 0); CHECK_EQ(rd_(&c, xc_r, 0), 0); CHECK_EQ(wel2_catch_read(&c, &ev_r, 0, F), 0);
+    /* another core has its own state */
+    CHECK_EQ(rd_(&o, pmcr, 0), 0); CHECK_EQ(rd_(&o, cens_r, 0), 0); CHECK_EQ(rd_(&o, cc, 99 * F), 0);
+    CHECK_EQ(wel2_catch_pmccntr(&o, 5, 0), 0);
+    /* the 64-bit scaling does not overflow for a long uptime (30 days at 24 MHz) */
+    {
+        struct wel2_catch_cpu l = { 0 };
+        uint64_t t = 30ull * 86400 * F;
+
+        wr_(&l, pmcrw, 1, 0); wr_(&l, cens, 0x80000000u, 0);
+        CHECK_EQ(rd_(&l, cc, t), 30ull * 86400 * 1000000000ull);
+    }
+}
+
 int main(void)
 {
     RUN(t_decode);
@@ -298,6 +423,7 @@ int main(void)
     RUN(t_not_owned);
     RUN(t_values);
     RUN(t_oslock);
+    RUN(t_pmu);
     RUN(t_names);
     RUN(t_table);
     RUN(t_format);

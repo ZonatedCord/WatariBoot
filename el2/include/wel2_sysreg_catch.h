@@ -19,7 +19,7 @@
  *   HCR_EL2.TACR (21)   ACTLR_EL1
  * All of them arrive as EC 0x18 (MSR/MRS/system instruction), ISS as in Arm ARM D24.2 ESR_EL2.
  *
- * The policy: reads return 0 (OSLSR_EL1: OS Lock implemented and unlocked, see wel2_catch_value), writes are ignored.
+ * The policy: reads return 0 except the virtual PMUv3 cycle counter (see struct wel2_catch_cpu) and its control registers (OSLSR_EL1: OS Lock implemented and unlocked, see wel2_catch_value), writes are ignored.
  * An encoding this module does not own is never touched (the caller keeps its old path).
  */
 #ifndef WEL2_SYSREG_CATCH_H
@@ -74,11 +74,30 @@ uint64_t wel2_catch_value(const struct wel2_sysreg_enc *e);
 /* Per-core state of the emulation: the OS Lock bit (OSLAR_EL1 sets / clears it, OSLSR_EL1.OSLK reads it back). Zero-initialise. */
 struct wel2_catch_cpu {
 	uint8_t oslk;
+	/* Virtual PMUv3, cycle counter only (N = 0 event counters). The cycle counter is a running counter derived from the
+	 * shared system counter at a nominal 1 GHz (/64 when PMCR.D): value = pmu_base + scaled(now) while PMCR.E and
+	 * PMCNTENSET.C are both set, else pmu_frozen. */
+	uint32_t pmcr;               /* only E, D, X, DP, LC, LP are kept (WEL2_PMCR_KEEP) */
+	uint32_t pmcnten;            /* bit 31 only */
+	uint32_t pmovs;              /* bit 31 only */
+	uint32_t pminten;            /* bit 31 only */
+	uint32_t pmuserenr;          /* 4 bits */
+	uint32_t pmselr;             /* 5 bits */
+	uint64_t pmccfiltr;
+	uint64_t pmu_base;           /* running: PMCCNTR = pmu_base + scaled(now) (modulo 2^64) */
+	uint64_t pmu_frozen;         /* not running: PMCCNTR */
 };
+#define WEL2_PMCR_E     (1u << 0)
+#define WEL2_PMCR_C     (1u << 2)
+#define WEL2_PMCR_D     (1u << 3)
+#define WEL2_PMCR_KEEP  0xf9u    /* E | D | X | DP | LC | LP; P and C are write-only actions, N and IDCODE read 0 */
+#define WEL2_PMU_CBIT   (1u << 31)
+/* The cycle counter at the time `cnt` (the system counter, CNTPCT_EL0) given its frequency `frq` (CNTFRQ_EL0, Hz). Pure. */
+uint64_t wel2_catch_pmccntr(const struct wel2_catch_cpu *c, uint64_t cnt, uint64_t frq);
 /* The value of a read on this core (OSLSR_EL1 = 0x8 | OSLK << 1, everything else as wel2_catch_value) and the effect of a write
  * (wval = the written register, 0 for XZR): OSLAR_EL1 bit 0 is the new OSLK [hypothesis: Arm ARM OSLAR_EL1.OSLK]. */
-uint64_t wel2_catch_read(const struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e);
-void wel2_catch_write(struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e, uint64_t wval);
+uint64_t wel2_catch_read(const struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e, uint64_t cnt, uint64_t frq);
+void wel2_catch_write(struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e, uint64_t wval, uint64_t cnt, uint64_t frq);
 
 /* The table of distinct (op0, op1, CRn, CRm, op2, direction) encodings. rt is not part of the key. Zero-initialise it. */
 struct wel2_catch_ent {

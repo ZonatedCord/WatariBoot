@@ -148,17 +148,107 @@ uint64_t wel2_catch_value(const struct wel2_sysreg_enc *e)
 	return 0;
 }
 
-uint64_t wel2_catch_read(const struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e)
+// ---- virtual PMUv3 (cycle counter only) -----------------------------------------------------------------------------
+static bool pmu_running(const struct wel2_catch_cpu *c)
+{
+	return (c->pmcr & WEL2_PMCR_E) && (c->pmcnten & WEL2_PMU_CBIT);
+}
+
+// cnt * 1e9 / frq without 128-bit division (freestanding): q * 1e9 + (r * 1e9) / frq, r < frq so r * 1e9 fits for frq < 1.8e10.
+static uint64_t pmu_scaled(const struct wel2_catch_cpu *c, uint64_t cnt, uint64_t frq)
+{
+	uint64_t q, r, v;
+
+	if (!frq)
+		return 0;
+	q = cnt / frq;
+	r = cnt % frq;
+	v = q * 1000000000ull + (r * 1000000000ull) / frq;
+	return (c->pmcr & WEL2_PMCR_D) ? v / 64u : v;
+}
+
+uint64_t wel2_catch_pmccntr(const struct wel2_catch_cpu *c, uint64_t cnt, uint64_t frq)
+{
+	return pmu_running(c) ? c->pmu_base + pmu_scaled(c, cnt, frq) : c->pmu_frozen;
+}
+
+// Set the counter to v keeping the running / frozen state of c as it is now.
+static void pmu_set(struct wel2_catch_cpu *c, uint64_t v, uint64_t cnt, uint64_t frq)
+{
+	c->pmu_frozen = v;
+	c->pmu_base = v - pmu_scaled(c, cnt, frq);
+}
+
+// Change PMCR / PMCNTENSET (via fn) without a jump of the counter: the value before is the value after.
+static void pmu_ctl(struct wel2_catch_cpu *c, uint32_t pmcr, uint32_t pmcnten, uint64_t cnt, uint64_t frq)
+{
+	uint64_t cur = wel2_catch_pmccntr(c, cnt, frq);
+
+	c->pmcr = pmcr;
+	c->pmcnten = pmcnten;
+	pmu_set(c, cur, cnt, frq);
+}
+
+static bool is_pmreg(const struct wel2_sysreg_enc *e, unsigned op1, unsigned crm, unsigned op2)
+{
+	return e->op0 == 3 && e->op1 == op1 && e->crn == 9 && e->crm == crm && e->op2 == op2;
+}
+
+uint64_t wel2_catch_read(const struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e, uint64_t cnt, uint64_t frq)
 {
 	if (e->op0 == 2 && e->op1 == 0 && e->crn == 1 && e->crm == 1 && e->op2 == 4)
 		return 8u | ((uint64_t)(c->oslk & 1u) << 1);
+	if (is_pmreg(e, 3, 12, 0))
+		return c->pmcr & WEL2_PMCR_KEEP;
+	if (is_pmreg(e, 3, 12, 1) || is_pmreg(e, 3, 12, 2))
+		return c->pmcnten;
+	if (is_pmreg(e, 3, 12, 3) || is_pmreg(e, 3, 14, 3))
+		return c->pmovs;
+	if (is_pmreg(e, 0, 14, 1) || is_pmreg(e, 0, 14, 2))
+		return c->pminten;
+	if (is_pmreg(e, 3, 12, 5))
+		return c->pmselr;
+	if (is_pmreg(e, 3, 13, 0))
+		return wel2_catch_pmccntr(c, cnt, frq);
+	if (is_pmreg(e, 3, 14, 0))
+		return c->pmuserenr;
+	if (e->op0 == 3 && e->op1 == 3 && e->crn == 14 && e->crm == 15 && e->op2 == 7)
+		return c->pmccfiltr;
 	return wel2_catch_value(e);
 }
 
-void wel2_catch_write(struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e, uint64_t wval)
+void wel2_catch_write(struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e, uint64_t wval, uint64_t cnt, uint64_t frq)
 {
-	if (e->op0 == 2 && e->op1 == 0 && e->crn == 1 && e->crm == 0 && e->op2 == 4)      /* OSLAR_EL1 */
+	if (e->op0 == 2 && e->op1 == 0 && e->crn == 1 && e->crm == 0 && e->op2 == 4) {   /* OSLAR_EL1 */
 		c->oslk = (uint8_t)(wval & 1u);
+		return;
+	}
+	if (is_pmreg(e, 3, 12, 0)) {                                                    /* PMCR_EL0 */
+		pmu_ctl(c, (uint32_t)wval & WEL2_PMCR_KEEP, c->pmcnten, cnt, frq);
+		if (wval & WEL2_PMCR_C)                                                      /* C: reset the cycle counter */
+			pmu_set(c, 0, cnt, frq);
+	} else if (is_pmreg(e, 3, 12, 1)) {                                             /* PMCNTENSET_EL0 */
+		pmu_ctl(c, c->pmcr, c->pmcnten | ((uint32_t)wval & WEL2_PMU_CBIT), cnt, frq);
+	} else if (is_pmreg(e, 3, 12, 2)) {                                             /* PMCNTENCLR_EL0 */
+		pmu_ctl(c, c->pmcr, c->pmcnten & ~((uint32_t)wval & WEL2_PMU_CBIT), cnt, frq);
+	} else if (is_pmreg(e, 3, 12, 3)) {                                             /* PMOVSCLR_EL0 */
+		c->pmovs &= ~((uint32_t)wval & WEL2_PMU_CBIT);
+	} else if (is_pmreg(e, 3, 14, 3)) {                                             /* PMOVSSET_EL0 */
+		c->pmovs |= (uint32_t)wval & WEL2_PMU_CBIT;
+	} else if (is_pmreg(e, 0, 14, 1)) {                                             /* PMINTENSET_EL1 */
+		c->pminten |= (uint32_t)wval & WEL2_PMU_CBIT;
+	} else if (is_pmreg(e, 0, 14, 2)) {                                             /* PMINTENCLR_EL1 */
+		c->pminten &= ~((uint32_t)wval & WEL2_PMU_CBIT);
+	} else if (is_pmreg(e, 3, 12, 5)) {                                             /* PMSELR_EL0 */
+		c->pmselr = (uint32_t)wval & 31u;
+	} else if (is_pmreg(e, 3, 13, 0)) {                                             /* PMCCNTR_EL0 */
+		pmu_set(c, wval, cnt, frq);
+	} else if (is_pmreg(e, 3, 14, 0)) {                                             /* PMUSERENR_EL0 */
+		c->pmuserenr = (uint32_t)wval & 15u;
+	} else if (e->op0 == 3 && e->op1 == 3 && e->crn == 14 && e->crm == 15 && e->op2 == 7) {   /* PMCCFILTR_EL0 */
+		c->pmccfiltr = wval;
+	}
+	/* PMSWINC, PMXEVTYPER, PMXEVCNTR, PMEVCNTR<n>, PMEVTYPER<n>: N = 0, write ignored */
 }
 
 // ---- the table ------------------------------------------------------------------------------------------------------

@@ -20,6 +20,7 @@
     Debug   op0 = 2 (all: OSLAR/OSLSR/OSDLR, DBG*VR/CR, MDSCR, ...).
     AMU     S3_3_C13_C2..C7_*.
     RNG     RNDR = S3_3_C2_C4_0, RNDRRS = S3_3_C2_C4_1 (read-only).
+  PMU: a virtual cycle counter (see WATARI_PMU below); the other PMU registers are RAZ / WI (N = 0).
   OSLSR_EL1 = S2_0_C1_C1_4; value 0x8 = OSLM[1:0] 0b10 ("OS lock implemented", unlocked).
   [hypothesis: field layout of OSLSR_EL1 recalled from the Arm ARM, not re-read]
   RNDR on failure: "PSTATE.NZCV is set to 0b0100 and the register is 0" (Arm ARM, RNDR). The saved
@@ -44,6 +45,7 @@ typedef int       BOOLEAN;
   #define IN
   #define OUT
   #define CONST  const
+  #define VOID    void
 #endif
 
 #define WSE_MRS_MASK  0xFFF00000U
@@ -103,6 +105,10 @@ WatariSysregEmulated (
     return TRUE;                                              // debug: all
   }
 
+  if ((R->Op1 == 0) && (R->Crn == 9) && (R->Crm == 14)) {
+    return TRUE;                                              // PMINTENSET/CLR_EL1, PMMIR_EL1
+  }
+
   if (R->Op1 != 3) {
     return FALSE;
   }
@@ -126,20 +132,214 @@ WatariSysregEmulated (
   return FALSE;
 }
 
+//
+// Virtual PMUv3, cycle counter only (N = 0 event counters). Same semantics as the Watari EL2 catch mode
+// (el2/vgic/sysreg_catch.c, docs/design/watari-el2/INTERFACES.md 7.5): PMCCNTR_EL0 is a running counter derived from
+// the shared system counter at a nominal 1 GHz (divided by 64 when PMCR.D): while PMCR.E and PMCNTENSET.C are both set it
+// reads Base + scaled(now); otherwise it reads the frozen value. A guest that calibrates against the cycle counter
+// (bootmgr right after start) then sees it advance instead of reading 0 forever.
+// State: ONE global instance, not per core (the handler runs on the boot core while bootmgr runs; secondary cores run
+// firmware code only until Windows installs its own VBAR_EL1) [hypothesis]. Racing cores can at worst see a stale
+// value, never fault.
+//
+#define WSE_PMCR_E     (1U << 0)
+#define WSE_PMCR_C     (1U << 2)
+#define WSE_PMCR_D     (1U << 3)
+#define WSE_PMCR_KEEP  0xF9U          // E | D | X | DP | LC | LP; P and C are write-only actions; N, IDCODE read 0
+#define WSE_PMU_CBIT   0x80000000U
+
+typedef struct {
+  UINT32    Pmcr;
+  UINT32    PmCntEn;                  // bit 31 only
+  UINT32    PmOvs;                    // bit 31 only
+  UINT32    PmIntEn;                  // bit 31 only
+  UINT32    PmUserEnr;                // 4 bits
+  UINT32    PmSelr;                   // 5 bits
+  UINT64    PmCcFiltr;
+  UINT64    Base;                     // running: PMCCNTR = Base + scaled(now), modulo 2^64
+  UINT64    Frozen;                   // not running: PMCCNTR
+} WATARI_PMU;
+
+STATIC
+BOOLEAN
+WatariPmuRunning (
+  IN CONST WATARI_PMU  *P
+  )
+{
+  return ((P->Pmcr & WSE_PMCR_E) != 0) && ((P->PmCntEn & WSE_PMU_CBIT) != 0);
+}
+
+//
+// Cnt * 1e9 / Frq without a 64-bit by 128-bit division: Q * 1e9 + (R * 1e9) / Frq with R < Frq (fits for Frq < 1.8e10).
+//
+STATIC
+UINT64
+WatariPmuScaled (
+  IN CONST WATARI_PMU  *P,
+  IN UINT64            Cnt,
+  IN UINT64            Frq
+  )
+{
+  UINT64  V;
+
+  if (Frq == 0) {
+    return 0;
+  }
+
+  V = (Cnt / Frq) * 1000000000ULL + ((Cnt % Frq) * 1000000000ULL) / Frq;
+  return ((P->Pmcr & WSE_PMCR_D) != 0) ? V / 64 : V;
+}
+
+STATIC
+UINT64
+WatariPmuCycles (
+  IN CONST WATARI_PMU  *P,
+  IN UINT64            Cnt,
+  IN UINT64            Frq
+  )
+{
+  return WatariPmuRunning (P) ? P->Base + WatariPmuScaled (P, Cnt, Frq) : P->Frozen;
+}
+
+STATIC
+VOID
+WatariPmuSet (
+  IN OUT WATARI_PMU  *P,
+  IN UINT64          V,
+  IN UINT64          Cnt,
+  IN UINT64          Frq
+  )
+{
+  P->Frozen = V;
+  P->Base   = V - WatariPmuScaled (P, Cnt, Frq);
+}
+
+// Change PMCR / PMCNTENSET without a jump of the counter value.
+STATIC
+VOID
+WatariPmuCtl (
+  IN OUT WATARI_PMU  *P,
+  IN UINT32          Pmcr,
+  IN UINT32          PmCntEn,
+  IN UINT64          Cnt,
+  IN UINT64          Frq
+  )
+{
+  UINT64  Cur;
+
+  Cur         = WatariPmuCycles (P, Cnt, Frq);
+  P->Pmcr     = Pmcr;
+  P->PmCntEn  = PmCntEn;
+  WatariPmuSet (P, Cur, Cnt, Frq);
+}
+
+STATIC
+BOOLEAN
+WatariIsPm (
+  IN CONST WATARI_SYSREG  *R,
+  IN UINT32               Op1,
+  IN UINT32               Crm,
+  IN UINT32               Op2
+  )
+{
+  return (R->Op0 == 3) && (R->Op1 == Op1) && (R->Crn == 9) && (R->Crm == Crm) && (R->Op2 == Op2);
+}
+
 /**
-  Value a read returns. OSLSR_EL1 = 0x8, everything else 0 (RAZ).
+  Value a read returns. OSLSR_EL1 = 0x8, the virtual PMU registers their state, everything else 0 (RAZ).
 **/
 STATIC
 UINT64
 WatariSysregReadValue (
-  IN CONST WATARI_SYSREG  *R
+  IN CONST WATARI_SYSREG  *R,
+  IN CONST WATARI_PMU     *P,
+  IN UINT64               Cnt,
+  IN UINT64               Frq
   )
 {
   if ((R->Op0 == 2) && (R->Op1 == 0) && (R->Crn == 1) && (R->Crm == 1) && (R->Op2 == 4)) {
     return 0x8;
   }
 
+  if (WatariIsPm (R, 3, 12, 0)) {
+    return P->Pmcr & WSE_PMCR_KEEP;
+  }
+
+  if (WatariIsPm (R, 3, 12, 1) || WatariIsPm (R, 3, 12, 2)) {
+    return P->PmCntEn;
+  }
+
+  if (WatariIsPm (R, 3, 12, 3) || WatariIsPm (R, 3, 14, 3)) {
+    return P->PmOvs;
+  }
+
+  if (WatariIsPm (R, 0, 14, 1) || WatariIsPm (R, 0, 14, 2)) {
+    return P->PmIntEn;
+  }
+
+  if (WatariIsPm (R, 3, 12, 5)) {
+    return P->PmSelr;
+  }
+
+  if (WatariIsPm (R, 3, 13, 0)) {
+    return WatariPmuCycles (P, Cnt, Frq);
+  }
+
+  if (WatariIsPm (R, 3, 14, 0)) {
+    return P->PmUserEnr;
+  }
+
+  if ((R->Op0 == 3) && (R->Op1 == 3) && (R->Crn == 14) && (R->Crm == 15) && (R->Op2 == 7)) {
+    return P->PmCcFiltr;
+  }
+
   return 0;
+}
+
+//
+// The effect of a write (Value = the register written, 0 for XZR).
+//
+STATIC
+VOID
+WatariSysregWriteValue (
+  IN CONST WATARI_SYSREG  *R,
+  IN OUT WATARI_PMU       *P,
+  IN UINT64               Value,
+  IN UINT64               Cnt,
+  IN UINT64               Frq
+  )
+{
+  UINT32  V32;
+
+  V32 = (UINT32)Value;
+  if (WatariIsPm (R, 3, 12, 0)) {
+    WatariPmuCtl (P, V32 & WSE_PMCR_KEEP, P->PmCntEn, Cnt, Frq);
+    if ((V32 & WSE_PMCR_C) != 0) {
+      WatariPmuSet (P, 0, Cnt, Frq);
+    }
+  } else if (WatariIsPm (R, 3, 12, 1)) {
+    WatariPmuCtl (P, P->Pmcr, P->PmCntEn | (V32 & WSE_PMU_CBIT), Cnt, Frq);
+  } else if (WatariIsPm (R, 3, 12, 2)) {
+    WatariPmuCtl (P, P->Pmcr, P->PmCntEn & ~(V32 & WSE_PMU_CBIT), Cnt, Frq);
+  } else if (WatariIsPm (R, 3, 12, 3)) {
+    P->PmOvs &= ~(V32 & WSE_PMU_CBIT);
+  } else if (WatariIsPm (R, 3, 14, 3)) {
+    P->PmOvs |= V32 & WSE_PMU_CBIT;
+  } else if (WatariIsPm (R, 0, 14, 1)) {
+    P->PmIntEn |= V32 & WSE_PMU_CBIT;
+  } else if (WatariIsPm (R, 0, 14, 2)) {
+    P->PmIntEn &= ~(V32 & WSE_PMU_CBIT);
+  } else if (WatariIsPm (R, 3, 12, 5)) {
+    P->PmSelr = V32 & 31U;
+  } else if (WatariIsPm (R, 3, 13, 0)) {
+    WatariPmuSet (P, Value, Cnt, Frq);
+  } else if (WatariIsPm (R, 3, 14, 0)) {
+    P->PmUserEnr = V32 & 15U;
+  } else if ((R->Op0 == 3) && (R->Op1 == 3) && (R->Crn == 14) && (R->Crm == 15) && (R->Op2 == 7)) {
+    P->PmCcFiltr = Value;
+  }
+
+  // PMSWINC, PMXEVTYPER, PMXEVCNTR, PMEVCNTR<n>, PMEVTYPER<n>, debug, AMU: N = 0 / not implemented, write ignored
 }
 
 /**
@@ -149,6 +349,8 @@ WatariSysregReadValue (
   @param[in]      Word      The instruction word. Only decoded here; never kept.
   @param[in,out]  X         Saved X0..X30 (31 entries; X[Rt] for Rt < 31).
   @param[in,out]  Spsr      Saved SPSR (RNDR failure sets NZCV = 0b0100).
+  @param[in,out]  Pmu       The virtual PMU state.
+  @param[in]      Cnt       The system counter now (CNTVCT_EL0), Frq its frequency (CNTFRQ_EL0, Hz).
   @param[out]     Decoded   The decoded encoding, for the one-line log. Valid if TRUE.
 **/
 STATIC
@@ -157,6 +359,9 @@ WatariSysregEmulate (
   IN     UINT32         Word,
   IN OUT UINT64         *X,
   IN OUT UINT64         *Spsr,
+  IN OUT WATARI_PMU     *Pmu,
+  IN     UINT64         Cnt,
+  IN     UINT64         Frq,
   OUT    WATARI_SYSREG  *Decoded
   )
 {
@@ -166,12 +371,14 @@ WatariSysregEmulate (
 
   if (Decoded->IsRead) {
     if (Decoded->Rt < 31) {
-      X[Decoded->Rt] = WatariSysregReadValue (Decoded);
+      X[Decoded->Rt] = WatariSysregReadValue (Decoded, Pmu, Cnt, Frq);
     }
 
     if ((Decoded->Op0 == 3) && (Decoded->Crn == 2)) {         // RNDR / RNDRRS: report "failure"
       *Spsr = (*Spsr & ~WSE_SPSR_NZCV_MASK) | WSE_SPSR_Z;
     }
+  } else {
+    WatariSysregWriteValue (Decoded, Pmu, (Decoded->Rt < 31) ? X[Decoded->Rt] : 0, Cnt, Frq);
   }
 
   return TRUE;

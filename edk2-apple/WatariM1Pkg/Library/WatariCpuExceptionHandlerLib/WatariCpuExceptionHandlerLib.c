@@ -356,7 +356,7 @@ ArchVectorConfig (
 // When the firmware's EL1 synchronous vector takes EC 0x00 (UNDEFINED) from code that is not ours
 // (bootmgr/winload run with EDK2's VBAR_EL1 still installed), the 32-bit word at ELR is read ONLY to
 // decide whether it is an MRS/MSR (register) of an emulated group (PMU, debug, AMU, RNDR; see
-// WatariSysregEmu.h). If so the access is emulated (reads give 0, OSLSR_EL1 gives 0x8, RNDR reports
+// WatariSysregEmu.h). If so the access is emulated (reads give 0 except the virtual PMU cycle counter, which runs, OSLSR_EL1 gives 0x8, RNDR reports
 // failure through NZCV; writes are ignored), ELR advances by 4 and the exception returns without a dump.
 // The word itself is never stored, logged or printed: the console line carries only the decoded
 // encoding and the PC. Anything else falls through to the stock report / dump / dead loop.
@@ -375,6 +375,7 @@ ArchVectorConfig (
 STATIC UINT32  mEmuSeen[WATARI_EMU_SEEN_MAX];
 STATIC UINT32  mEmuSeenCount;
 STATIC UINT32  mEmuLines;
+STATIC WATARI_PMU  mEmuPmu;           // the virtual PMU cycle counter; one global instance, see WatariSysregEmu.h
 
 /**
   Tries to emulate a system-register access that raised EC 0x00. Returns TRUE if the saved context was
@@ -394,6 +395,8 @@ WatariTryEmulateSysreg (
   WATARI_SYSREG  R;
   CHAR8          Buffer[MAX_PRINT_CHARS];
   UINTN          CharCount;
+  UINT64         Cnt;
+  UINT64         Frq;
 
   if (!FixedPcdGetBool (PcdWatariEl1SysregEmulation)) {
     return FALSE;
@@ -415,7 +418,9 @@ WatariTryEmulateSysreg (
   // EC 0x00 is not an instruction abort, so the word at ELR was fetched and is mapped.
   Word = *(volatile UINT32 *)(UINTN)Context->ELR;
 
-  if (!WatariSysregEmulate (Word, &Context->X0, &Context->SPSR, &R)) {
+  __asm__ volatile ("isb; mrs %0, cntvct_el0" : "=r" (Cnt));
+  __asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (Frq));
+  if (!WatariSysregEmulate (Word, &Context->X0, &Context->SPSR, &mEmuPmu, Cnt, Frq, &R)) {
     return FALSE;
   }
 
