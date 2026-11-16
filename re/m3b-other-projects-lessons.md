@@ -19,3 +19,19 @@ Sources: `documentation/ARCHITECTURE.md`, `LIMITATIONS.md`, `DEVELOPMENT_HISTORY
 
 ## bootcamparm.com
 - Public status, 3 Nov: "stop before the PMCR_EL0 read". This matches our bench finding (bootmgr reads PMCCNTR_EL0 and PMCR_EL0 first).
+
+## PMUv3 on the M1: their mechanism vs ours (2026-11-16)
+Their m1n1-based hypervisor's approach was studied from its code. We copied nothing; our implementation was written from this description and the Arm ARM.
+
+| | Theirs | Ours (`m3a-catch-mode`) |
+|---|---|---|
+| Routing PMUv3 accesses to EL2 | HACR_EL2 bit 56 | HACR_EL2 bit 56 (`wel2.hacr`, default on the M1) [hypothesis until rung HACR0] |
+| Exception format | EC 0x18, or EC 0x3F with the MSR ISS in AFSR1_EL2 | same; AFSR1 accepted only if IL=1, [63:25]=0 and the ISS decodes to an owned register; otherwise ESR, otherwise UNDEF reflected to EL1 |
+| PMCCNTR_EL0 source | Apple PMC0 (the hardware cycle counter), 1:1 | virtual: CNTPCT scaled to a nominal 1 GHz, one global always-running counter (`wel2.vpmu=global`) |
+| PMCR/PMCNTEN/PMOVS/PMINTEN | mapped onto Apple PMCR0/PMSR | virtual state, read back as written, N=0 |
+| PMUSERENR_EL0 | reads 0, writes ignored | stored; mirrored to the hardware only on cores with PMUv3 (not on the M1) |
+| Non-PMU accesses caught by the trap | not studied | reflected to the guest as EL1 UNDEF, the behaviour without HACR |
+| Firmware side | nothing for the PMU | EDK2 EL1 net emulates the first accesses while EDK2's vectors are live (bootmgr replaces VBAR_EL1 right after) |
+| Diagnostics | — | fixed panel status row (MDCR stuck, HACR, CATCH count/last), `GUEST EXC`, `EL1EMU count=`, proxy rung HACR0 (no jump) |
+
+Why our counter differs: it does not touch the Apple PMU registers, which the layer already uses for its FIQ path. With the MDCR route on QEMU, the bench reaches Setup (`final1`). If Windows on the M1 needs real cycles, switching the source to PMC0 is a small change.
