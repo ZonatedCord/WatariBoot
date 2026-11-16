@@ -16,6 +16,7 @@ Claims are marked **[verified: source]** or **[hypothesis]**; everything not yet
 | `j293-minimal.dts/.dtb` | minimal j293 device tree that m1n1's `kboot_prepare_dt` fills (DESIGN 4.2) |
 | `watari-load.py` | the host loader |
 | `ehw2.py` | optional read-only inventory of the state inherited from iBoot/m1n1 (`docs/procedures/m3a-ehw2-rung.md`) |
+| `hacr_probe.py` | HACR_EL2[56] readback on the boot core (writes only HACR_EL2, restores it), rung `HACR0`; `--el1` also tries an EL1 PMU access (opt-in) |
 | `idregs.py` | read-only dump and decode of the CPU ID/feature registers of the boot core, rung `ID0` (`docs/procedures/m3a-monday-runbook.md`) |
 | `monday.py` | the Monday runner for the Claude session on the host Mac (T16i): `preflight`, `rung <ID>` (the procedures' exact loader commands, automatic pre-jump checks, photo checklist, results file), `next`, `verdict`, `confirm`; see `docs/procedures/m3a-monday-runbook.md` |
 | `WATARI_M1_EFI.fd` | EDK2 for the M1 (`tools/build-edk2-m1.sh`, copied from `$WATARI_DATA/build-m1/`), the guest of rungs D0 and D2 (day 3) |
