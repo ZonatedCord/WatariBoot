@@ -33,6 +33,11 @@ static void t_decode(void)
     CHECK(wel2_catch_decode(iss(2, 0, 1, 0, 4, 31, 0), &e));            /* OSLAR_EL1 write of XZR */
     CHECK_EQ(e.op0, 2); CHECK_EQ(e.rt, 31); CHECK_EQ(e.rd, 0);
     CHECK(!wel2_catch_decode(iss(1, 0, 8, 7, 0, 0, 0), &e));            /* TLBI: a system instruction, never ours */
+    CHECK(!wel2_catch_decode(iss(1, 3, 7, 5, 1, 0, 0), &e));            /* DC CVAC / IC: neither */
+    CHECK(wel2_catch_decode(iss(1, 0, 11, 2, 3, 7, 0), &e));            /* SYS with CRn 11: IMPLEMENTATION DEFINED (TIDCP) */
+    CHECK_EQ(e.op0, 1); CHECK_EQ(e.crn, 11); CHECK_EQ(e.rd, 0);
+    CHECK(wel2_catch_decode(iss(1, 0, 15, 2, 3, 7, 1), &e));            /* SYSL with CRn 15 */
+    CHECK_EQ(e.op0, 1); CHECK_EQ(e.crn, 15); CHECK_EQ(e.rd, 1);
     CHECK(wel2_catch_decode(iss(3, 7, 15, 15, 7, 0, 1) | 0xfe000000u, &e));   /* bits above the ISS do not matter */
     CHECK_EQ(e.crn, 15); CHECK_EQ(e.crm, 15); CHECK_EQ(e.op2, 7); CHECK_EQ(e.op1, 7);
 }
@@ -78,6 +83,8 @@ static void t_classify_debug_impdef_actlr(void)
     CHECK_EQ(cls(2, 0, 7, 8, 6), WEL2_CATCH_DEBUG);         /* DBGCLAIMSET_EL1 */
     CHECK_EQ(cls(3, 0, 1, 0, 1), WEL2_CATCH_ACTLR);         /* ACTLR_EL1 */
     for (unsigned crm = 0; crm < 16; crm++) {
+        CHECK_EQ(cls(1, 0, 11, crm, 3), WEL2_CATCH_IMPDEF);     /* SYS / SYSL */
+        CHECK_EQ(cls(1, 7, 15, crm, 0), WEL2_CATCH_IMPDEF);
         CHECK_EQ(cls(3, 0, 11, crm, 3), WEL2_CATCH_IMPDEF);
         CHECK_EQ(cls(3, 1, 15, crm, 0), WEL2_CATCH_IMPDEF);
         CHECK_EQ(cls(3, 5, 15, crm, 7), WEL2_CATCH_IMPDEF);
@@ -98,6 +105,8 @@ static void t_not_owned(void)
     CHECK_EQ(cls(3, 3, 0, 0, 1), WEL2_CATCH_NONE);          /* CTR_EL0 */
     CHECK_EQ(cls(3, 0, 1, 0, 0), WEL2_CATCH_NONE);
     CHECK_EQ(cls(1, 0, 8, 7, 0), WEL2_CATCH_NONE);          /* TLBI */
+    CHECK_EQ(cls(1, 3, 7, 5, 1), WEL2_CATCH_NONE);          /* DC */
+    CHECK_EQ(cls(1, 0, 12, 0, 0), WEL2_CATCH_NONE);
     CHECK_EQ(cls(0, 0, 0, 0, 0), WEL2_CATCH_NONE);
 }
 
@@ -118,6 +127,27 @@ static void t_values(void)
     CHECK_EQ(wel2_catch_value(&e), 0);
     CHECK(wel2_catch_decode(iss(2, 0, 1, 3, 4, 0, 1), &e));         /* OSDLR_EL1: not locked */
     CHECK_EQ(wel2_catch_value(&e), 0);
+}
+
+/* OSLAR_EL1 / OSLSR_EL1: a per-core OS lock bit; SYSL reads 0. */
+static void t_oslock(void)
+{
+    struct wel2_sysreg_enc oslar, oslsr, sysl;
+    struct wel2_catch_cpu a = { 0 }, b = { 0 };
+
+    CHECK(wel2_catch_decode(iss(2, 0, 1, 0, 4, 1, 0), &oslar));
+    CHECK(wel2_catch_decode(iss(2, 0, 1, 1, 4, 1, 1), &oslsr));
+    CHECK(wel2_catch_decode(iss(1, 0, 15, 4, 2, 1, 1), &sysl));
+    CHECK_EQ(wel2_catch_read(&a, &oslsr), 8);                       /* clear at start */
+    wel2_catch_write(&a, &oslar, 1);                                /* lock */
+    CHECK_EQ(wel2_catch_read(&a, &oslsr), 0xa);                     /* OSLM[1] | OSLK */
+    CHECK_EQ(wel2_catch_read(&b, &oslsr), 8);                       /* the other core is unaffected */
+    wel2_catch_write(&a, &oslar, 0xfffffffeull);                    /* bit 0 clear: unlock */
+    CHECK_EQ(wel2_catch_read(&a, &oslsr), 8);
+    wel2_catch_write(&a, &oslsr, 1);                                /* a write to another register changes nothing */
+    CHECK_EQ(wel2_catch_read(&a, &oslsr), 8);
+    CHECK_EQ(wel2_catch_read(&a, &sysl), 0);
+    CHECK_EQ(wel2_catch_value(&oslsr), 8);                          /* the stateless value is the unlocked one */
 }
 
 static const char *nm(unsigned op0, unsigned op1, unsigned crn, unsigned crm, unsigned op2)
@@ -147,6 +177,8 @@ static void t_names(void)
     CHECK(!strcmp(nm(3, 0, 1, 0, 1), "ACTLR_EL1"));
     CHECK(!strcmp(nm(3, 0, 15, 3, 1), ""));                         /* an IMPDEF register has no architectural name */
     CHECK(!strcmp(nm(2, 0, 3, 3, 3), ""));
+    CHECK(!strcmp(nm(1, 0, 11, 3, 3), "SYS-IMPDEF"));
+    CHECK(!strcmp(nm(1, 2, 15, 0, 7), "SYS-IMPDEF"));
     /* a tiny buffer is cut, terminated and never overrun */
     {
         struct wel2_sysreg_enc e;
@@ -177,27 +209,39 @@ static void t_table(void)
     CHECK_EQ(t.n, 2); CHECK_EQ(t.total, 4); CHECK_EQ(t.overflow, 0);
     CHECK_EQ(t.e[0].count, 3); CHECK_EQ(t.e[0].first_pc, 0x1000); CHECK_EQ(t.e[0].core, 0);
     CHECK_EQ(t.e[1].count, 1); CHECK_EQ(t.e[1].first_pc, 0x1010); CHECK_EQ(t.e[1].core, 2);
-    /* fill the table with distinct encodings (DBGBVR<n> reads: 16, then DBGBCR<n>) and past it */
-    for (unsigned i = 0; i < 40; i++) {
-        struct wel2_sysreg_enc d;
-        enum wel2_catch_rec r;
+    /* fill the table with distinct encodings and past it: 2 + 62 fit, then the overflow is logged, each encoding once */
+    for (unsigned i = 0; i < 62; i++) {
+        struct wel2_sysreg_enc d = { .op0 = 3, .op1 = 3, .crn = 14, .crm = 8 + (i / 8), .op2 = i % 8, .rd = 1 };
 
-        wel2_catch_decode(iss(2, 0, 0, i % 16, 4 + i / 16, 0, 1), &d);
-        r = wel2_catch_record(&t, &d, 0x2000 + i, 0, &idx);
-        if (2 + i < WEL2_CATCH_TAB_N)
-            CHECK_EQ(r, WEL2_CATCH_REC_NEW);
-        else
-            CHECK_EQ(r, WEL2_CATCH_REC_OVERFLOW);
+        CHECK_EQ(wel2_catch_record(&t, &d, 0x2000 + i, 0, &idx), WEL2_CATCH_REC_NEW);
     }
     CHECK_EQ(t.n, WEL2_CATCH_TAB_N);
-    CHECK_EQ(t.overflow, 40 - (WEL2_CATCH_TAB_N - 2));
-    CHECK_EQ(t.total, 4 + 40);
-    /* a known one still counts when the table is full; an unknown one only overflows */
+    CHECK_EQ(t.overflow, 0);
+    /* a known one still counts when the table is full */
     CHECK_EQ(wel2_catch_record(&t, &e, 0x1100, 0, &idx), WEL2_CATCH_REC_OLD);
     CHECK_EQ(t.e[0].count, 4);
-    wel2_catch_decode(iss(3, 3, 14, 8, 0, 0, 1), &e);
-    CHECK_EQ(wel2_catch_record(&t, &e, 0x1200, 0, &idx), WEL2_CATCH_REC_OVERFLOW);
+    t.total = 0;
+    for (unsigned i = 0; i < WEL2_CATCH_OVF_LINES + 10; i++) {
+        struct wel2_sysreg_enc d = { .op0 = 2, .op1 = 0, .crn = 0, .crm = i % 16, .op2 = 4 + (i / 16) % 4, .rd = 0 };
+        enum wel2_catch_rec r;
+
+        if (i >= 64)                                   /* only 64 distinct exist in this family: reuse with another crn */
+            d.crn = 1 + (i - 64);
+        r = wel2_catch_record(&t, &d, 0x3000 + i, 0, &idx);
+        if (i < WEL2_CATCH_OVF_LINES)
+            CHECK_EQ(r, WEL2_CATCH_REC_OVERFLOW);      /* each new distinct encoding past the table is reported ... */
+        else if (i == WEL2_CATCH_OVF_LINES)
+            CHECK_EQ(r, WEL2_CATCH_REC_OVERFLOW_CAP);  /* ... up to the limit, then once "suppressed" ... */
+        else
+            CHECK_EQ(r, WEL2_CATCH_REC_OVERFLOW_OLD);  /* ... then silence */
+        /* the same encoding again is silent and counted */
+        if (i < WEL2_CATCH_OVF_LINES)
+            CHECK_EQ(wel2_catch_record(&t, &d, 0x3100, 0, &idx), WEL2_CATCH_REC_OVERFLOW_OLD);
+    }
     CHECK_EQ(t.n, WEL2_CATCH_TAB_N);
+    CHECK_EQ(t.overflow, 2u * WEL2_CATCH_OVF_LINES + 10u);
+    CHECK_EQ(t.total, 2u * WEL2_CATCH_OVF_LINES + 10u);
+    CHECK(t.ovf_capped);
 }
 
 static void t_format(void)
@@ -222,6 +266,16 @@ static void t_format(void)
         CHECK_EQ(strlen(small), 11);
         CHECK(!strncmp(small, "CATCH W S2_", 11));
     }
+    {
+        struct wel2_sysreg_enc o = { .op0 = 3, .op1 = 3, .crn = 14, .crm = 9, .op2 = 2, .rd = 0 };
+
+        wel2_catch_format_overflow(b, sizeof(b), &o, 0xfffff00012340000ull, 2);
+        CHECK(!strcmp(b, "CATCH W S3_3_C14_C9_2 PMEVCNTR10_EL0 PC=0xfffff00012340000 core=2 count=overflow"));
+        o.op0 = 1; o.op1 = 0; o.crn = 15; o.crm = 1; o.op2 = 0;
+        wel2_catch_format_overflow(b, sizeof(b), &o, 0x40, 0);
+        CHECK(!strcmp(b, "CATCH W S1_0_C15_C1_0 SYS-IMPDEF PC=0x40 core=0 count=overflow"));
+        CHECK(!strcmp(WEL2_CATCH_OVF_NOTICE, "CATCH overflow: further lines suppressed"));
+    }
     t.n = 3; t.total = 99; t.overflow = 5;
     wel2_catch_format_summary(b, sizeof(b), &t);
     CHECK(!strcmp(b, "CATCH SUMMARY distinct=3 total=99 overflow=5"));
@@ -243,6 +297,7 @@ int main(void)
     RUN(t_classify_debug_impdef_actlr);
     RUN(t_not_owned);
     RUN(t_values);
+    RUN(t_oslock);
     RUN(t_names);
     RUN(t_table);
     RUN(t_format);

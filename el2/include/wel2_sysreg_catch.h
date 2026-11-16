@@ -12,7 +12,10 @@
  *   MDCR_EL2.TDA (9)    EL1/EL0 accesses to the debug registers (DBGB*, DBGW*, MDSCR_EL1, MDCCSR_EL0, OSDTR*, ...)
  *   MDCR_EL2.TDOSA (10) the OS-related debug registers (OSLAR_EL1, OSLSR_EL1, OSDLR_EL1, DBGPRCR_EL1, DBGCLAIM*)
  *   MDCR_EL2.TDRA (11)  the debug ROM address registers (MDRAR_EL1)
- *   HCR_EL2.TIDCP (20)  the IMPLEMENTATION DEFINED registers (op0 = 3, CRn = 11 or 15)
+ *   HCR_EL2.TIDCP (20)  the IMPLEMENTATION DEFINED registers (op0 = 3, CRn = 11 or 15) and, per the Arm ARM description of TIDCP
+ *                       ("Trap IMPLEMENTATION DEFINED functionality": EL1/EL0 accesses to the IMPLEMENTATION DEFINED System
+ *                       registers and System instructions in the reserved encoding spaces, i.e. MSR/MRS op0 = 3 and
+ *                       SYS/SYSL op0 = 1, in both cases CRn = 11 or 15) [hypothesis, from memory]
  *   HCR_EL2.TACR (21)   ACTLR_EL1
  * All of them arrive as EC 0x18 (MSR/MRS/system instruction), ISS as in Arm ARM D24.2 ESR_EL2.
  *
@@ -25,7 +28,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define WEL2_CATCH_TAB_N     32u    /* distinct encodings kept; later ones are only counted in `overflow` */
+#define WEL2_CATCH_TAB_N     64u    /* distinct encodings kept; later ones are counted in `overflow` and logged (rate limited) */
+#define WEL2_CATCH_OVF_LINES 64u    /* at most this many "count=overflow" lines, then one "further lines suppressed" line */
 #define WEL2_CATCH_NAME_MAX  24u
 #define WEL2_CATCH_LINE_MAX  112u
 
@@ -44,7 +48,7 @@ enum wel2_catch_class {
 	WEL2_CATCH_NONE = 0,         /* not ours */
 	WEL2_CATCH_PMU,              /* Performance Monitors (op0 3, CRn 9 / CRn 14) */
 	WEL2_CATCH_DEBUG,            /* debug (op0 2) */
-	WEL2_CATCH_IMPDEF,           /* op0 3, CRn 11 or 15 */
+	WEL2_CATCH_IMPDEF,           /* op0 3 (MSR/MRS) or op0 1 (SYS/SYSL), CRn 11 or 15 */
 	WEL2_CATCH_ACTLR,            /* ACTLR_EL1 */
 };
 
@@ -53,8 +57,9 @@ struct wel2_sysreg_enc {
 	uint8_t op0, op1, crn, crm, op2, rd, rt;
 };
 
-/* Decode the ISS of an EC 0x18 trap. Returns false for op0 < 2 (system instructions SYS/SYSL: TLBI, DC, ...), which
- * this module never owns. rt = 31 means XZR. */
+/* Decode the ISS of an EC 0x18 trap. Returns false for op0 < 2 (system instructions SYS/SYSL: TLBI, DC, ...), which this
+ * module never owns, except SYS/SYSL with op0 = 1 and CRn 11 or 15 (HCR_EL2.TIDCP, see above): rd = 1 is SYSL (a read). rt = 31
+ * means XZR. */
 bool wel2_catch_decode(uint32_t iss, struct wel2_sysreg_enc *e);
 
 enum wel2_catch_class wel2_catch_classify(const struct wel2_sysreg_enc *e);
@@ -63,8 +68,17 @@ enum wel2_catch_class wel2_catch_classify(const struct wel2_sysreg_enc *e);
  * (capacity cap, NUL-terminated). Returns its length, 0 when unknown (buf is then ""). */
 unsigned wel2_catch_name(const struct wel2_sysreg_enc *e, char *buf, unsigned cap);
 
-/* The value a read of an owned encoding returns. Meaningful only when classify() != NONE. */
+/* The value a read of an owned encoding returns when the core's OS lock is clear. Meaningful only when classify() != NONE. */
 uint64_t wel2_catch_value(const struct wel2_sysreg_enc *e);
+
+/* Per-core state of the emulation: the OS Lock bit (OSLAR_EL1 sets / clears it, OSLSR_EL1.OSLK reads it back). Zero-initialise. */
+struct wel2_catch_cpu {
+	uint8_t oslk;
+};
+/* The value of a read on this core (OSLSR_EL1 = 0x8 | OSLK << 1, everything else as wel2_catch_value) and the effect of a write
+ * (wval = the written register, 0 for XZR): OSLAR_EL1 bit 0 is the new OSLK [hypothesis: Arm ARM OSLAR_EL1.OSLK]. */
+uint64_t wel2_catch_read(const struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e);
+void wel2_catch_write(struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e, uint64_t wval);
 
 /* The table of distinct (op0, op1, CRn, CRm, op2, direction) encodings. rt is not part of the key. Zero-initialise it. */
 struct wel2_catch_ent {
@@ -78,8 +92,18 @@ struct wel2_catch_tab {
 	unsigned n;                  /* entries used */
 	uint64_t total;              /* all catches */
 	uint64_t overflow;           /* catches of encodings that did not fit the table */
+	/* encodings that did not fit, remembered (packed) so that each is logged once; at most WEL2_CATCH_OVF_LINES of them */
+	uint32_t ovf_key[WEL2_CATCH_OVF_LINES];
+	unsigned ovf_n;
+	bool ovf_capped;             /* the "further lines suppressed" notice was handed out */
 };
-enum wel2_catch_rec { WEL2_CATCH_REC_OLD = 0, WEL2_CATCH_REC_NEW, WEL2_CATCH_REC_OVERFLOW };
+enum wel2_catch_rec {
+	WEL2_CATCH_REC_OLD = 0,      /* seen before: only counted */
+	WEL2_CATCH_REC_NEW,          /* first time, fits the table: log it (count=1) */
+	WEL2_CATCH_REC_OVERFLOW,     /* first time, table full: log it with "count=overflow" (at most WEL2_CATCH_OVF_LINES times) */
+	WEL2_CATCH_REC_OVERFLOW_CAP, /* the overflow lines are used up: say "further lines suppressed" (once) */
+	WEL2_CATCH_REC_OVERFLOW_OLD, /* counted in `overflow`, nothing to log */
+};
 /* Count one catch. NEW = first time this encoding is seen (and it fits the table); *idx is its entry. */
 enum wel2_catch_rec wel2_catch_record(struct wel2_catch_tab *t, const struct wel2_sysreg_enc *e, uint64_t pc,
 				      unsigned core, unsigned *idx);
@@ -88,6 +112,9 @@ enum wel2_catch_rec wel2_catch_record(struct wel2_catch_tab *t, const struct wel
  * no newline). The first-catch line uses prefix "CATCH" and count 1. Returns the length. */
 unsigned wel2_catch_format(char *buf, unsigned cap, const char *prefix, const struct wel2_sysreg_enc *e, uint64_t pc,
 			   unsigned core, uint32_t count);
+/* The same line for an encoding that did not fit the table: "... PC=0x<hex> core=<n> count=overflow". */
+unsigned wel2_catch_format_overflow(char *buf, unsigned cap, const struct wel2_sysreg_enc *e, uint64_t pc, unsigned core);
+#define WEL2_CATCH_OVF_NOTICE "CATCH overflow: further lines suppressed"
 /* "CATCH SUMMARY distinct=<n> total=<n> overflow=<n>" */
 unsigned wel2_catch_format_summary(char *buf, unsigned cap, const struct wel2_catch_tab *t);
 

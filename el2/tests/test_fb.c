@@ -483,16 +483,38 @@ static void write_ppm(const struct screen *s, const char *path)
 	fclose(f);
 }
 
-/* Catch area (wel2.catch=1): enabling moves the scrolling text down, the lines and the guest exception are drawn in big text
- * and never overwritten by the scrolling area; the hand-over band includes the area. */
+/* Does the text line at pixel row y0 show `str`, drawn at integer scale sc (the catch area runs at half the text scale)? */
+static bool line_is_sc(const struct screen *s, uint32_t y0, const char *str, uint32_t fg_rgb, uint32_t bg_rgb, uint32_t sc)
+{
+	uint32_t fg = wel2_fb_pixel(&s->fb, fg_rgb), bg = wel2_fb_pixel(&s->fb, bg_rgb);
+	uint32_t cols = s->fb.cols * s->fb.scale / sc;
+	size_t len = strlen(str);
+
+	for (uint32_t col = 0; col < cols; col++) {
+		const uint8_t *g = font_rows(col < len ? str[col] : ' ');
+
+		for (uint32_t cy = 0; cy < 9 * sc; cy++)
+			for (uint32_t cx = 0; cx < 6 * sc; cx++) {
+				uint32_t gx = cx / sc, gy = cy / sc;
+				bool lit = gx < 5 && gy < 7 && (g[gy] & (1u << (4 - gx)));
+
+				if (at(s, 8 + col * 6 * sc + cx, y0 + cy) != (lit ? fg : bg))
+					return false;
+			}
+	}
+	return true;
+}
+
+/* Catch area (wel2.catch=1): enabling moves the scrolling text down by three half-scale rows; the first catch, the last catch and
+ * the guest exception are drawn there and never overwritten by the scrolling area; the hand-over band includes the area. */
 static void t_catch_area(void)
 {
 	struct screen s;
-	uint32_t chh, cy0, ty_old;
-	char l1[16] = "ONE", more[8];
+	uint32_t chh, cch, cy0, ty_old;
 
 	scr_new(&s, WEL2_FB_X8R8G8B8, 2560, 1600, 0);
 	chh = 54;
+	cch = 27;                                                       /* a catch row: scale 6 / 2 = 3 */
 	ty_old = s.fb.text_y;
 	CHECK_EQ(ty_old, 306);
 	wel2_fb_catch_note(&s.fb, "CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0x10 core=0 count=1");      /* before enable: kept, nothing drawn */
@@ -500,36 +522,27 @@ static void t_catch_area(void)
 	wel2_fb_catch_enable(&s.fb);
 	CHECK_EQ(s.fb.catch_on, 1);
 	CHECK_EQ(s.fb.catch_y, ty_old - 4);
-	CHECK_EQ(s.fb.text_y, ty_old + WEL2_FB_CATCH_ROWS * chh);
+	CHECK_EQ(s.fb.text_y, ty_old + WEL2_FB_CATCH_ROWS * cch);
+	CHECK_EQ(s.fb.text_y, ty_old + 81);
 	CHECK_EQ(s.fb.rows, (1600 - s.fb.text_y) / chh);
 	cy0 = s.fb.catch_y;
 	wel2_fb_checkpoint(&s.fb, 0, WEL2_RGB_GREEN);
 	CHECK_EQ(at(&s, 0, s.fb.text_y - 4), wel2_fb_pixel(&s.fb, C_RULE));           /* the rule moved below the area */
-	CHECK(line_is(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u));
-	CHECK(line_is(&s, cy0 + chh, "LAST  CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, WEL2_RGB_BLACK));
-	CHECK(line_is(&s, cy0 + 5 * chh, "GUEST EXCEPTION: NONE", C_NOERR, WEL2_RGB_BLACK));
-	/* six more catches: the first stays, the list keeps the newest four */
-	for (int i = 0; i < 6; i++) {
-		l1[3] = (char)('1' + i);
-		l1[4] = 0;
-		wel2_fb_catch_note(&s.fb, l1);
-	}
-	CHECK(line_is(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u));
-	(void)more;
-	{
-		const char *want[4] = { "LAST  ONE6", "LAST  ONE5", "LAST  ONE4", "LAST  ONE3" };
-
-		for (int i = 0; i < 4; i++)
-			CHECK(line_is(&s, cy0 + (1 + i) * chh, want[i], 0xffd040u, WEL2_RGB_BLACK));
-	}
-	wel2_fb_catch_guest_exc(&s.fb, "GUEST EXCEPTION T0 ESR 0x02000000 EC 0x00", "ELR 0x0000000000001000 FAR 0x0000000000002000");
-	CHECK(line_is(&s, cy0 + 5 * chh, "GUEST EXCEPTION T0 ESR 0X02000000 EC 0X00", WEL2_RGB_WHITE, 0xa00000u));
-	CHECK(line_is(&s, cy0 + 6 * chh, "ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u));
+	CHECK(line_is_sc(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u, 3));
+	CHECK(line_is_sc(&s, cy0 + cch, "LAST  CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, WEL2_RGB_BLACK, 3));
+	CHECK(line_is_sc(&s, cy0 + 2 * cch, "GUEST EXCEPTION: NONE", C_NOERR, WEL2_RGB_BLACK, 3));
+	/* more catches: the first stays, the last row shows the newest */
+	wel2_fb_catch_note(&s.fb, "TWO");
+	wel2_fb_catch_note(&s.fb, "THREE");
+	CHECK(line_is_sc(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u, 3));
+	CHECK(line_is_sc(&s, cy0 + cch, "LAST  THREE", 0xffd040u, WEL2_RGB_BLACK, 3));
+	wel2_fb_catch_guest_exc(&s.fb, "GUEST EXCEPTION ESR 0x02000000 ELR 0x0000000000001000 FAR 0x0000000000002000");
+	CHECK(line_is_sc(&s, cy0 + 2 * cch, "GUEST EXCEPTION ESR 0X02000000 ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u, 3));
 	/* the scrolling text starts below the area and never touches it, even when it wraps and clears several times */
 	for (int i = 0; i < 200; i++)
 		wel2_fb_puts(&s.fb, "SCROLLING LINE\n");
-	CHECK(line_is(&s, cy0 + 6 * chh, "ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u));
-	CHECK(line_is(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u));
+	CHECK(line_is_sc(&s, cy0 + 2 * cch, "GUEST EXCEPTION ESR 0X02000000 ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u, 3));
+	CHECK(line_is_sc(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u, 3));
 	CHECK(s.fb.cy < s.fb.rows);
 	CHECK(scr_canaries_ok(&s));
 	/* the band hand-over keeps the area: band_min_rows counts it */
@@ -537,7 +550,34 @@ static void t_catch_area(void)
 	scr_free(&s);
 }
 
-/* Too small a panel for the area: nothing changes, the text is still kept. */
+/* The catch area must not eat the guest's framebuffer: on the j293 (2560 x 1600, stride 10240, scale 6) the guest keeps at least
+ * 1080 rows with wel2.fb=band, for 4 KB and 16 KB stage-2 pages. (Before: 7 full-scale rows = 378 pixel rows.) */
+static void t_catch_area_j293_guest_height(void)
+{
+	struct wel2_fb_plan p;
+	struct wel2_fb fb;
+
+	CHECK_EQ(wel2_fb_setup(&fb, 0x9e2570000ull, 2560, 1600, 10240, "x2r10g10b10", 12), 0);
+	CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, 14, &p), 0);
+	CHECK_EQ(p.guest_rows, 1240);                                    /* without the catch area */
+	wel2_fb_catch_enable(&fb);
+	CHECK_EQ(fb.catch_on, 1);
+	for (unsigned g = 12; g <= 14; g += 2) {
+		CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, g, &p), 0);
+		CHECK(p.guest_rows >= 1080);
+		CHECK_EQ(p.guest_bytes, (uint64_t)p.guest_rows * 10240);
+		CHECK_EQ(p.band_bytes % (1ull << g), 0);                      /* base alignment logic unchanged */
+		CHECK_EQ(p.guest_base % (1ull << g), 0);
+		CHECK_EQ(p.band_rows + p.guest_rows, 1600);
+	}
+	CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, 14, &p), 0);
+	CHECK_EQ(p.band_rows, 448);                                      /* text_y 387 + 54, rounded up to 8 rows */
+	CHECK_EQ(p.guest_rows, 1152);
+	CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, 12, &p), 0);
+	CHECK_EQ(p.guest_rows, 1158);
+}
+
+/* Too small a panel for the area: nothing changes, the text is still kept; the first decision is final. */
 static void t_catch_area_too_small(void)
 {
 	struct screen s;
@@ -550,6 +590,30 @@ static void t_catch_area_too_small(void)
 	CHECK_EQ(s.fb.text_y, ty);
 	wel2_fb_catch_note(&s.fb, "X");
 	CHECK(!strcmp(s.fb.catch_first, "X"));
+	s.fb.height = 400;                                              /* it would fit now: stage1 declined, main.c must not enable */
+	wel2_fb_catch_enable(&s.fb);
+	CHECK_EQ(s.fb.catch_on, 0);
+	CHECK_EQ(s.fb.text_y, ty);
+	scr_free(&s);
+}
+
+/* The guest exception must never hide a later fatal: its text is automatic (kind 1) and any explicit one replaces it. */
+static void t_error_auto(void)
+{
+	struct screen s;
+
+	scr_new(&s, WEL2_FB_X8R8G8B8, 800, 600, 0);
+	wel2_fb_set_error_auto(&s.fb, "guest exception ESR 0x1");
+	CHECK_EQ(s.fb.err_kind, 1);
+	CHECK(!strcmp(s.fb.err, "GUEST EXCEPTION ESR 0X1"));
+	wel2_fb_set_error_auto(&s.fb, "second");                        /* automatic replaces automatic */
+	CHECK(!strcmp(s.fb.err, "SECOND"));
+	wel2_fb_set_error(&s.fb, "unexpected exception");               /* a fatal always draws its reason */
+	CHECK_EQ(s.fb.err_kind, 2);
+	CHECK(!strcmp(s.fb.err, "UNEXPECTED EXCEPTION"));
+	wel2_fb_set_error_auto(&s.fb, "late guest exception");          /* ... and no automatic text replaces it */
+	CHECK(!strcmp(s.fb.err, "UNEXPECTED EXCEPTION"));
+	CHECK_EQ(s.fb.err_kind, 2);
 	scr_free(&s);
 }
 
@@ -1271,6 +1335,8 @@ int main(void)
 	RUN(t_plan_refusals);
 	RUN(t_handover_band_and_guest);
 	RUN(t_catch_area);
+	RUN(t_catch_area_j293_guest_height);
 	RUN(t_catch_area_too_small);
+	RUN(t_error_auto);
 	TESTS_DONE();
 }

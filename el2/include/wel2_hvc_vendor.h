@@ -22,7 +22,8 @@ struct wel2_guest_exc {
     unsigned core;
 };
 #define WEL2_EXC_LINE_MAX 160u
-#define WEL2_EXC_PANEL_MAX 80u
+#define WEL2_EXC_PANEL_MAX 96u
+#define WEL2_EXC_REPORT_MAX 8u          /* WEL2_REPORT_EXC calls that reach the sinks; later ones are only counted (guest_exc) */
 
 struct wel2_hvc_ops {
     void *ctx;
@@ -63,8 +64,8 @@ bool wel2_hvc_is_vendor(uint64_t x0);
 /* "GUEST EXC type=<t> ESR=0x<hex> EC=0x<hex> ELR=0x<hex> FAR=0x<hex> SPSR=0x<hex> core=<n>" (hex without leading zeros,
  * ESR and SPSR at least 8 digits). cap includes the NUL; returns the length. EC = ESR[31:26]. */
 unsigned wel2_hvc_format_exc(char *buf, unsigned cap, const struct wel2_guest_exc *e);
-/* The panel's two rows: l1 = "GUEST EXCEPTION T<t> ESR 0x........ EC 0x..", l2 = "ELR 0x................ FAR 0x................". */
-void wel2_hvc_exc_panel(const struct wel2_guest_exc *e, char *l1, unsigned cap1, char *l2, unsigned cap2);
+/* The panel's row: "GUEST EXCEPTION ESR 0x........ ELR 0x................ FAR 0x................" (cap includes the NUL). */
+void wel2_hvc_exc_panel(const struct wel2_guest_exc *e, char *l, unsigned cap);
 
 /* Handle one vendor call. x[0..5] are the guest's x0-x5 on entry (x[4], x[5] only read by WEL2_REPORT_EXC); on return
  * x[0] = result, x[1..3] = 0.

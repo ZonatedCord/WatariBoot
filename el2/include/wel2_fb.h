@@ -45,11 +45,10 @@ enum wel2_fb_fmt {
 #define WEL2_FB_SCALE_MAX 6u
 #define WEL2_FB_ERR_MAX   128u     /* bytes kept of the last-error text (including the NUL) */
 #define WEL2_FB_LABEL_MAX 32u
-/* Catch area (wel2.catch=1, wel2_fb_catch_enable): WEL2_FB_CATCH_ROWS text rows between the last-error area and the rule:
- * "FIRST <line>", the last WEL2_FB_CATCH_LAST distinct catches (newest first) and two rows of the guest exception. */
-#define WEL2_FB_CATCH_ROWS 7u
-#define WEL2_FB_CATCH_LAST 4u
-#define WEL2_FB_CATCH_LEN  80u
+/* Catch area (wel2.catch=1, wel2_fb_catch_enable): WEL2_FB_CATCH_ROWS text rows, drawn at half the text scale (at least 1), between
+ * the last-error area and the rule: "FIRST <line>", "LAST <line>" (the newest distinct catch) and the guest exception. */
+#define WEL2_FB_CATCH_ROWS 3u
+#define WEL2_FB_CATCH_LEN  96u
 #define WEL2_FB_GUEST_BASE 16u     /* squares from here on are guest checks (WEL2_CHK_SQUARE_BASE) */
 #define WEL2_FB_GUEST_N    32u     /* guest checks counted: squares 16..47 */
 
@@ -89,11 +88,11 @@ struct wel2_fb {
 	char err[WEL2_FB_ERR_MAX];
 	/* catch area (wel2_fb_catch_*): off unless enabled; the text is kept even when the area is off or muted */
 	uint32_t catch_on, catch_y;            /* the area is drawn / its top pixel row */
-	uint32_t catch_nlast;                  /* entries of catch_last in use (0..WEL2_FB_CATCH_LAST) */
+	uint32_t catch_tried;                  /* wel2_fb_catch_enable already decided (yes or no): later calls change nothing */
 	uint32_t gexc_set;
 	char catch_first[WEL2_FB_CATCH_LEN];
-	char catch_last[WEL2_FB_CATCH_LAST][WEL2_FB_CATCH_LEN];
-	char gexc[2][WEL2_FB_CATCH_LEN];
+	char catch_last[WEL2_FB_CATCH_LEN];
+	char gexc[WEL2_FB_CATCH_LEN];
 };
 
 /* ---- E9: framebuffer hand-over (DESIGN watari-edk2-m1 8.2, 8.3; ADR draft-edk2-m1-platform decision 6) ------------------
@@ -171,15 +170,17 @@ void wel2_fb_checkpoint_text(struct wel2_fb *fb, const char *label);
 /* The last-error area: `msg` (NULL or "" clears it) in red, up to 2 lines; explicit text is never replaced by an
  * automatic one. Call it from fatal()/fatal_msg() with the message. */
 void wel2_fb_set_error(struct wel2_fb *fb, const char *msg);
-/* Catch area (wel2.catch=1). enable inserts WEL2_FB_CATCH_ROWS text rows (same scale as the rest: width / 400, 6 on the j293)
+/* Like set_error, but automatic: it never replaces an explicit text, and the next set_error (a fatal reason) replaces it. */
+void wel2_fb_set_error_auto(struct wel2_fb *fb, const char *msg);
+/* Catch area (wel2.catch=1). enable inserts WEL2_FB_CATCH_ROWS text rows (half the scale of the rest: 3 on the j293, 81 pixel rows)
  * between the last-error area and the rule, so the scrolling text area starts lower and never overwrites them; if the
- * screen is too small for them, or a hand-over already happened, nothing changes and the area stays off. Call it before the
+ * screen is too small for them, or a hand-over already happened, nothing changes and the area stays off; the first call decides
+ * for good (a later call, e.g. from main.c after stage1.c declined, changes nothing). Call it before the
  * hand-over (band_min_rows then includes the area). It repaints the whole panel once (the log so far is lost). note() keeps
- * `line` as the first catch (once) and pushes it to the newest-first list of the last WEL2_FB_CATCH_LAST; guest_exc() shows
- * two rows under "GUEST EXCEPTION". Upper case is drawn, long lines are cut at the width. All no-ops without framebuffer. */
+ * `line` as the first catch (once) and as the last one; guest_exc() shows one row. Upper case is drawn, long lines are cut at the width. All no-ops without framebuffer. */
 void wel2_fb_catch_enable(struct wel2_fb *fb);
 void wel2_fb_catch_note(struct wel2_fb *fb, const char *line);
-void wel2_fb_catch_guest_exc(struct wel2_fb *fb, const char *row1, const char *row2);
+void wel2_fb_catch_guest_exc(struct wel2_fb *fb, const char *line);
 /* Guest counters shown in the band. */
 unsigned wel2_fb_guest_pass(const struct wel2_fb *fb);
 unsigned wel2_fb_guest_fail(const struct wel2_fb *fb);

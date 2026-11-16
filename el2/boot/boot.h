@@ -80,6 +80,7 @@ extern bool g_catch;               /* catch.c: wel2.catch=1 (default on the M1):
 struct wel2_stats;
 bool catch_trap(struct frame *f);  /* catch.c: a trapped PMU/debug/IMPDEF/ACTLR_EL1 access (EC 0x18): RAZ/WI + one log line per encoding */
 void catch_cpu_init(bool log);     /* catch.c: MDCR_EL2 |= trap bits, every core before it enters the guest */
+uint64_t hvc_guest_exc_count(void);   /* main.c: WEL2_REPORT_EXC calls so far (only the first 8 were printed) */
 void catch_stats(void);            /* catch.c: summary + one line per distinct encoding (cpuif_stats) */
 void catch_stats_fill(struct wel2_stats *out);
 

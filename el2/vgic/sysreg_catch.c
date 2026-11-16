@@ -8,7 +8,10 @@ bool wel2_catch_decode(uint32_t iss, struct wel2_sysreg_enc *e)
 {
 	uint32_t op0 = (iss >> 20) & 3u;
 
-	if (op0 < 2u)                                  /* SYS / SYSL (op0 1): never ours */
+	uint32_t crn = (iss >> 10) & 15u;
+
+	/* SYS / SYSL (op0 1) are never ours (TLBI, DC, IC, AT, ...) except the IMPLEMENTATION DEFINED space CRn 11 / 15 (TIDCP) */
+	if (op0 < 2u && !(op0 == 1u && (crn == 11u || crn == 15u)))
 		return false;
 	e->op0 = (uint8_t)op0;
 	e->op2 = (uint8_t)((iss >> 17) & 7u);
@@ -22,6 +25,8 @@ bool wel2_catch_decode(uint32_t iss, struct wel2_sysreg_enc *e)
 
 enum wel2_catch_class wel2_catch_classify(const struct wel2_sysreg_enc *e)
 {
+	if (e->op0 == 1)
+		return (e->crn == 11 || e->crn == 15) ? WEL2_CATCH_IMPDEF : WEL2_CATCH_NONE;
 	if (e->op0 == 2)
 		return WEL2_CATCH_DEBUG;
 	if (e->op0 != 3)
@@ -101,6 +106,11 @@ unsigned wel2_catch_name(const struct wel2_sysreg_enc *e, char *buf, unsigned ca
 
 	if (!cap)
 		return 0;
+	if (e->op0 == 1) {                                                       /* SYS / SYSL, CRn 11 / 15 */
+		put_s(buf, cap, &n, "SYS-IMPDEF");
+		buf[n] = 0;
+		return n;
+	}
 	for (unsigned i = 0; i < sizeof(fixed) / sizeof(fixed[0]); i++) {
 		const struct fixed_name *f = &fixed[i];
 
@@ -138,6 +148,19 @@ uint64_t wel2_catch_value(const struct wel2_sysreg_enc *e)
 	return 0;
 }
 
+uint64_t wel2_catch_read(const struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e)
+{
+	if (e->op0 == 2 && e->op1 == 0 && e->crn == 1 && e->crm == 1 && e->op2 == 4)
+		return 8u | ((uint64_t)(c->oslk & 1u) << 1);
+	return wel2_catch_value(e);
+}
+
+void wel2_catch_write(struct wel2_catch_cpu *c, const struct wel2_sysreg_enc *e, uint64_t wval)
+{
+	if (e->op0 == 2 && e->op1 == 0 && e->crn == 1 && e->crm == 0 && e->op2 == 4)      /* OSLAR_EL1 */
+		c->oslk = (uint8_t)(wval & 1u);
+}
+
 // ---- the table ------------------------------------------------------------------------------------------------------
 enum wel2_catch_rec wel2_catch_record(struct wel2_catch_tab *t, const struct wel2_sysreg_enc *e, uint64_t pc,
 				      unsigned core, unsigned *idx)
@@ -153,7 +176,20 @@ enum wel2_catch_rec wel2_catch_record(struct wel2_catch_tab *t, const struct wel
 		}
 	}
 	if (t->n >= WEL2_CATCH_TAB_N) {
+		uint32_t key = (uint32_t)e->op0 | (uint32_t)e->op1 << 2 | (uint32_t)e->crn << 5 | (uint32_t)e->crm << 9 |
+			       (uint32_t)e->op2 << 13 | (uint32_t)e->rd << 16;
+
 		t->overflow++;
+		for (unsigned i = 0; i < t->ovf_n; i++)
+			if (t->ovf_key[i] == key)
+				return WEL2_CATCH_REC_OVERFLOW_OLD;
+		if (t->ovf_n >= WEL2_CATCH_OVF_LINES) {
+			if (t->ovf_capped)
+				return WEL2_CATCH_REC_OVERFLOW_OLD;
+			t->ovf_capped = true;
+			return WEL2_CATCH_REC_OVERFLOW_CAP;
+		}
+		t->ovf_key[t->ovf_n++] = key;
 		return WEL2_CATCH_REC_OVERFLOW;
 	}
 	t->e[t->n] = (struct wel2_catch_ent){ .enc = *e, .core = (uint8_t)core, .count = 1, .first_pc = pc };
@@ -163,8 +199,8 @@ enum wel2_catch_rec wel2_catch_record(struct wel2_catch_tab *t, const struct wel
 	return WEL2_CATCH_REC_NEW;
 }
 
-unsigned wel2_catch_format(char *buf, unsigned cap, const char *prefix, const struct wel2_sysreg_enc *e, uint64_t pc,
-			   unsigned core, uint32_t count)
+static unsigned format_common(char *buf, unsigned cap, const char *prefix, const struct wel2_sysreg_enc *e, uint64_t pc,
+			      unsigned core, uint32_t count, bool overflow)
 {
 	char nm[WEL2_CATCH_NAME_MAX];
 	unsigned n = 0;
@@ -191,9 +227,23 @@ unsigned wel2_catch_format(char *buf, unsigned cap, const char *prefix, const st
 	put_s(buf, cap, &n, " core=");
 	put_dec(buf, cap, &n, core);
 	put_s(buf, cap, &n, " count=");
-	put_dec(buf, cap, &n, count);
+	if (overflow)
+		put_s(buf, cap, &n, "overflow");
+	else
+		put_dec(buf, cap, &n, count);
 	buf[n] = 0;
 	return n;
+}
+
+unsigned wel2_catch_format(char *buf, unsigned cap, const char *prefix, const struct wel2_sysreg_enc *e, uint64_t pc,
+			   unsigned core, uint32_t count)
+{
+	return format_common(buf, cap, prefix, e, pc, core, count, false);
+}
+
+unsigned wel2_catch_format_overflow(char *buf, unsigned cap, const struct wel2_sysreg_enc *e, uint64_t pc, unsigned core)
+{
+	return format_common(buf, cap, "CATCH", e, pc, core, 0, true);
 }
 
 unsigned wel2_catch_format_summary(char *buf, unsigned cap, const struct wel2_catch_tab *t)

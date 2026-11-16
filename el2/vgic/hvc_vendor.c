@@ -81,27 +81,19 @@ unsigned wel2_hvc_format_exc(char *buf, unsigned cap, const struct wel2_guest_ex
     return n;
 }
 
-void wel2_hvc_exc_panel(const struct wel2_guest_exc *e, char *l1, unsigned cap1, char *l2, unsigned cap2)
+void wel2_hvc_exc_panel(const struct wel2_guest_exc *e, char *l, unsigned cap)
 {
     unsigned n = 0;
 
-    if (cap1) {
-        put_s(l1, cap1 - 1, &n, "GUEST EXCEPTION T");
-        put_dec(l1, cap1 - 1, &n, e->type);
-        put_s(l1, cap1 - 1, &n, " ESR ");
-        put_hexn(l1, cap1 - 1, &n, e->esr, 8);
-        put_s(l1, cap1 - 1, &n, " EC ");
-        put_hexn(l1, cap1 - 1, &n, (e->esr >> 26) & 0x3f, 2);
-        l1[n] = 0;
-    }
-    n = 0;
-    if (cap2) {
-        put_s(l2, cap2 - 1, &n, "ELR ");
-        put_hexn(l2, cap2 - 1, &n, e->elr, 16);
-        put_s(l2, cap2 - 1, &n, " FAR ");
-        put_hexn(l2, cap2 - 1, &n, e->far, 16);
-        l2[n] = 0;
-    }
+    if (!cap)
+        return;
+    put_s(l, cap - 1, &n, "GUEST EXCEPTION ESR ");
+    put_hexn(l, cap - 1, &n, e->esr, 8);
+    put_s(l, cap - 1, &n, " ELR ");
+    put_hexn(l, cap - 1, &n, e->elr, 16);
+    put_s(l, cap - 1, &n, " FAR ");
+    put_hexn(l, cap - 1, &n, e->far, 16);
+    l[n] = 0;
 }
 
 static int64_t do_report_exc(const struct wel2_hvc_ops *ops, const uint64_t x[6])
@@ -112,10 +104,12 @@ static int64_t do_report_exc(const struct wel2_hvc_ops *ops, const uint64_t x[6]
 
     if (!ops->guest_exc && !ops->log_line)
         return WEL2_HVC_NOT_SUPPORTED;
+    /* A guest that faults in a loop must not flood the console and the panel: every report is counted (WEL2_STATS), only the
+     * first WEL2_EXC_REPORT_MAX reach the sinks. Without counters there is nothing to count with: all are printed. */
+    if (ops->counters && ops->counters->guest_exc++ >= WEL2_EXC_REPORT_MAX)
+        return WEL2_HVC_SUCCESS;
     e.core = ops->core_id ? ops->core_id(ops->ctx) : 0;
     n = wel2_hvc_format_exc(line, sizeof(line), &e);
-    if (ops->counters)
-        ops->counters->guest_exc++;
     if (ops->guest_exc)
         ops->guest_exc(ops->ctx, &e, line, n);
     else
