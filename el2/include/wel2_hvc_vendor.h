@@ -12,7 +12,17 @@
 /* Counters the dispatcher keeps itself (WEL2_STATS reports them). The layer owns the storage; the big lock serialises. */
 struct wel2_hvc_counters {
     uint64_t console_calls, console_bytes;
+    uint64_t guest_exc;
 };
+
+/* WEL2_REPORT_EXC arguments, as the guest passed them. */
+struct wel2_guest_exc {
+    uint64_t esr, elr, far, spsr;
+    uint64_t type;                      /* WEL2_EXC_*; any value is accepted and printed */
+    unsigned core;
+};
+#define WEL2_EXC_LINE_MAX 160u
+#define WEL2_EXC_PANEL_MAX 80u
 
 struct wel2_hvc_ops {
     void *ctx;
@@ -36,6 +46,12 @@ struct wel2_hvc_ops {
     void (*console_write)(void *ctx, const uint8_t *bytes, unsigned len);
     /* The dispatcher's own counters (console_calls / console_bytes); may be NULL (then WEL2_STATS reports 0 for them). */
     struct wel2_hvc_counters *counters;
+    /* WEL2_REPORT_EXC: `line` is the formatted console line ("GUEST EXC ...", no newline, `len` bytes); the layer prints it
+     * to every console sink, draws e on the panel (wel2_hvc_exc_panel) and records the last-error text. If NULL the
+     * dispatcher falls back to log_line() (with its prefix); with neither the call is NOT_SUPPORTED. */
+    void (*guest_exc)(void *ctx, const struct wel2_guest_exc *e, const char *line, unsigned len);
+    /* Number of the calling core (for the line); NULL = 0. */
+    unsigned (*core_id)(void *ctx);
     /* Fill the layer's counters. May be NULL: WEL2_STATS then answers NOT_SUPPORTED. */
     void (*stats_fill)(void *ctx, struct wel2_stats *out);
 };
@@ -44,9 +60,16 @@ struct wel2_hvc_ops {
  * range but not implemented: those answer NOT_SUPPORTED). Only the low 32 bits of x0 count (SMCCC). */
 bool wel2_hvc_is_vendor(uint64_t x0);
 
-/* Handle one vendor call. x[0..3] are the guest's x0-x3 on entry; on return x[0] = result, x[1..3] = 0.
+/* "GUEST EXC type=<t> ESR=0x<hex> EC=0x<hex> ELR=0x<hex> FAR=0x<hex> SPSR=0x<hex> core=<n>" (hex without leading zeros,
+ * ESR and SPSR at least 8 digits). cap includes the NUL; returns the length. EC = ESR[31:26]. */
+unsigned wel2_hvc_format_exc(char *buf, unsigned cap, const struct wel2_guest_exc *e);
+/* The panel's two rows: l1 = "GUEST EXCEPTION T<t> ESR 0x........ EC 0x..", l2 = "ELR 0x................ FAR 0x................". */
+void wel2_hvc_exc_panel(const struct wel2_guest_exc *e, char *l1, unsigned cap1, char *l2, unsigned cap2);
+
+/* Handle one vendor call. x[0..5] are the guest's x0-x5 on entry (x[4], x[5] only read by WEL2_REPORT_EXC); on return
+ * x[0] = result, x[1..3] = 0.
  * Returns false (x untouched) when x0 is not in the vendor range, so the caller falls through to PSCI etc. */
-bool wel2_hvc_vendor(const struct wel2_hvc_ops *ops, uint64_t x[4]);
+bool wel2_hvc_vendor(const struct wel2_hvc_ops *ops, uint64_t x[6]);
 
 /* Text of a check state for the log line ("running", "PASS", "FAIL"). Never NULL. */
 const char *wel2_hvc_state_name(unsigned state);

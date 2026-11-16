@@ -886,6 +886,7 @@ void cpuif_stats(void)
     }
     if (g_tid3)
         put_kv("Watari EL2: stats: TID3 ID-register reads emulated = ", g_idreg_n);
+    catch_stats();
     if (g_plat->stats)
         g_plat->stats();
 }

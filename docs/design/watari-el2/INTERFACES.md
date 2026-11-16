@@ -178,6 +178,20 @@ Field layout of `ICC_SGI1R_EL1` [verified: GIC §12.2.22 pp.12-276/277]: Aff3 [5
 - `ICH_VTR_EL2` (`S3_4_C12_C11_1`) [verified: GIC §12.4.9 pp.12-365/366]: `ListRegs` [4:0] = number of LRs minus 1; `TDS` bit19 (TDIR supported); `nV4` bit20 (1 in GICv3); `A3V` bit21; `SEIS` bit22; `IDbits` [25:23] (0 = 16 bits, 1 = 24 bits); `PREbits` [28:26] and `PRIbits` [31:29] (value = bits − 1, minimum 0b100 = 5 bits, so PRIbits ∈ {4,5,6}). The layer must read this register at boot and size the software state from it (the design assumes 8 LRs and 5 priority bits: [hypothesis] until read on the M1).
 - `ICH_MISR_EL2` `S3_4_C12_C11_2`, `ICH_EISR_EL2` `S3_4_C12_C11_3`, `ICH_ELRSR_EL2` `S3_4_C12_C11_5` [verified: encodings, GIC §12.4].
 
+### 7.5 Catch mode (`wel2.catch=1|0`, default 1 on the M1, 0 on the QEMU bench)
+Added after M3a day 3: bootmgr took an UNDEFINED exception at EL1 (`ESR_EL1 = 0x02000000`) and the layer saw nothing, because an UNDEF the hardware raises at EL1 is delivered to EL1 and the layer never injects one. Catch mode makes the registers a firmware or an OS is most likely to probe trap to EL2, so that the layer can say which one it was. All bit positions are from the Arm ARM from memory **[hypothesis until compared with a copy; the layer logs `MDCR_EL2` before/after at boot so the first bench run shows which bits stuck]**.
+
+| Register | Bits set | Traps (EC 0x18) |
+|---|---|---|
+| `MDCR_EL2` | `TPMCR` 5, `TPM` 6 | the Performance Monitors registers: `PMCR_EL0`, `PMCNTEN*`, `PMOVS*`, `PMSWINC`, `PMSELR`, `PMCEID*`, `PMCCNTR`, `PMXEV*`, `PMUSERENR`, `PMINTEN*`, `PMMIR`, `PMEVCNTR<n>`, `PMEVTYPER<n>`, `PMCCFILTR` |
+| `MDCR_EL2` | `TDA` 9, `TDOSA` 10, `TDRA` 11 | the debug registers (op0 = 2): `MDSCR_EL1`, `DBGB*/DBGW*`, `OSDTR*`, `MDCCSR_EL0`, and the OS ones `OSLAR/OSLSR/OSDLR_EL1`, `DBGPRCR_EL1`, `DBGCLAIM*`, `MDRAR_EL1` |
+| `HCR_EL2` | `TIDCP` 20 | the IMPLEMENTATION DEFINED registers (op0 = 3, CRn = 11 or 15) |
+| `HCR_EL2` | `TACR` 21 | `ACTLR_EL1` |
+
+Only trap bits are ORed into `MDCR_EL2` (read first: `HPMN` and the rest keep the firmware's value), on every core before it enters the guest; `TDE`, `TGE`, `TVM`, `TSW`, `TWI`, `TWE` are never set. The emulation is RAZ/WI: reads return 0 except `OSLSR_EL1` (8 = OS Lock implemented, unlocked), writes are ignored, `ELR_EL2` advances by 4. **Side effect to know:** on the M1 the IMPDEF encodings (CRn 15) are real registers; while catch mode is on a guest read gives 0 and a write is lost instead of reaching the hardware. An encoding outside these groups takes the old path unchanged (ICC_* emulation, the TID3 group, fatal for the rest).
+
+Logging: the first catch of each distinct (op0, op1, CRn, CRm, op2, direction) prints `CATCH <R|W> S<op0>_<op1>_C<n>_C<m>_<op2> [<name>] PC=<ELR_EL2> core=<n> count=1` on every console sink (UART, panel scroll, pmlog ring). A table of 32 encodings keeps the counts; further new ones are counted as overflow. The final statistics print `CATCH SUMMARY distinct=<n> total=<n> overflow=<n>` and one `CATCH TOTAL ...` line per encoding with its count; `WEL2_STATS` carries the three numbers. On the panel a fixed "catch area" of 7 text rows (same scale as the rest, 6 on the j293) sits between the last-error area and the grey rule, so the scrolling text never overwrites it: the first catch, the last four distinct catches (newest first) and the guest exception of `WEL2_REPORT_EXC` (2 rows). The area makes the layer's band taller (`band_min_rows`), so with `wel2.fb=band` the guest gets correspondingly fewer rows.
+
 ## 8. Backend interfaces (C)
 All tables are `const` and are selected in the composition root.
 
@@ -287,6 +301,11 @@ Vendor functions (hypervisor service, `0xC600_0000` +):
 | `0xC600_0000` | `WEL2_VERSION` | returns `'WEL2'<<32 \| version` |
 | `0xC600_0001` | `WEL2_STATS` | copies the counters into the indicated buffer (PA, length) |
 | `0xC600_0002` | `WEL2_LOG` | appends a line to the ring (usable by EDK2/test drivers) |
+| `0xC600_0003` | `WEL2_CHECKPOINT` | `x1` = check number, `x2` = state (running/PASS/FAIL/SKIP): paints the guest's checkpoint square and logs a line |
+| `0xC600_0004` | `WEL2_CONSOLE_WRITE` | `x1` = guest PA of raw bytes, `x2` = length (<= 160): the firmware's console (UART, panel text, pmlog ring) |
+| `0xC600_0005` | `WEL2_REPORT_EXC` | `x1` = `ESR_EL1`, `x2` = `ELR_EL1`, `x3` = `FAR_EL1`, `x4` = `SPSR_EL1`, `x5` = type (0 sync, 1 irq, 2 fiq, 3 serror; any value is accepted). The layer logs `GUEST EXC type=<t> ESR=<hex> EC=<hex> ELR=<hex> FAR=<hex> SPSR=<hex> core=<n>` on every console sink, draws ESR/ELR/FAR under "GUEST EXCEPTION" in the panel's catch area, records the text as LAST ERROR, returns `SUCCESS`. Values only, no memory is read. A guest installs it in its own EL1 exception vectors (it is how a fault the layer cannot see, an UNDEF taken at EL1 for instance, reaches the panel and the pmlog ring) |
+`WEL2_HVC_ABI_VERSION` stays 1: calls are added to the range without a bump (an older layer answers `NOT_SUPPORTED` to an id it lacks, which is the probe), and `struct wel2_stats` grows at its end (the layer writes as many bytes as the guest's buffer holds; fields added after `console_bytes`: `catch_distinct`, `catch_total`, `catch_overflow`, `guest_exc`). The version changes only when the meaning of an existing call or field changes.
+
 A guest that does not know them never uses them. The IDs lie in the Vendor Specific Hypervisor range `0xC600_0000-0xC600_FFFF` and avoid the reserved general-query IDs `0x86/0xC6xx_FF00-FFFF` [verified: SMCCC §6.1/6.2 Tables 6-2/6-3 pp.26/27].
 
 `HVC` with an immediate other than 0 (e.g. `HVC #1`, the Hyper-V hypercall convention) → `NOT_SUPPORTED`, so that Windows concludes there is no Hyper-V hypervisor. Spec side [verified: SMCCC §2.10 p.18]: non-zero HVC immediates are reserved for hypervisor vendors, so answering them with an Unknown Function result is allowed. That Windows then concludes "no Hyper-V" stays [hypothesis: Windows behavior, test in M2].

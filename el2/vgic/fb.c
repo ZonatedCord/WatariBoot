@@ -277,6 +277,44 @@ static void draw_error(const struct wel2_fb *fb)
 		lw_c(&w, *p++);
 }
 
+/* ---- catch area (wel2.catch=1): first catch, last four distinct catches, guest exception ------------------------------ */
+#define COL_CATCH   0xffd040u
+#define COL_CATCHBG 0x301800u
+#define COL_GEXC    0xffffffu
+#define COL_GEXCBG  0xa00000u
+
+static void catch_row(const struct wel2_fb *fb, uint32_t row, const char *pre, const char *txt, uint32_t fg, uint32_t bg)
+{
+	struct lw w;
+
+	lw_start(&w, fb, fb->catch_y + row * (FONT_H + 2u) * fb->scale, fg, bg);
+	lw_s(&w, pre);
+	lw_s(&w, txt);
+}
+
+static void draw_catch(const struct wel2_fb *fb)
+{
+	if (!fb->catch_on)
+		return;
+	if (fb->catch_first[0])
+		catch_row(fb, 0, "FIRST ", fb->catch_first, COL_CATCH, COL_CATCHBG);
+	else
+		catch_row(fb, 0, "CATCH: NOTHING CAUGHT YET", "", COL_NOERR, WEL2_RGB_BLACK);
+	for (uint32_t i = 0; i < WEL2_FB_CATCH_LAST; i++) {
+		if (i < fb->catch_nlast)
+			catch_row(fb, 1u + i, "LAST  ", fb->catch_last[i], COL_CATCH, WEL2_RGB_BLACK);
+		else
+			catch_row(fb, 1u + i, "", "", COL_CATCH, WEL2_RGB_BLACK);
+	}
+	if (fb->gexc_set) {
+		catch_row(fb, 5, "", fb->gexc[0], COL_GEXC, COL_GEXCBG);
+		catch_row(fb, 6, "", fb->gexc[1], COL_GEXC, COL_GEXCBG);
+	} else {
+		catch_row(fb, 5, "GUEST EXCEPTION: NONE", "", COL_NOERR, WEL2_RGB_BLACK);
+		catch_row(fb, 6, "", "", COL_NOERR, WEL2_RGB_BLACK);
+	}
+}
+
 /* ---- scrolling text --------------------------------------------------------------------------------------------- */
 /* The legend of the checkpoint squares: two lines of at most 52 characters, printed at the top of the text area when
  * it can hold them (56+ columns, 8+ rows) so that it never wraps. */
@@ -345,6 +383,7 @@ static void ensure_init(struct wel2_fb *fb)
 		fill(fb, 0, fb->text_y - RULE_H, fb->width, RULE_H, wel2_fb_pixel(fb, COL_RULE));
 		draw_band(fb);
 		draw_error(fb);
+		draw_catch(fb);
 		if (fb->rows)
 			legend(fb);
 	}
@@ -356,6 +395,7 @@ static void refresh(struct wel2_fb *fb)
 	if (band_fits(fb)) {
 		draw_band(fb);
 		draw_error(fb);
+		draw_catch(fb);
 	}
 	sync_stores();
 }
@@ -426,6 +466,62 @@ void wel2_fb_checkpoint_text(struct wel2_fb *fb, const char *label)
 		return;
 	copy_text(fb->label, WEL2_FB_LABEL_MAX, label);
 	if (muted(fb))
+		return;
+	ensure_init(fb);
+	refresh(fb);
+}
+
+/* ---- catch area API ----------------------------------------------------------------------------------------------- */
+void wel2_fb_catch_enable(struct wel2_fb *fb)
+{
+	uint32_t chh, extra;
+
+	if (!fb->fmt || fb->catch_on || fb->hand || !band_fits(fb))
+		return;
+	chh = (FONT_H + 2u) * fb->scale;
+	extra = WEL2_FB_CATCH_ROWS * chh;
+	if (fb->text_y + extra + chh > fb->height)      /* the area and one scrolling row must fit */
+		return;
+	fb->catch_on = 1;
+	fb->catch_y = fb->text_y - RULE_H;              /* where the rule was: the area takes its place, the rule moves below it */
+	fb->text_y += extra;
+	fb->rows = (fb->height - fb->text_y) / chh;
+	if (fb->cleared) {                              /* already drawn with the old layout: wipe and draw again */
+		fb->cleared = 0;
+		ensure_init(fb);
+	}
+}
+
+static void catch_copy(char *dst, const char *src)
+{
+	copy_text(dst, WEL2_FB_CATCH_LEN, src);
+}
+
+void wel2_fb_catch_note(struct wel2_fb *fb, const char *line)
+{
+	if (!fb->fmt)
+		return;
+	if (!fb->catch_first[0])
+		catch_copy(fb->catch_first, line);
+	for (uint32_t i = WEL2_FB_CATCH_LAST - 1u; i > 0; i--)
+		catch_copy(fb->catch_last[i], fb->catch_last[i - 1u]);
+	catch_copy(fb->catch_last[0], line);
+	if (fb->catch_nlast < WEL2_FB_CATCH_LAST)
+		fb->catch_nlast++;
+	if (!fb->catch_on || muted(fb))
+		return;
+	ensure_init(fb);
+	refresh(fb);
+}
+
+void wel2_fb_catch_guest_exc(struct wel2_fb *fb, const char *row1, const char *row2)
+{
+	if (!fb->fmt)
+		return;
+	catch_copy(fb->gexc[0], row1);
+	catch_copy(fb->gexc[1], row2);
+	fb->gexc_set = 1;
+	if (!fb->catch_on || muted(fb))
 		return;
 	ensure_init(fb);
 	refresh(fb);

@@ -641,6 +641,18 @@ void stage1_build(uint64_t fdt)
                     s1_msg("Watari EL2: WARNING: unknown wel2.fb value (layer, band or guest), the layer keeps the panel\n");
         }
     }
+    /* Catch mode (wel2.catch=1|0, default on the M1; main.c reads the same argument): the panel's catch area takes rows between
+     * the error area and the scrolling text, so it must exist before the plan below sizes the band the layer keeps. */
+    {
+        bool catch_on = m1;
+
+        if (have_args && has_arg(args, "wel2.catch=1"))
+            catch_on = true;
+        else if (have_args && has_arg(args, "wel2.catch=0"))
+            catch_on = false;
+        if (catch_on)
+            wel2_fb_catch_enable(&g_fb);
+    }
     if (wel2_fb_plan(&g_fb, fbmode, g_gran, &g_fb_plan)) {
         s1_msg("Watari EL2: WARNING: wel2.fb=band|guest needs a framebuffer whose base and size are whole stage-2 pages and room for the band: the layer keeps the panel\n");
         wel2_fb_plan(&g_fb, WEL2_FBM_LAYER, g_gran, &g_fb_plan);

@@ -483,6 +483,76 @@ static void write_ppm(const struct screen *s, const char *path)
 	fclose(f);
 }
 
+/* Catch area (wel2.catch=1): enabling moves the scrolling text down, the lines and the guest exception are drawn in big text
+ * and never overwritten by the scrolling area; the hand-over band includes the area. */
+static void t_catch_area(void)
+{
+	struct screen s;
+	uint32_t chh, cy0, ty_old;
+	char l1[16] = "ONE", more[8];
+
+	scr_new(&s, WEL2_FB_X8R8G8B8, 2560, 1600, 0);
+	chh = 54;
+	ty_old = s.fb.text_y;
+	CHECK_EQ(ty_old, 306);
+	wel2_fb_catch_note(&s.fb, "CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0x10 core=0 count=1");      /* before enable: kept, nothing drawn */
+	CHECK(at(&s, 100, 100) == CANARY);
+	wel2_fb_catch_enable(&s.fb);
+	CHECK_EQ(s.fb.catch_on, 1);
+	CHECK_EQ(s.fb.catch_y, ty_old - 4);
+	CHECK_EQ(s.fb.text_y, ty_old + WEL2_FB_CATCH_ROWS * chh);
+	CHECK_EQ(s.fb.rows, (1600 - s.fb.text_y) / chh);
+	cy0 = s.fb.catch_y;
+	wel2_fb_checkpoint(&s.fb, 0, WEL2_RGB_GREEN);
+	CHECK_EQ(at(&s, 0, s.fb.text_y - 4), wel2_fb_pixel(&s.fb, C_RULE));           /* the rule moved below the area */
+	CHECK(line_is(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u));
+	CHECK(line_is(&s, cy0 + chh, "LAST  CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, WEL2_RGB_BLACK));
+	CHECK(line_is(&s, cy0 + 5 * chh, "GUEST EXCEPTION: NONE", C_NOERR, WEL2_RGB_BLACK));
+	/* six more catches: the first stays, the list keeps the newest four */
+	for (int i = 0; i < 6; i++) {
+		l1[3] = (char)('1' + i);
+		l1[4] = 0;
+		wel2_fb_catch_note(&s.fb, l1);
+	}
+	CHECK(line_is(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u));
+	(void)more;
+	{
+		const char *want[4] = { "LAST  ONE6", "LAST  ONE5", "LAST  ONE4", "LAST  ONE3" };
+
+		for (int i = 0; i < 4; i++)
+			CHECK(line_is(&s, cy0 + (1 + i) * chh, want[i], 0xffd040u, WEL2_RGB_BLACK));
+	}
+	wel2_fb_catch_guest_exc(&s.fb, "GUEST EXCEPTION T0 ESR 0x02000000 EC 0x00", "ELR 0x0000000000001000 FAR 0x0000000000002000");
+	CHECK(line_is(&s, cy0 + 5 * chh, "GUEST EXCEPTION T0 ESR 0X02000000 EC 0X00", WEL2_RGB_WHITE, 0xa00000u));
+	CHECK(line_is(&s, cy0 + 6 * chh, "ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u));
+	/* the scrolling text starts below the area and never touches it, even when it wraps and clears several times */
+	for (int i = 0; i < 200; i++)
+		wel2_fb_puts(&s.fb, "SCROLLING LINE\n");
+	CHECK(line_is(&s, cy0 + 6 * chh, "ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u));
+	CHECK(line_is(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u));
+	CHECK(s.fb.cy < s.fb.rows);
+	CHECK(scr_canaries_ok(&s));
+	/* the band hand-over keeps the area: band_min_rows counts it */
+	CHECK(wel2_fb_band_min_rows(&s.fb) >= s.fb.text_y + chh);
+	scr_free(&s);
+}
+
+/* Too small a panel for the area: nothing changes, the text is still kept. */
+static void t_catch_area_too_small(void)
+{
+	struct screen s;
+	uint32_t ty;
+
+	scr_new(&s, WEL2_FB_X8R8G8B8, 640, 100, 0);
+	ty = s.fb.text_y;
+	wel2_fb_catch_enable(&s.fb);
+	CHECK_EQ(s.fb.catch_on, 0);
+	CHECK_EQ(s.fb.text_y, ty);
+	wel2_fb_catch_note(&s.fb, "X");
+	CHECK(!strcmp(s.fb.catch_first, "X"));
+	scr_free(&s);
+}
+
 /* The band texts that docs/procedures/m3a-day3-hardware.md quotes for the final held screens (the panel is not in any UART
  * log, so this is where they are checked): D1 (test guest, L5, 13 checks, last checkpoint = guest check 12 = G11, which runs
  * after G12 = check 13) and D2/D3 (EDK2: layer squares 0-8 only). */
@@ -1200,5 +1270,7 @@ int main(void)
 	RUN(t_plan_rounding);
 	RUN(t_plan_refusals);
 	RUN(t_handover_band_and_guest);
+	RUN(t_catch_area);
+	RUN(t_catch_area_too_small);
 	TESTS_DONE();
 }
