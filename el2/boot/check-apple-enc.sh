@@ -63,7 +63,9 @@ upmcr0 wr 3 7 15 0 4
 upmsr rd 3 7 15 6 4
 ich_hcr rd 3 4 12 11 0
 ich_hcr wr 3 4 12 11 0
-ich_misr rd 3 4 12 11 2"
+ich_misr rd 3 4 12 11 2
+hacr_el2 rd 3 4 1 1 7
+hacr_el2 wr 3 4 1 1 7"
 
 echo "$TABLE" | while read -r name dir a b c d e; do
     exp=$(enc "$dir" "$a" "$b" "$c" "$d" "$e")
