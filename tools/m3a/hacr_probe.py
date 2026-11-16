@@ -127,8 +127,8 @@ def run(p, u, out, guard_on, guard_off, el1=False):
             rec["stopped"] = "HACR_EL2 unreadable"
             return rec
         old = vals["HACR_EL2"]
+        wrote = True                            # before the write: a half-done write is restored too
         werr = pr.msr("HACR_EL2", old | HACR_PMU)
-        wrote = True
         rb, rerr = pr.mrs("HACR_EL2")
         out("write HACR_EL2 = 0x%016x: %s" % (old | HACR_PMU, werr or "no fault"))
         if rb is None:
@@ -170,8 +170,8 @@ def run(p, u, out, guard_on, guard_off, el1=False):
                 rec["restored"] = back == old
                 out("restore HACR_EL2 = 0x%016x: read back %s (%s)" % (old, "0x%016x" % back if back is not None else "?",
                                                                       "OK" if back == old else "MISMATCH" + (" " + e if e else "")))
-            except Exception as ex:
-                out("restore HACR_EL2 FAILED: %s" % ex)
+            except BaseException as ex:         # also a KeyboardInterrupt: the old value must go back
+                out("restore HACR_EL2 FAILED: %s: %s" % (type(ex).__name__, ex))
         if guard_set:
             p.set_exc_guard(guard_off)
         out("proxy calls used: set_exc_guard, u.mrs, u.msr (HACR_EL2 only, restored), get_exc_count")

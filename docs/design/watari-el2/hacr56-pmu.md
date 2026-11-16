@@ -21,6 +21,15 @@ measured here]. `HACR_EL2` is architectural (`S3_4_C1_C1_7`, [verified: llvm-mc]
 Apple's. The access then arrives either as EC 0x18 (ISS in `ESR_EL2`, existing path) or as EC 0x3F (IMPLEMENTATION DEFINED exception class)
 where the MSR/MRS ISS is expected in `AFSR1_EL2` [hypothesis: low 25 bits, same layout as the EC 0x18 ISS].
 
+## Which ISS do we trust on EC 0x3F [hypothesis]
+AFSR1_EL2 is a firmware-owned auxiliary register and may be stale, so `wel2_catch_ec3f_decode` does not trust its low 25 bits blindly:
+ESR.IL must be 1 (an MSR/MRS is 32 bits); AFSR1[63:25] must be 0; AFSR1[24:0] must decode to an encoding we own; if ESR[24:0] also decodes
+to an owned encoding that differs, ESR wins (AFSR1 is stale). Otherwise ESR[24:0] if it decodes, otherwise nothing. The first 8 raw
+`ec3f: ESR= AFSR1= ELR=` lines show which source won (`iss=afsr1|esr|none`), so the hardware run settles it.
+An EC 0x3F from a lower EL that is not an owned catch is **not fatal**: it is reflected to the guest as an EL1 UNDEF (`wel2_inject_undef`,
+what the guest got before HACR) and logged (same 8 lines). `fatal()` remains for EC 0x3F from EL2 itself, or when injection is impossible
+(AArch32 guest).
+
 ## How we verify it
 1. Before the layer: rung `HACR0` (`hacr_probe.py`): does bit 56 stick on the boot core (readback), is the old value restored.
 2. Optional, by hand: `hacr_probe.py --el1`: an EL1 `mrs PMCCNTR_EL0` through the proxy's el1_call; reports EC 0x18 / 0x3F with `AFSR1_EL2`, or no arrival.

@@ -738,7 +738,7 @@ void el2_exception(struct frame *f, unsigned idx)
         /* catch mode: a PMU / debug / IMPLEMENTATION DEFINED / ACTLR_EL1 access, answered RAZ/WI and logged (catch.c); the
          * encodings it does not own fall through to the paths below, unchanged */
     } else if (idx == 8 && ec == EC_IMPDEF && catch_trap_ec3f(f)) {
-        /* HACR_EL2[56]: a PMUv3 access of the guest that the M1 reports as EC 0x3F, answered by the catch path (catch.c) */
+        /* HACR_EL2[56]: a PMUv3 access of the guest that the M1 reports as EC 0x3F, answered by the catch path, or reflected to the guest as an EL1 UNDEF when it is not a catch (catch.c); fatal only if neither works */
     } else if (idx == 8 && ec == EC_SYSREG && idreg_trap(f)) {
         /* T6g: a read of the ID group 3 (HCR_EL2.TID3), decoded first: it is cheap and touches no ICH register */
     } else if (idx == 8 && ec == EC_SYSREG && cpuif_sysreg_trap(f)) {

@@ -516,8 +516,8 @@ static void t_ec3f(void)
     struct wel2_sysreg_enc e;
     uint64_t esr_3f = (uint64_t)WEL2_EC_IMPDEF << 26 | 1u << 25;
 
-    /* PMCCNTR_EL0 read into x7, ISS in AFSR1; the upper AFSR1 bits do not matter */
-    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, iss(3, 3, 9, 13, 0, 7, 1) | 0xab000000ull, &e), WEL2_EC3F_AFSR1);
+    /* PMCCNTR_EL0 read into x7, ISS in AFSR1 */
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, iss(3, 3, 9, 13, 0, 7, 1), &e), WEL2_EC3F_AFSR1);
     CHECK_EQ(e.op0, 3); CHECK_EQ(e.crn, 9); CHECK_EQ(e.crm, 13); CHECK_EQ(e.op2, 0); CHECK_EQ(e.rt, 7); CHECK_EQ(e.rd, 1);
     CHECK_EQ(wel2_catch_classify(&e), WEL2_CATCH_PMU);
     /* PMCR_EL0 write of xzr */
@@ -527,6 +527,16 @@ static void t_ec3f(void)
     CHECK_EQ(wel2_catch_ec3f_decode(esr_3f | iss(3, 3, 9, 12, 0, 2, 1), 0, &e), WEL2_EC3F_ESR);
     CHECK_EQ(e.rt, 2);
     CHECK_EQ(wel2_catch_ec3f_decode(esr_3f | iss(3, 3, 9, 14, 0, 4, 1), iss(3, 0, 12, 0, 0, 1, 1), &e), WEL2_EC3F_ESR);
+    /* stale AFSR1: bits above the 25-bit ISS set -> not trusted (no ESR ISS to fall back on: not a catch) */
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, iss(3, 3, 9, 13, 0, 7, 1) | (1ull << 25), &e), WEL2_EC3F_NONE);
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, iss(3, 3, 9, 13, 0, 7, 1) | 0xab00000000ull, &e), WEL2_EC3F_NONE);
+    /* AFSR1 and ESR both decode to owned encodings but disagree: one is stale, ESR (architectural) wins */
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f | iss(3, 3, 9, 12, 0, 2, 1), iss(3, 3, 9, 13, 0, 7, 1), &e), WEL2_EC3F_ESR);
+    CHECK_EQ(e.crm, 12); CHECK_EQ(e.rt, 2);
+    /* both agree: AFSR1 */
+    CHECK_EQ(wel2_catch_ec3f_decode(esr_3f | iss(3, 3, 9, 13, 0, 7, 1), iss(3, 3, 9, 13, 0, 7, 1), &e), WEL2_EC3F_AFSR1);
+    /* IL = 0: not a 32-bit MSR/MRS, whatever AFSR1 says */
+    CHECK_EQ(wel2_catch_ec3f_decode((uint64_t)WEL2_EC_IMPDEF << 26, iss(3, 3, 9, 13, 0, 7, 1), &e), WEL2_EC3F_NONE);
     /* nothing decodable: not a catch (the caller's fatal path prints ESR / AFSR1 / ELR) */
     CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, 0, &e), WEL2_EC3F_NONE);
     CHECK_EQ(wel2_catch_ec3f_decode(esr_3f, iss(1, 0, 8, 7, 0, 0, 0), &e), WEL2_EC3F_NONE);       /* TLBI */

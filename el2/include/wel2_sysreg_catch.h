@@ -178,8 +178,9 @@ enum wel2_ec3f_src {
 	WEL2_EC3F_AFSR1,             /* AFSR1_EL2[24:0] decodes to a register this module owns */
 	WEL2_EC3F_ESR,               /* fallback: ESR_EL2[24:0] does */
 };
-/* Find the MSR/MRS ISS of an EC 0x3F exception: AFSR1_EL2 low 25 bits first, then ESR_EL2 low 25 bits; the first one that decodes
- * (wel2_catch_decode) to an encoding this module classifies (not NONE) wins. *e is filled on a hit. */
+/* Find the MSR/MRS ISS of an EC 0x3F exception [hypothesis, see vgic/sysreg_catch.c]: needs ESR.IL = 1; AFSR1_EL2[24:0] is used only if
+ * AFSR1[63:25] = 0 and it decodes to an owned encoding that does not contradict an owned decode of ESR[24:0] (then ESR wins, AFSR1 being
+ * stale); else ESR[24:0] if it decodes to an owned encoding; else NONE (the caller reflects an UNDEF). *e is filled on a hit. */
 enum wel2_ec3f_src wel2_catch_ec3f_decode(uint64_t esr, uint64_t afsr1, struct wel2_sysreg_enc *e);
 /* wel2.hacr=<hex>: "0x<hex>" or plain hex, 1..16 digits, up to a space or NUL. false on a bad value (mask untouched). */
 bool wel2_hacr_parse(const char *val, uint64_t *mask, const char **end);

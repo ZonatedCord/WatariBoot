@@ -77,6 +77,9 @@ void catch_cpu_init(bool log)
 {
     uint64_t before, after;
 
+    g_gpmu.vflags = g_vpmu;                          // also with wel2.catch=0 and HACR on: the PMU group is answered then
+    for (unsigned i = 0; i < MAX_CPUS; i++)
+        g_ccpu[i].vflags = g_vpmu;
     if (g_hacr)
         hacr_cpu_init(log);
     if (!g_catch) {                                  // HACR-only (wel2.catch=0): no MDCR / HCR trap bits, the status row still shows
@@ -84,9 +87,6 @@ void catch_cpu_init(bool log)
             status_draw();
         return;
     }
-    g_gpmu.vflags = g_vpmu;
-    for (unsigned i = 0; i < MAX_CPUS; i++)
-        g_ccpu[i].vflags = g_vpmu;
     if ((g_vpmu & WEL2_VPMU_UALL) && !(g_vpmu & WEL2_VPMU_NOUSER) && (g_catch_mask & WEL2_CATCH_G_PMU) && hw_has_pmuv3())
         __asm__ volatile("msr pmuserenr_el0, %0" : : "r"(0xfull));
     __asm__ volatile("mrs %0, mdcr_el2" : "=r"(before));
@@ -178,7 +178,7 @@ static bool catch_handle(struct frame *f, const struct wel2_sysreg_enc *ep)
 
         __asm__ volatile("mrs %0, cntpct_el0" : "=r"(now));
         __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
-        if (line[0] || now - g_status_t >= frq / 2) {      // a new encoding at once, the rest at most twice a second
+        if (line[0] || now - g_status_t >= (frq ? frq / 2 : 12000000)) {      // a new encoding at once, the rest at most twice a second
             g_status_t = now;
             status_draw();
         }
@@ -205,18 +205,21 @@ bool catch_trap(struct frame *f)
 }
 
 // An EC 0x3F (IMPLEMENTATION DEFINED) exception from a lower EL: with HACR_EL2[56] set the M1 reports the PMUv3 accesses this way
-// [hypothesis]; the MSR/MRS ISS is expected in AFSR1_EL2[24:0]. The raw ESR / AFSR1 / ELR of the first lines go to the log, so the
-// hardware run says what the layout really is. false = not a catch: the caller's fatal path prints ESR, AFSR1 and ELR.
+// [hypothesis]; the MSR/MRS ISS is expected in AFSR1_EL2[24:0] but AFSR1 may be stale, so wel2_catch_ec3f_decode cross-checks it with
+// ESR. The raw ESR / AFSR1 / ELR of the first lines go to the log, so the hardware run says what the layout really is.
+// What is not an owned catch is NOT fatal: it is reflected to the guest as an UNDEF at EL1 (inject_undef.c), what the guest got before HACR.
+// false only when even that is impossible (AArch32 or EL2 source): the caller's fatal path then prints ESR, AFSR1 and ELR.
 bool catch_trap_ec3f(struct frame *f)
 {
     struct wel2_sysreg_enc e;
     uint64_t afsr1;
     enum wel2_ec3f_src src;
+    bool caught = false;
 
-    if (!g_hacr)
-        return false;
     __asm__ volatile("mrs %0, afsr1_el2" : "=r"(afsr1));
     src = wel2_catch_ec3f_decode(f->esr, afsr1, &e);
+    if (src != WEL2_EC3F_NONE)
+        caught = catch_handle(f, &e);
     if (g_ec3f_logged < WEL2_EC3F_LOG_MAX) {
         g_ec3f_logged++;
         puts_("Watari EL2: ec3f: ESR=");
@@ -224,13 +227,14 @@ bool catch_trap_ec3f(struct frame *f)
         puts_(" AFSR1=");
         puthex(afsr1);
         puts_(" ELR=");
-        puthex(f->elr);
+        puthex(f->elr - (caught ? 4 : 0));
         puts_(src == WEL2_EC3F_AFSR1 ? " iss=afsr1" : src == WEL2_EC3F_ESR ? " iss=esr" : " iss=none");
+        puts_(caught ? " caught" : " not a catch: reflected as EL1 UNDEF");
         put_kn(" core ", this_cpu(), "\n");
     }
-    if (src == WEL2_EC3F_NONE)
-        return false;
-    return catch_handle(f, &e);
+    if (caught)
+        return true;
+    return wel2_inject_undef(f);
 }
 
 // The final statistics (cpuif_stats): the summary and one line per distinct encoding with its total count.

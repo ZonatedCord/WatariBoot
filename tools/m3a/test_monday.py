@@ -343,6 +343,9 @@ check(hr["kind"] == "hacr" and not hr["jump"] and hr["minutes"] == "2 min" and h
 code, txt = R("HACR0", "D0")
 check(code == 0 and "RESULT HACR0: PASS" in txt and "hacr_probe.py --dry-run" in txt, "HACR0 dry-run runs hacr_probe.py --dry-run from the bundle and passes")
 check(mo.run_checks(hr, "Traceback (most recent call last)", 0, False)[0] == "FAIL", "HACR0: a traceback fails the automatic check")
+check(mo.run_checks(hr, "== HACR_EL2[56] probe (mode: readback-only), boot core only\nnot at EL2 -> stop, nothing written\n", 0, False)[0] == "FAIL",
+      "HACR0 (real run): the header and an early stop (no STICKS line) fail")
+check(mo.run_checks(hr, "HACR_EL2[56] DOES NOT STICK (reads back 0)\n", 0, False)[0] == "PASS", "HACR0 (real run): the does-not-stick line passes (the probe ran to the end)")
 check(mo.run_checks(hr, "HACR_EL2[56] STICKS (reads back 1)\n", 0, False)[0] == "PASS", "HACR0 (real run): the sticks line passes")
 check(mo.run_checks(hr, "something else\n", 0, False)[0] == "FAIL", "HACR0 (real run): output without the sticks line fails")
 code, txt = R("D2", "D2")

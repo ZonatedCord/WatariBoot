@@ -668,7 +668,7 @@ def run_checks(r, text, exit_code, dry, interrupted=False, ramdisk_size=None, ra
         res.append(chk("Traceback" not in text, "no traceback", "%s ran to the end" % r["kind"]))
         res.append(chk(len(text.strip()) > 0, "output", "%d bytes of output" % len(text)))
         if r["kind"] == "hacr" and not dry:
-            res.append(chk("HACR_EL2[56]" in text, "hacr verdict", "the HACR_EL2[56] sticks / does not stick line is in the output"))
+            res.append(chk(("STICKS" in text or "DOES NOT STICK" in text), "hacr verdict", "the HACR_EL2[56] STICKS / DOES NOT STICK line is in the output (an early stop has neither)"))
         if r["kind"] == "idregs" and not dry:
             res.append(chk("Windows-relevant verdict" in text, "verdict block", "the decoded verdict block is in the output"))
     elif i["test"] is not None:

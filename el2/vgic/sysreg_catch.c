@@ -535,16 +535,35 @@ unsigned wel2_catch_format_summary(char *buf, unsigned cap, const struct wel2_ca
 }
 
 // ---- HACR_EL2[56] routing (EC 0x3F) ------------------------------------------------------------------------------------
+// [hypothesis] An EC 0x3F exception from a lower EL (HACR_EL2[56]) is an MSR/MRS of 32 bits (ESR.IL = 1) and AFSR1_EL2[24:0] holds its ISS.
+// AFSR1_EL2 is a firmware-owned auxiliary register that may be stale, so its low 25 bits are not trusted blindly:
+//   - ESR.IL must be 1 (an MSR/MRS is a 32-bit instruction);
+//   - AFSR1 bits [63:25] must be 0 (a real ISS is 25 bits wide; leftovers usually are not);
+//   - AFSR1[24:0] must decode to an encoding this module owns;
+//   - if ESR[24:0] ALSO decodes to an owned encoding and it differs from AFSR1's (op, CRn, CRm, Rt, direction), one of them is stale and
+//     the architectural ESR wins.
+// Anything else decodes to NONE: the caller reflects the exception to the guest as an UNDEF (its behaviour before HACR).
+static bool same_enc(const struct wel2_sysreg_enc *a, const struct wel2_sysreg_enc *b)
+{
+	return a->op0 == b->op0 && a->op1 == b->op1 && a->crn == b->crn && a->crm == b->crm && a->op2 == b->op2 && a->rt == b->rt &&
+	       a->rd == b->rd;
+}
+
 enum wel2_ec3f_src wel2_catch_ec3f_decode(uint64_t esr, uint64_t afsr1, struct wel2_sysreg_enc *e)
 {
-	struct wel2_sysreg_enc t;
+	struct wel2_sysreg_enc ta, te;
+	bool a_ok, e_ok;
 
-	if (wel2_catch_decode((uint32_t)(afsr1 & WEL2_AFSR1_ISS), &t) && wel2_catch_classify(&t) != WEL2_CATCH_NONE) {
-		*e = t;
+	if (!(esr & (1ULL << 25)))
+		return WEL2_EC3F_NONE;
+	a_ok = !(afsr1 >> 25) && wel2_catch_decode((uint32_t)(afsr1 & WEL2_AFSR1_ISS), &ta) && wel2_catch_classify(&ta) != WEL2_CATCH_NONE;
+	e_ok = wel2_catch_decode((uint32_t)(esr & WEL2_AFSR1_ISS), &te) && wel2_catch_classify(&te) != WEL2_CATCH_NONE;
+	if (a_ok && (!e_ok || same_enc(&ta, &te))) {
+		*e = ta;
 		return WEL2_EC3F_AFSR1;
 	}
-	if (wel2_catch_decode((uint32_t)(esr & WEL2_AFSR1_ISS), &t) && wel2_catch_classify(&t) != WEL2_CATCH_NONE) {
-		*e = t;
+	if (e_ok) {
+		*e = te;
 		return WEL2_EC3F_ESR;
 	}
 	return WEL2_EC3F_NONE;
