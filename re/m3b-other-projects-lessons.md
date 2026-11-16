@@ -27,11 +27,17 @@ Their m1n1-based hypervisor's approach was studied from its code. We copied noth
 |---|---|---|
 | Routing PMUv3 accesses to EL2 | HACR_EL2 bit 56 | HACR_EL2 bit 56 (`wel2.hacr`, default on the M1) [hypothesis until rung HACR0] |
 | Exception format | EC 0x18, or EC 0x3F with the MSR ISS in AFSR1_EL2 | same; AFSR1 accepted only if IL=1, [63:25]=0 and the ISS decodes to an owned register; otherwise ESR, otherwise UNDEF reflected to EL1 |
-| PMCCNTR_EL0 source | Apple PMC0 (the hardware cycle counter), 1:1 | virtual: CNTPCT scaled to a nominal 1 GHz, one global always-running counter (`wel2.vpmu=global`) |
+| PMCCNTR_EL0 source | Apple PMC0 (the hardware cycle counter), 1:1 | `wel2.vpmu=global,src=pmc0` (default on the M1): PMC0 + a per-core software offset; `src=timer` (default on QEMU / fallback): CNTPCT scaled to a nominal 1 GHz, one global always-running counter |
 | PMCR/PMCNTEN/PMOVS/PMINTEN | mapped onto Apple PMCR0/PMSR | virtual state, read back as written, N=0 |
+| Hardware PMC0 handling | not studied | never stopped, zeroed or written: PMCCNTR writes and PMCR.C move a per-core offset; PMCR.E / PMCNTENSET.C freeze and resume the guest-visible value |
+| Hardware never reset | not studied | the layer only reads PMC0; PMCR0 / PMCR1 are changed by read-modify-write (our enable bits only) |
+| Fallback | not studied | per core: after the enable, PMC0 is sampled across a 1 ms delay; if it does not move (and still does not at the first guest read) that core uses the timer source; log line + panel `SRC=TIMER(fallback)` |
+| Cross-core monotonic clamp | not studied | `sync` (default): every core starts at the boot core's published value; a per-core `last` clamp; optional `hiwater` global mark; P / E clusters keep their own pace |
+| FIQ-safe | not studied | PMCR0 IMODE / IACT (the FIQ module's bits) are never lost, the PMU interrupt mode is never touched; host test with the FIQ module in both orders |
+| Read-only probe | not studied | rung HACR0 reads PMCR0, PMCR1, PMC0 twice and reports whether and how fast PMC0 advances on the boot core; it never writes the PMU |
 | PMUSERENR_EL0 | reads 0, writes ignored | stored; mirrored to the hardware only on cores with PMUv3 (not on the M1) |
 | Non-PMU accesses caught by the trap | not studied | reflected to the guest as EL1 UNDEF, the behaviour without HACR |
 | Firmware side | nothing for the PMU | EDK2 EL1 net emulates the first accesses while EDK2's vectors are live (bootmgr replaces VBAR_EL1 right after) |
 | Diagnostics | — | fixed panel status row (MDCR stuck, HACR, CATCH count/last), `GUEST EXC`, `EL1EMU count=`, proxy rung HACR0 (no jump) |
 
-Why our counter differs: it does not touch the Apple PMU registers, which the layer already uses for its FIQ path. With the MDCR route on QEMU, the bench reaches Setup (`final1`). If Windows on the M1 needs real cycles, switching the source to PMC0 is a small change.
+Why the timer source exists: it never touches the Apple PMU registers. With the MDCR route on QEMU, the bench reaches Setup (`final1`). Decision of 2026-11-16: on the M1 the counter comes from PMC0 (real cycles), done as `docs/design/watari-el2/pmc0-vpmu.md` describes; the timer source stays as the QEMU default and as the per-core fallback.
