@@ -1156,7 +1156,7 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
  *                        QEMU's Aff0 0..7 (start.S stack slot = Aff0). No-op on the M1. Default native.
  *   wel2.hold=1          do not reset at the end of a step or of the guest (wel2.step=2, the guest's SYSTEM_RESET): paint the final
  *                        state, print the HOLD message and park, so the screen can be photographed (not wel2.step=1)
- *   wel2.catch=1|0       catch mode: trap PMU / debug / IMPLEMENTATION DEFINED registers and ACTLR_EL1 (HCR_EL2.TIDCP|TACR, MDCR_EL2.TPM|TPMCR|TDA|TDOSA|TDRA),
+ *   wel2.catch=0|1|0x<mask>|pmu,dbg,impdef,actlr   catch mode (1 = all groups; mask bit0 PMU, bit1 debug, bit2 IMPDEF, bit3 ACTLR; default on the M1: pmu): trap PMU / debug / IMPLEMENTATION DEFINED registers and ACTLR_EL1 (HCR_EL2.TIDCP|TACR, MDCR_EL2.TPM|TPMCR|TDA|TDOSA|TDRA),
  *                        answer them RAZ/WI and log the first access of each distinct encoding (default: on on the M1, off on QEMU)
  *   wel2.tid3=1|0        HCR_EL2.TID3: emulate the ID register group, GIC forced to 1 (default: on on the M1, off on QEMU)
  *   wel2.step=N          hardware ladder rung (DESIGN 9), read by stage1.c; 1 resets after the relocation, 2 after checkpoint 5 (CPU_INIT),
@@ -1194,10 +1194,16 @@ static void parse_bootargs(uint64_t fdt)
             g_tid3 = true;
         } else if (arg_is(p, "wel2.tid3=0")) {
             g_tid3 = false;
-        } else if (arg_is(p, "wel2.catch=1")) {
-            g_catch = true;
-        } else if (arg_is(p, "wel2.catch=0")) {
-            g_catch = false;
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'c' && p[6] == 'a' && p[7] == 't' &&
+                   p[8] == 'c' && p[9] == 'h' && p[10] == '=') {
+            uint32_t m;
+
+            if (wel2_catch_parse(p + 11, &m, 0)) {
+                g_catch_mask = m;
+                g_catch = m != 0;
+            } else {
+                puts_("Watari EL2: WARNING: bad wel2.catch value (0|1|0x<mask>|pmu,dbg,impdef,actlr), keeping the default\n");
+            }
         } else if (arg_is(p, "wel2.test=tcoff")) {
             g_test_tc = -1;
         } else if (arg_is(p, "wel2.test=tcon")) {
@@ -1409,6 +1415,7 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
             fatal_msg("M1 platform without HCR_EL2.E2H: the layer cannot run here");
         g_cpuif_trap = true;
         g_catch = true;                         /* M3a: bootmgr's UNDEF at EL1 was invisible; wel2.catch=0 overrides */
+        g_catch_mask = WEL2_CATCH_G_PMU;        /* real M1: debug / ACTLR / IMPDEF registers exist and must reach the hardware (RAZ/WI broke Windows) */
         g_tid3 = true;                          /* DESIGN 5.4: EDK2's GIC code and Windows read ID_AA64PFR0_EL1.GIC; wel2.tid3=0 overrides */
     }
     parse_bootargs(fdt);
@@ -1448,9 +1455,9 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
         puts_("Watari EL2: HCR_EL2.TID3 set: ID registers emulated, ID_AA64PFR0_EL1.GIC presented as 1\n");
     }
     if (g_catch) {
-        g_hcr |= WEL2_HCR_CATCH;
+        g_hcr |= wel2_catch_hcr_bits(g_catch_mask);
         wel2_fb_catch_enable(&g_fb);            /* no-op when stage1.c already decided (it may have declined: then no area, logging stays) */
-        puts_("Watari EL2: wel2.catch=1: HCR_EL2.TIDCP|TACR set; PMU / debug / IMPDEF / ACTLR_EL1 accesses are caught (RAZ/WI)\n");
+        puts_("Watari EL2: catch mode on: the enabled groups are caught (RAZ/WI), HCR_EL2.TIDCP|TACR as the mask says\n");
         catch_cpu_init(true);
     }
     vgic_setup(fdt);

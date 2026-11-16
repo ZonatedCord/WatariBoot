@@ -40,6 +40,7 @@
 // address (start.S), so the page permissions are the same for both granules.
 
 #include "boot.h"
+#include "wel2_sysreg_catch.h"
 #include "plat.h"
 #include "fdt.h"
 #include "wel2_ram.h"
@@ -646,10 +647,20 @@ void stage1_build(uint64_t fdt)
     {
         bool catch_on = m1;
 
-        if (have_args && has_arg(args, "wel2.catch=1"))
-            catch_on = true;
-        else if (have_args && has_arg(args, "wel2.catch=0"))
-            catch_on = false;
+        if (have_args) {
+            for (const char *p = args; *p; p++) {
+                static const char key[] = "wel2.catch=";
+                unsigned k = 0;
+                uint32_t cm;
+
+                if (p != args && p[-1] != ' ')
+                    continue;
+                while (key[k] && p[k] == key[k])
+                    k++;
+                if (!key[k] && wel2_catch_parse(p + k, &cm, 0))
+                    catch_on = cm != 0;
+            }
+        }
         if (catch_on)
             wel2_fb_catch_enable(&g_fb);
     }

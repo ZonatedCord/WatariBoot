@@ -44,6 +44,134 @@ enum wel2_catch_class wel2_catch_classify(const struct wel2_sysreg_enc *e)
 	return WEL2_CATCH_NONE;
 }
 
+// ---- groups ---------------------------------------------------------------------------------------------------------
+uint32_t wel2_catch_group(enum wel2_catch_class c)
+{
+	switch (c) {
+	case WEL2_CATCH_PMU:    return WEL2_CATCH_G_PMU;
+	case WEL2_CATCH_DEBUG:  return WEL2_CATCH_G_DBG;
+	case WEL2_CATCH_IMPDEF: return WEL2_CATCH_G_IMPDEF;
+	case WEL2_CATCH_ACTLR:  return WEL2_CATCH_G_ACTLR;
+	default:                return 0;
+	}
+}
+
+bool wel2_catch_enabled(uint32_t mask, enum wel2_catch_class c)
+{
+	return (mask & wel2_catch_group(c)) != 0;
+}
+
+uint64_t wel2_catch_mdcr_bits(uint32_t mask)
+{
+	uint64_t b = 0;
+
+	if (mask & WEL2_CATCH_G_PMU)
+		b |= WEL2_MDCR_TPM | WEL2_MDCR_TPMCR;
+	if (mask & WEL2_CATCH_G_DBG)
+		b |= WEL2_MDCR_TDA | WEL2_MDCR_TDOSA | WEL2_MDCR_TDRA;
+	return b;
+}
+
+uint64_t wel2_catch_hcr_bits(uint32_t mask)
+{
+	return ((mask & WEL2_CATCH_G_IMPDEF) ? WEL2_HCR_TIDCP : 0) | ((mask & WEL2_CATCH_G_ACTLR) ? WEL2_HCR_TACR : 0);
+}
+
+static bool tok_is(const char *p, unsigned n, const char *w)
+{
+	unsigned i = 0;
+
+	while (w[i] && i < n && p[i] == w[i])
+		i++;
+	return !w[i] && i == n;
+}
+
+bool wel2_catch_parse(const char *val, uint32_t *mask, const char **end)
+{
+	const char *p = val;
+	uint32_t m = 0;
+	bool ok = true;
+
+	if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+		unsigned nd = 0;
+
+		p += 2;
+		for (;; p++, nd++) {
+			char c = *p;
+			uint32_t d;
+
+			if (c >= '0' && c <= '9')
+				d = (uint32_t)(c - '0');
+			else if (c >= 'a' && c <= 'f')
+				d = (uint32_t)(c - 'a' + 10);
+			else if (c >= 'A' && c <= 'F')
+				d = (uint32_t)(c - 'A' + 10);
+			else
+				break;
+			m = (m << 4) | d;
+		}
+		ok = nd > 0 && nd <= 8 && (*p == 0 || *p == ' ');
+		m &= WEL2_CATCH_G_ALL;
+	} else {
+		for (;;) {
+			unsigned n = 0;
+
+			while (p[n] && p[n] != ' ' && p[n] != ',')
+				n++;
+			if (tok_is(p, n, "0") || tok_is(p, n, "none"))
+				m |= 0;
+			else if (tok_is(p, n, "1") || tok_is(p, n, "all"))
+				m |= WEL2_CATCH_G_ALL;
+			else if (tok_is(p, n, "pmu"))
+				m |= WEL2_CATCH_G_PMU;
+			else if (tok_is(p, n, "dbg") || tok_is(p, n, "debug"))
+				m |= WEL2_CATCH_G_DBG;
+			else if (tok_is(p, n, "impdef"))
+				m |= WEL2_CATCH_G_IMPDEF;
+			else if (tok_is(p, n, "actlr"))
+				m |= WEL2_CATCH_G_ACTLR;
+			else {
+				ok = false;
+				break;
+			}
+			p += n;
+			if (*p != ',')
+				break;
+			p++;
+		}
+	}
+	if (end)
+		*end = p;
+	if (!ok)
+		return false;
+	*mask = m;
+	return true;
+}
+
+unsigned wel2_catch_groups_str(char *buf, unsigned cap, uint32_t mask)
+{
+	static const struct { uint32_t bit; const char *name; } g[] = {
+		{ WEL2_CATCH_G_PMU, "pmu" }, { WEL2_CATCH_G_DBG, "dbg" }, { WEL2_CATCH_G_IMPDEF, "impdef" }, { WEL2_CATCH_G_ACTLR, "actlr" },
+	};
+	unsigned n = 0;
+
+	if (!cap)
+		return 0;
+	for (unsigned i = 0; i < 4; i++) {
+		if (!(mask & g[i].bit))
+			continue;
+		if (n && n + 1u < cap)
+			buf[n++] = ',';
+		for (const char *s = g[i].name; *s && n + 1u < cap; s++)
+			buf[n++] = *s;
+	}
+	if (!n)
+		for (const char *s = "none"; *s && n + 1u < cap; s++)
+			buf[n++] = *s;
+	buf[n] = 0;
+	return n;
+}
+
 // ---- names ----------------------------------------------------------------------------------------------------------
 static void put_s(char *buf, unsigned cap, unsigned *n, const char *s)
 {

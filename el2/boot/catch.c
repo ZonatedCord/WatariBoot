@@ -9,6 +9,7 @@
 #include "wel2_hvc.h"
 #include "wel2_sysreg_catch.h"
 
+uint32_t g_catch_mask;                  // wel2.catch group mask (WEL2_CATCH_G_*); default on the M1: PMU only (main.c)
 bool g_catch;                           // wel2.catch=1|0; default on the M1, off on QEMU (main.c)
 static struct wel2_catch_tab g_tab;     // under the big lock (el2_exception)
 static struct wel2_catch_cpu g_ccpu[MAX_CPUS];   // per-core emulation state (OS lock), same lock
@@ -21,12 +22,20 @@ void catch_cpu_init(bool log)
     uint64_t before, after;
 
     __asm__ volatile("mrs %0, mdcr_el2" : "=r"(before));
-    __asm__ volatile("msr mdcr_el2, %0; isb" : : "r"(before | WEL2_MDCR_CATCH));
+    __asm__ volatile("msr mdcr_el2, %0; isb" : : "r"(before | wel2_catch_mdcr_bits(g_catch_mask)));
     __asm__ volatile("mrs %0, mdcr_el2" : "=r"(after));
     if (log) {
+        char gs[32];
+
+        wel2_catch_groups_str(gs, sizeof(gs), g_catch_mask);
+        puts_("Watari EL2: catch: groups = ");
+        puts_(gs);
+        puts_(" (mask ");
+        puthex(g_catch_mask);
+        puts_(")\n");
         put_kv("Watari EL2: catch: MDCR_EL2 before = ", before);
         put_kv("Watari EL2: catch: MDCR_EL2 after  = ", after);
-        put_kv("Watari EL2: catch: MDCR_EL2 trap bits that did not stick = ", (before | WEL2_MDCR_CATCH) & ~after & WEL2_MDCR_CATCH);
+        put_kv("Watari EL2: catch: MDCR_EL2 trap bits that did not stick = ", (before | wel2_catch_mdcr_bits(g_catch_mask)) & ~after & wel2_catch_mdcr_bits(g_catch_mask));
     }
 }
 
@@ -38,7 +47,7 @@ bool catch_trap(struct frame *f)
     unsigned idx = 0;
     char line[WEL2_CATCH_LINE_MAX];
 
-    if (!g_catch || !wel2_catch_decode(f->esr & 0x1ffffff, &e) || wel2_catch_classify(&e) == WEL2_CATCH_NONE)
+    if (!g_catch || !wel2_catch_decode(f->esr & 0x1ffffff, &e) || !wel2_catch_enabled(g_catch_mask, wel2_catch_classify(&e)))
         return false;
     switch (wel2_catch_record(&g_tab, &e, f->elr, this_cpu(), &idx)) {
     case WEL2_CATCH_REC_NEW:

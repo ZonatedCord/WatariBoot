@@ -44,6 +44,13 @@
 #define WEL2_HCR_TACR    (1ULL << 21)
 #define WEL2_HCR_CATCH   (WEL2_HCR_TIDCP | WEL2_HCR_TACR)
 
+/* Group mask of wel2.catch: bit0 PMU, bit1 debug, bit2 IMPDEF, bit3 ACTLR. */
+#define WEL2_CATCH_G_PMU    1u
+#define WEL2_CATCH_G_DBG    2u
+#define WEL2_CATCH_G_IMPDEF 4u
+#define WEL2_CATCH_G_ACTLR  8u
+#define WEL2_CATCH_G_ALL    15u
+
 enum wel2_catch_class {
 	WEL2_CATCH_NONE = 0,         /* not ours */
 	WEL2_CATCH_PMU,              /* Performance Monitors (op0 3, CRn 9 / CRn 14) */
@@ -63,6 +70,17 @@ struct wel2_sysreg_enc {
 bool wel2_catch_decode(uint32_t iss, struct wel2_sysreg_enc *e);
 
 enum wel2_catch_class wel2_catch_classify(const struct wel2_sysreg_enc *e);
+
+/* Group bit of a class (0 for NONE), whether `mask` enables it, the trap bits a mask needs, and the argument parser. */
+uint32_t wel2_catch_group(enum wel2_catch_class c);
+bool wel2_catch_enabled(uint32_t mask, enum wel2_catch_class c);
+uint64_t wel2_catch_mdcr_bits(uint32_t mask);
+uint64_t wel2_catch_hcr_bits(uint32_t mask);
+/* Parse the value of wel2.catch= (up to a space or NUL): "0", "1" (all), "0x<hex>" or a comma list of pmu,dbg,impdef,actlr
+ * (also "debug", "all", "none"). Returns false on a bad value (mask untouched). *end = first char after the value. */
+bool wel2_catch_parse(const char *val, uint32_t *mask, const char **end);
+/* "pmu,dbg,impdef,actlr" subset of the mask ("none" when 0) into buf; returns the length. */
+unsigned wel2_catch_groups_str(char *buf, unsigned cap, uint32_t mask);
 
 /* Name of the register when the architecture (or this table) knows it ("PMCR_EL0", "DBGBVR3_EL1", ...), written to buf
  * (capacity cap, NUL-terminated). Returns its length, 0 when unknown (buf is then ""). */

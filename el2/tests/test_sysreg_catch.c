@@ -415,8 +415,55 @@ static void t_pmu(void)
     }
 }
 
+static void t_groups(void)
+{
+    uint32_t m = 99;
+    const char *end;
+    char b[40];
+
+    CHECK(wel2_catch_parse("0", &m, &end)); CHECK_EQ(m, 0);
+    CHECK(wel2_catch_parse("1", &m, &end)); CHECK_EQ(m, 15);
+    CHECK(wel2_catch_parse("pmu", &m, &end)); CHECK_EQ(m, 1);
+    CHECK(wel2_catch_parse("pmu,actlr wel2.x=1", &m, &end)); CHECK_EQ(m, 9); CHECK_EQ(*end, ' ');
+    CHECK(wel2_catch_parse("dbg,impdef", &m, &end)); CHECK_EQ(m, 6);
+    CHECK(wel2_catch_parse("pmu,dbg,impdef,actlr", &m, &end)); CHECK_EQ(m, 15);
+    CHECK(wel2_catch_parse("0x5", &m, &end)); CHECK_EQ(m, 5);
+    CHECK(wel2_catch_parse("0xF0F", &m, &end)); CHECK_EQ(m, 15);
+    m = 77;
+    CHECK(!wel2_catch_parse("pmu,bogus", &m, &end)); CHECK_EQ(m, 77);
+    CHECK(!wel2_catch_parse("0x", &m, &end));
+    CHECK(!wel2_catch_parse("0xzz", &m, &end));
+    CHECK(!wel2_catch_parse("pmu,", &m, &end));
+    CHECK(!wel2_catch_parse("", &m, &end));
+
+    CHECK_EQ(wel2_catch_mdcr_bits(0), 0);
+    CHECK_EQ(wel2_catch_hcr_bits(0), 0);
+    CHECK_EQ(wel2_catch_mdcr_bits(1), WEL2_MDCR_TPM | WEL2_MDCR_TPMCR);
+    CHECK_EQ(wel2_catch_hcr_bits(1), 0);
+    CHECK_EQ(wel2_catch_mdcr_bits(2), WEL2_MDCR_TDA | WEL2_MDCR_TDOSA | WEL2_MDCR_TDRA);
+    CHECK_EQ(wel2_catch_hcr_bits(2), 0);
+    CHECK_EQ(wel2_catch_mdcr_bits(4), 0);
+    CHECK_EQ(wel2_catch_hcr_bits(4), WEL2_HCR_TIDCP);
+    CHECK_EQ(wel2_catch_hcr_bits(8), WEL2_HCR_TACR);
+    CHECK_EQ(wel2_catch_mdcr_bits(15), WEL2_MDCR_CATCH);
+    CHECK_EQ(wel2_catch_hcr_bits(15), WEL2_HCR_CATCH);
+
+    CHECK(wel2_catch_enabled(1, WEL2_CATCH_PMU));
+    CHECK(!wel2_catch_enabled(1, WEL2_CATCH_DEBUG));
+    CHECK(!wel2_catch_enabled(1, WEL2_CATCH_IMPDEF));
+    CHECK(!wel2_catch_enabled(1, WEL2_CATCH_ACTLR));
+    CHECK(!wel2_catch_enabled(15, WEL2_CATCH_NONE));
+    CHECK(wel2_catch_enabled(8, WEL2_CATCH_ACTLR));
+
+    wel2_catch_groups_str(b, sizeof(b), 1); CHECK(!strcmp(b, "pmu"));
+    wel2_catch_groups_str(b, sizeof(b), 15); CHECK(!strcmp(b, "pmu,dbg,impdef,actlr"));
+    wel2_catch_groups_str(b, sizeof(b), 10); CHECK(!strcmp(b, "dbg,actlr"));
+    wel2_catch_groups_str(b, sizeof(b), 0); CHECK(!strcmp(b, "none"));
+}
+
 int main(void)
 {
+    RUN(t_groups);
     RUN(t_decode);
     RUN(t_classify_pmu);
     RUN(t_classify_debug_impdef_actlr);

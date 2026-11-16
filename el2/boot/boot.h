@@ -76,6 +76,7 @@ extern unsigned g_step;            /* stage1.c: wel2.step=N (0 = none): the hard
 extern bool g_tid3;                /* idreg.c: HCR_EL2.TID3 set */
 extern unsigned g_idreg_n;         /* idreg.c: ID-register reads emulated */
 bool idreg_trap(struct frame *f);  /* idreg.c: a trapped read of the TID3 group (EC 0x18) */
+extern uint32_t g_catch_mask;      /* catch.c: enabled groups (WEL2_CATCH_G_*), 0 when g_catch is false */
 extern bool g_catch;               /* catch.c: wel2.catch=1 (default on the M1): HCR_EL2.TIDCP|TACR and MDCR_EL2 trap bits set */
 struct wel2_stats;
 bool catch_trap(struct frame *f);  /* catch.c: a trapped PMU/debug/IMPDEF/ACTLR_EL1 access (EC 0x18): RAZ/WI + one log line per encoding */
