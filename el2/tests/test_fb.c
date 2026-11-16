@@ -523,25 +523,28 @@ static void t_catch_area(void)
 	CHECK_EQ(s.fb.catch_on, 1);
 	CHECK_EQ(s.fb.catch_y, ty_old - 4);
 	CHECK_EQ(s.fb.text_y, ty_old + WEL2_FB_CATCH_ROWS * cch);
-	CHECK_EQ(s.fb.text_y, ty_old + 81);
+	CHECK_EQ(s.fb.text_y, ty_old + 108);
 	CHECK_EQ(s.fb.rows, (1600 - s.fb.text_y) / chh);
 	cy0 = s.fb.catch_y;
 	wel2_fb_checkpoint(&s.fb, 0, WEL2_RGB_GREEN);
 	CHECK_EQ(at(&s, 0, s.fb.text_y - 4), wel2_fb_pixel(&s.fb, C_RULE));           /* the rule moved below the area */
 	CHECK(line_is_sc(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u, 3));
 	CHECK(line_is_sc(&s, cy0 + cch, "LAST  CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, WEL2_RGB_BLACK, 3));
-	CHECK(line_is_sc(&s, cy0 + 2 * cch, "GUEST EXCEPTION: NONE", C_NOERR, WEL2_RGB_BLACK, 3));
+	CHECK(line_is_sc(&s, cy0 + 3 * cch, "GUEST EXCEPTION: NONE", C_NOERR, WEL2_RGB_BLACK, 3));
+	CHECK(line_is_sc(&s, cy0 + 2 * cch, "", 0xffd040u, WEL2_RGB_BLACK, 3));        /* the status row is empty until set */
+	wel2_fb_catch_status(&s.fb, "MDCR STUCK=0x60 HACR=0x100000000000000 CATCH N=3 LAST=PMCCNTR_EL0");
+	CHECK(line_is_sc(&s, cy0 + 2 * cch, "MDCR STUCK=0X60 HACR=0X100000000000000 CATCH N=3 LAST=PMCCNTR_EL0", 0xffd040u, WEL2_RGB_BLACK, 3));
 	/* more catches: the first stays, the last row shows the newest */
 	wel2_fb_catch_note(&s.fb, "TWO");
 	wel2_fb_catch_note(&s.fb, "THREE");
 	CHECK(line_is_sc(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u, 3));
 	CHECK(line_is_sc(&s, cy0 + cch, "LAST  THREE", 0xffd040u, WEL2_RGB_BLACK, 3));
 	wel2_fb_catch_guest_exc(&s.fb, "GUEST EXCEPTION ESR 0x02000000 ELR 0x0000000000001000 FAR 0x0000000000002000");
-	CHECK(line_is_sc(&s, cy0 + 2 * cch, "GUEST EXCEPTION ESR 0X02000000 ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u, 3));
+	CHECK(line_is_sc(&s, cy0 + 3 * cch, "GUEST EXCEPTION ESR 0X02000000 ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u, 3));
 	/* the scrolling text starts below the area and never touches it, even when it wraps and clears several times */
 	for (int i = 0; i < 200; i++)
 		wel2_fb_puts(&s.fb, "SCROLLING LINE\n");
-	CHECK(line_is_sc(&s, cy0 + 2 * cch, "GUEST EXCEPTION ESR 0X02000000 ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u, 3));
+	CHECK(line_is_sc(&s, cy0 + 3 * cch, "GUEST EXCEPTION ESR 0X02000000 ELR 0X0000000000001000 FAR 0X0000000000002000", WEL2_RGB_WHITE, 0xa00000u, 3));
 	CHECK(line_is_sc(&s, cy0, "FIRST CATCH R S3_3_C9_C12_0 PMCR_EL0 PC=0X10 CORE=0 COUNT=1", 0xffd040u, 0x301800u, 3));
 	CHECK(s.fb.cy < s.fb.rows);
 	CHECK(scr_canaries_ok(&s));
@@ -571,10 +574,10 @@ static void t_catch_area_j293_guest_height(void)
 		CHECK_EQ(p.band_rows + p.guest_rows, 1600);
 	}
 	CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, 14, &p), 0);
-	CHECK_EQ(p.band_rows, 448);                                      /* text_y 387 + 54, rounded up to 8 rows */
-	CHECK_EQ(p.guest_rows, 1152);
+	CHECK_EQ(p.band_rows, 472);                                      /* text_y 414 + 54, rounded up to 8 rows */
+	CHECK_EQ(p.guest_rows, 1128);
 	CHECK_EQ(wel2_fb_plan(&fb, WEL2_FBM_BAND, 12, &p), 0);
-	CHECK_EQ(p.guest_rows, 1158);
+	CHECK_EQ(p.guest_rows, 1132);
 }
 
 /* Too small a panel for the area: nothing changes, the text is still kept; the first decision is final. */
