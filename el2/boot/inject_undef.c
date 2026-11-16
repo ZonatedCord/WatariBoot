@@ -62,11 +62,33 @@ bool wel2_inject_undef(struct frame *f)
 
     if (off < 0)
         return false;
-    __asm__ volatile("mrs %0, vbar_el1" : "=r"(vbar));
-    __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
-    __asm__ volatile("msr esr_el1, %0" : : "r"(esr));
-    __asm__ volatile("msr elr_el1, %0" : : "r"(f->elr));
-    __asm__ volatile("msr spsr_el1, %0" : : "r"(f->spsr));
+    uint64_t hcr;
+
+    // With HCR_EL2.E2H = 1 (the layer's regime, always on the M1) the *_EL1 names at EL2 are redirected to the EL2 registers:
+    // the guest's EL1 registers are reached through the *_EL12 encodings (Arm ARM D8.13).
+    __asm__ volatile("mrs %0, hcr_el2" : "=r"(hcr));
+    if (hcr & (1ULL << 34)) {
+        __asm__ volatile("mrs %0, S3_5_C12_C0_0" : "=r"(vbar));       // VBAR_EL12
+        __asm__ volatile("mrs %0, S3_5_C1_C0_0" : "=r"(sctlr));       // SCTLR_EL12
+        __asm__ volatile("msr S3_5_C5_C2_0, %0" : : "r"(esr));        // ESR_EL12
+        __asm__ volatile("msr S3_5_C4_C0_1, %0" : : "r"(f->elr));     // ELR_EL12
+        __asm__ volatile("msr S3_5_C4_C0_0, %0" : : "r"(f->spsr));    // SPSR_EL12
+    } else {
+        __asm__ volatile("mrs %0, vbar_el1" : "=r"(vbar));
+        __asm__ volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
+        __asm__ volatile("msr esr_el1, %0" : : "r"(esr));
+        __asm__ volatile("msr elr_el1, %0" : : "r"(f->elr));
+        __asm__ volatile("msr spsr_el1, %0" : : "r"(f->spsr));
+    }
+    {
+        static int n;                    // the first 4 injections: where from, where to (bench diagnostics)
+
+        if (n++ < 4) {
+            put_kv("Watari EL2: inject UNDEF: pc = ", f->elr);
+            put_kv("Watari EL2: inject UNDEF: spsr = ", f->spsr);
+            put_kv("Watari EL2: inject UNDEF: VBAR_EL1 = ", vbar);
+        }
+    }
     f->spsr = wel2_undef_new_spsr(sctlr);
     f->elr = (vbar & ~0x7ffULL) + (uint64_t)off;
     return true;
