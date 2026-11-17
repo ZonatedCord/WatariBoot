@@ -7,7 +7,7 @@
 > **Watari Boot: Native Windows on Apple Silicon**: an open research project to dual-boot Windows 11 ARM64 on Apple Silicon Macs, starting from the M1.
 
 > [!WARNING]
-> **This does not work on a real Mac yet.** Watari Boot is an early-stage research project. Everything below runs in **QEMU** on a Mac; nothing here touches your Mac's disk or boot configuration. Do not expect a usable Windows install on Apple Silicon from this repository today.
+> **Not usable yet.** Watari Boot is an early-stage research project. On a real M1, Windows now starts on top of our layer and reaches its boot logo and kernel, then stops with a bugcheck (2026-11-17). Those runs need a second Mac connected over USB as a debug host, and they write nothing to the M1's disk. Everything you can try yourself runs in **QEMU** on a Mac and never touches your Mac's disk or boot configuration. Do not expect a usable Windows install on Apple Silicon from this repository today.
 
 ## What we are trying to do
 
@@ -51,9 +51,14 @@ Everything else stays native: cores, memory, and real peripherals (which still n
 | Watari EL2: **M1** (stage-2 + vGIC, list-register delivery, SMP via PSCI, EDK2 at EL1 on top of the layer) | ✅ done |
 | Watari EL2: **M1.5** (hardening: LR overflow, EL2 MMU, trap-and-emulate CPU interface for the M1 erratum) | ✅ done |
 | Watari EL2: **M2**: **Windows 11 ARM64 boots to the lock screen on top of Watari EL2** (QEMU TCG, 4 cores, both CPU interface modes) | ✅ done 2026-10-20 ([screenshot](docs/img/m2-lockscreen-trap.png)) |
-| Watari EL2: **M3a** on the real M1 (needs a debug host) | ⏭️ next |
+| M1-shaped bench: WinPE from a RAM disk reaches **Windows Setup** with the M1's real ACPI tables and 8 cores (QEMU, layer + our M1 EDK2) | ✅ done 2026-11-15 |
+| Watari EL2: **M3a** on the real M1 (tethered from a second Mac through m1n1's USB proxy, RAM only) | 🔄 in progress |
+| · day 2: the layer runs on the M1 at EL2 and hands over to a guest | ✅ 2026-11-13 |
+| · our EDK2 runs on the layer on the M1; Windows' boot manager starts from a 713 MiB RAM disk | ✅ 2026-11-16 |
+| · the M1 has no standard Arm PMU: `HACR_EL2[56]` routes those accesses to the layer, which emulates them; **Windows reaches its boot logo and the kernel**, then stops with `INTERNAL_POWER_ERROR` (0xA0, F-43). Colours are wrong (F-44) | ⚠️ 2026-11-17 |
+| Watari EL2: **M3b**: Windows Setup on the real M1, then storage | ⏭️ next |
 
-Current state and next steps: [docs/STATUS.md](docs/STATUS.md). Estimated time to Windows on a real M1 (lock screen, framebuffer, USB): months, not weeks.
+Current state and next steps: [docs/STATUS.md](docs/STATUS.md). Estimated time to a usable Windows on a real M1 (desktop, storage, keyboard, USB): months, not weeks.
 
 ## Failures are part of the project
 
@@ -76,15 +81,25 @@ Paths, options and caveats: [tools/](tools/) and the [plan](docs/PLAN.md).
 
 | Path | What |
 |---|---|
-| [re/](re/) | research notes (Windows ARM64 HAL, interrupts, M1 FIQ/timer, prior art, Plan B feasibility) |
-| [docs/](docs/) | plan, status, session diaries, ADRs, designs, failures |
-| [edk2-apple/WatariQemuPkg/](edk2-apple/WatariQemuPkg/) | our EDK2 drivers (ACPI override, timer-as-FIQ experiment, parking protocol) |
-| [tools/](tools/) | `acpigen` (ACPI table generator + tests), build and QEMU scripts, unattended install |
+| [el2/](el2/) | **Watari EL2**, the layer: boot code, vGIC model and its host tests, a test guest |
+| [re/](re/) | research notes (Windows ARM64 HAL, interrupts, M1 FIQ/timer, prior art, Plan B feasibility, hardware-day results) |
+| [docs/](docs/) | plan, status, session diaries, ADRs, designs, failures, hardware procedures ([docs/procedures/](docs/procedures/)), a guide for newcomers ([docs/learn/](docs/learn/)) |
+| [edk2-apple/WatariM1Pkg/](edk2-apple/WatariM1Pkg/) | our EDK2 platform for the M1 (GOP on the panel, RAM disk, ACPI tables for the j293) |
+| [edk2-apple/WatariQemuPkg/](edk2-apple/WatariQemuPkg/) | our EDK2 drivers for the QEMU bench (ACPI override, timer-as-FIQ experiment, parking protocol) |
+| [tools/](tools/) | `acpigen` (ACPI table generator + tests), build and QEMU scripts, unattended install, token counter |
 | [ralph/](ralph/) | prompts and logs of the autonomous agent loops |
+
+## Team
+
+| | Role |
+|---|---|
+| **Marco Barlera** ([@ZonatedCord](https://github.com/ZonatedCord)) | Started the project; builds it with Ciani. Research, design, code, and the M1 used for the hardware days |
+| **Flavio A. Ciani** ([@FloshDev](https://github.com/FloshDev)) | Builds the project with Marco. Research, design, code, and the hardware days: his Mac is the debug host that boots Watari on the M1 |
+| **Ralph** | Claude in an autonomous loop, on its own branches ([ralph/](ralph/)) |
 
 ## How this is built
 
-Watari Boot is developed by a small team with AI agents doing much of the research and implementation: Claude Opus plans and verifies, Claude Sonnet agents execute, and long tasks run in autonomous "Ralph" loops (see [CLAUDE.md](CLAUDE.md) and [ralph/](ralph/)). Every technical claim in the docs is marked **verified** (with its source) or **hypothesis**. For transparency, the cost of this work is tracked below; each contributor updates their own share with `python3 -I tools/token-usage.py --autore <name>`.
+Watari Boot is developed by Marco and Ciani with AI agents doing much of the research and implementation: Claude Opus plans and verifies, Claude Sonnet agents execute, and long tasks run in autonomous "Ralph" loops (see [CLAUDE.md](CLAUDE.md) and [ralph/](ralph/)). Every technical claim in the docs is marked **verified** (with its source) or **hypothesis**. For transparency, the cost of this work is tracked below; each contributor updates their own share with `python3 -I tools/token-usage.py --autore <name>`.
 
 ## Tokens and costs
 <!-- TOKEN-COUNTER:START -->
