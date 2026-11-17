@@ -93,13 +93,13 @@ Paths, options and caveats: [tools/](tools/) and the [plan](docs/PLAN.md).
 
 | | Role |
 |---|---|
-| **Marco Barlera** ([@ZonatedCord](https://github.com/ZonatedCord)) | Started the project; builds it with Ciani. Research, design, code, and the M1 used for the hardware days |
+| **Marco Barlera** ([@ZonatedCord](https://github.com/ZonatedCord)) | Started the project; builds it with Flavio. Research, design, code, and the M1 used for the hardware days |
 | **Flavio A. Ciani** ([@FloshDev](https://github.com/FloshDev)) | Builds the project with Marco. Research, design, code, and the hardware days: his Mac is the debug host that boots Watari on the M1 |
 | **Ralph** | Claude in an autonomous loop, on its own branches ([ralph/](ralph/)) |
 
 ## How this is built
 
-Watari Boot is developed by Marco and Ciani with AI agents doing much of the research and implementation: Claude Opus plans and verifies, Claude Sonnet agents execute, and long tasks run in autonomous "Ralph" loops (see [CLAUDE.md](CLAUDE.md) and [ralph/](ralph/)). Every technical claim in the docs is marked **verified** (with its source) or **hypothesis**. For transparency, the cost of this work is tracked below; each contributor updates their own share with `python3 -I tools/token-usage.py --autore <name>`.
+Watari Boot is developed by **Marco** ([@ZonatedCord](https://github.com/ZonatedCord)) and **Flavio** ([@FloshDev](https://github.com/FloshDev)) with AI agents doing much of the research and implementation: Claude Opus plans and verifies, Claude Sonnet agents execute, and long tasks run in autonomous "Ralph" loops (see [CLAUDE.md](CLAUDE.md) and [ralph/](ralph/)). Every technical claim in the docs is marked **verified** (with its source) or **hypothesis**. For transparency, the cost of this work is tracked below; each contributor updates their own share with `python3 -I tools/token-usage.py --autore <name>`.
 
 ## Tokens and costs
 <!-- TOKEN-COUNTER:START -->
