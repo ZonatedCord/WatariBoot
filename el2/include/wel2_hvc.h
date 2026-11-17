@@ -19,6 +19,7 @@
 #define WEL2_LOG              0xC6000002u   /* x1 = guest PA of text, x2 = length (<= WEL2_LOG_MAX) */
 #define WEL2_CHECKPOINT       0xC6000003u   /* x1 = check number (WEL2_CHK_*), x2 = WEL2_CHKSTATE_* */
 #define WEL2_CONSOLE_WRITE    0xC6000004u   /* x1 = guest PA of raw bytes, x2 = length (<= WEL2_CONSOLE_MAX) */
+#define WEL2_REPORT_EXC       0xC6000005u   /* x1 = ESR_EL1, x2 = ELR_EL1, x3 = FAR_EL1, x4 = SPSR_EL1, x5 = WEL2_EXC_* */
 
 #define WEL2_HVC_ABI_VERSION  1u
 #define WEL2_VERSION_TAG      0x57454C32ull /* 'WEL2' */
@@ -45,6 +46,18 @@
  * written (the caller splits; no partial write). x2 = 0 is a no-op SUCCESS (the range is not looked at). A range
  * outside guest RAM is INVALID_PARAMETERS. SUCCESS returns x0 = 0. NOT_SUPPORTED = no such call in this layer: be quiet. */
 #define WEL2_CONSOLE_MAX      160u
+
+/* WEL2_REPORT_EXC (catch mode companion, INTERFACES 9): the guest's own exception handler tells the layer what it took, so
+ * the line reaches the UART, the pmlog ring and the panel even when the guest has no console. The layer logs
+ * "GUEST EXC type=<t> ESR=<hex> EC=<hex> ELR=<hex> FAR=<hex> SPSR=<hex> core=<n>", draws ESR/ELR/FAR under the label
+ * "GUEST EXCEPTION" in the panel's catch area, records the last-error text, and returns SUCCESS (x0 = 0). Any x5 is
+ * accepted (an unknown type is printed as its number); x1-x5 are values, nothing is dereferenced. A layer without
+ * console sinks answers NOT_SUPPORTED. The call does not change WEL2_HVC_ABI_VERSION: a layer that lacks it answers
+ * NOT_SUPPORTED to the unknown id (the contract of this range), so the guest probes by calling. */
+#define WEL2_EXC_SYNC    0u
+#define WEL2_EXC_IRQ     1u
+#define WEL2_EXC_FIQ     2u
+#define WEL2_EXC_SERROR  3u
 
 /* WEL2_CHECKPOINT numbers: the layer paints square WEL2_CHK_SQUARE_BASE + n and logs one line. */
 #define WEL2_CHK_SQUARE_BASE  16u
@@ -81,6 +94,10 @@ struct wel2_stats {
     uint64_t count[WEL2_STAT_COUNT];
     uint64_t console_calls;                 /* T12b: WEL2_CONSOLE_WRITE calls that wrote bytes (length > 0) */
     uint64_t console_bytes;                 /* ... and the bytes they wrote */
+    uint64_t catch_distinct;                /* catch mode: distinct system register encodings caught (0 when off) */
+    uint64_t catch_total;                   /* ... all catches */
+    uint64_t catch_overflow;                /* ... catches of encodings beyond the table */
+    uint64_t guest_exc;                     /* WEL2_REPORT_EXC calls */
 };
 #define WEL2_STATS_V1_SIZE    (8u + 8u * WEL2_STAT_COUNT)
 

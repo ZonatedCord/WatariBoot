@@ -24,6 +24,10 @@ struct fake_sysreg {
 	unsigned nwr[APPLE_SR_COUNT];
 	/* knobs: a source that does not go away when it is acknowledged / switched off */
 	bool stuck_ipi, stuck_pmcr0;
+	/* PMC0 model: every read returns the current value, then adds pmc0_step when counting is enabled (PMCR0 bit 0 and a PMCR1
+	 * EL0/EL1 bit for counter 0) and the counter is not stuck. The test may also set r[APPLE_SR_PMC0] directly. */
+	uint64_t pmc0_step;
+	bool stuck_pmc0;
 	/* ICH_MISR model: when misr_cond is non-zero, MISR follows ICH_HCR: bit 0 (EOI) is unconditional (it has no
 	 * enable), bits [7:1] need their enable bit in ICH_HCR. Otherwise MISR is whatever the test presets. */
 	uint64_t misr_cond;
@@ -41,6 +45,14 @@ static uint64_t fs_rd(void *ctx, enum apple_sr id)
 
 	if (f->nlog < FS_LOG_MAX)
 		f->log[f->nlog++] = (struct fs_ev){ false, id, f->r[id] };
+	if (id == APPLE_SR_PMC0) {
+		uint64_t v = f->r[id];
+
+		if (!f->stuck_pmc0 && (f->r[APPLE_SR_PMCR0] & PMCR0_CTR0_EN) &&
+		    (f->r[APPLE_SR_PMCR1] & (PMCR1_CTR0_EL0 | PMCR1_CTR0_EL1)))
+			f->r[id] += f->pmc0_step;
+		return v;
+	}
 	return id == APPLE_SR_IPI_RR_GLOBAL ? 0 : f->r[id];
 }
 

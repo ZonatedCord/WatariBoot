@@ -16,6 +16,8 @@ Claims are marked **[verified: source]** or **[hypothesis]**; everything not yet
 | `j293-minimal.dts/.dtb` | minimal j293 device tree that m1n1's `kboot_prepare_dt` fills (DESIGN 4.2) |
 | `watari-load.py` | the host loader |
 | `ehw2.py` | optional read-only inventory of the state inherited from iBoot/m1n1 (`docs/procedures/m3a-ehw2-rung.md`) |
+| `hacr_probe.py` | HACR_EL2[56] readback on the boot core (writes only HACR_EL2, restores it), rung `HACR0`; `--el1` also tries an EL1 PMU access (opt-in) |
+| `idregs.py` | read-only dump and decode of the CPU ID/feature registers of the boot core, rung `ID0` (`docs/procedures/m3a-monday-runbook.md`) |
 | `monday.py` | the Monday runner for the Claude session on the host Mac (T16i): `preflight`, `rung <ID>` (the procedures' exact loader commands, automatic pre-jump checks, photo checklist, results file), `next`, `verdict`, `confirm`; see `docs/procedures/m3a-monday-runbook.md` |
 | `WATARI_M1_EFI.fd` | EDK2 for the M1 (`tools/build-edk2-m1.sh`, copied from `$WATARI_DATA/build-m1/`), the guest of rungs D0 and D2 (day 3) |
 | `WATARI_M1_EFI.fd.build.txt` | the firmware's build manifest (written by `tools/build-edk2-m1.sh`: model, bench, ramdisk stand-in, bgr8, tag, PCD, commit, SHA-256); `build-m1-payload.sh` refuses a bench, tagged, non-j293 or manifest-less firmware (`WATARI_M1_EFI_ALLOW_BENCH=1` for a bench bundle) |

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Watari EL2: vendor hypercalls (WEL2_VERSION / STATS / LOG / CHECKPOINT / CONSOLE_WRITE), see include/wel2_hvc.h.
+// Watari EL2: vendor hypercalls (WEL2_VERSION / STATS / LOG / CHECKPOINT / CONSOLE_WRITE / REPORT_EXC), see include/wel2_hvc.h.
 // Logic only; the memory accessors and the sinks are callbacks (include/wel2_hvc_vendor.h).
 
 #include "wel2_hvc_vendor.h"
@@ -40,6 +40,81 @@ static void put_dec(char *buf, unsigned cap, unsigned *n, uint64_t v)
     } while (v && k < sizeof(tmp));
     while (k && *n < cap)
         buf[(*n)++] = tmp[--k];
+}
+
+static void put_hexn(char *buf, unsigned cap, unsigned *n, uint64_t v, unsigned mindig)
+{
+    char tmp[16];
+    unsigned k = 0;
+
+    put_s(buf, cap, n, "0x");
+    do {
+        tmp[k++] = "0123456789abcdef"[v & 15u];
+        v >>= 4;
+    } while ((v || k < mindig) && k < sizeof(tmp));
+    while (k && *n < cap)
+        buf[(*n)++] = tmp[--k];
+}
+
+unsigned wel2_hvc_format_exc(char *buf, unsigned cap, const struct wel2_guest_exc *e)
+{
+    unsigned n = 0;
+
+    if (!cap)
+        return 0;
+    cap--;                                  /* room for the NUL */
+    put_s(buf, cap, &n, "GUEST EXC type=");
+    put_dec(buf, cap, &n, e->type);
+    put_s(buf, cap, &n, " ESR=");
+    put_hexn(buf, cap, &n, e->esr, 8);
+    put_s(buf, cap, &n, " EC=");
+    put_hexn(buf, cap, &n, (e->esr >> 26) & 0x3f, 1);
+    put_s(buf, cap, &n, " ELR=");
+    put_hexn(buf, cap, &n, e->elr, 1);
+    put_s(buf, cap, &n, " FAR=");
+    put_hexn(buf, cap, &n, e->far, 1);
+    put_s(buf, cap, &n, " SPSR=");
+    put_hexn(buf, cap, &n, e->spsr, 8);
+    put_s(buf, cap, &n, " core=");
+    put_dec(buf, cap, &n, e->core);
+    buf[n] = 0;
+    return n;
+}
+
+void wel2_hvc_exc_panel(const struct wel2_guest_exc *e, char *l, unsigned cap)
+{
+    unsigned n = 0;
+
+    if (!cap)
+        return;
+    put_s(l, cap - 1, &n, "GUEST EXCEPTION ESR ");
+    put_hexn(l, cap - 1, &n, e->esr, 8);
+    put_s(l, cap - 1, &n, " ELR ");
+    put_hexn(l, cap - 1, &n, e->elr, 16);
+    put_s(l, cap - 1, &n, " FAR ");
+    put_hexn(l, cap - 1, &n, e->far, 16);
+    l[n] = 0;
+}
+
+static int64_t do_report_exc(const struct wel2_hvc_ops *ops, const uint64_t x[6])
+{
+    struct wel2_guest_exc e = { .esr = x[1], .elr = x[2], .far = x[3], .spsr = x[4], .type = x[5] };
+    char line[WEL2_EXC_LINE_MAX];
+    unsigned n;
+
+    if (!ops->guest_exc && !ops->log_line)
+        return WEL2_HVC_NOT_SUPPORTED;
+    /* A guest that faults in a loop must not flood the console and the panel: every report is counted (WEL2_STATS), only the
+     * first WEL2_EXC_REPORT_MAX reach the sinks. Without counters there is nothing to count with: all are printed. */
+    if (ops->counters && ops->counters->guest_exc++ >= WEL2_EXC_REPORT_MAX)
+        return WEL2_HVC_SUCCESS;
+    e.core = ops->core_id ? ops->core_id(ops->ctx) : 0;
+    n = wel2_hvc_format_exc(line, sizeof(line), &e);
+    if (ops->guest_exc)
+        ops->guest_exc(ops->ctx, &e, line, n);
+    else
+        ops->log_line(ops->ctx, line, n > WEL2_LOG_MAX ? WEL2_LOG_MAX : n);
+    return WEL2_HVC_SUCCESS;
 }
 
 static int64_t do_log(const struct wel2_hvc_ops *ops, uint64_t pa, uint64_t len)
@@ -122,12 +197,13 @@ static int64_t do_stats(const struct wel2_hvc_ops *ops, uint64_t pa, uint64_t le
     if (ops->counters) {
         st.console_calls = ops->counters->console_calls;
         st.console_bytes = ops->counters->console_bytes;
+        st.guest_exc = ops->counters->guest_exc;
     }
     ops->write_guest(ops->ctx, pa, &st, n);
     return WEL2_HVC_SUCCESS;
 }
 
-bool wel2_hvc_vendor(const struct wel2_hvc_ops *ops, uint64_t x[4])
+bool wel2_hvc_vendor(const struct wel2_hvc_ops *ops, uint64_t x[6])
 {
     int64_t ret;
 
@@ -148,6 +224,9 @@ bool wel2_hvc_vendor(const struct wel2_hvc_ops *ops, uint64_t x[4])
         break;
     case WEL2_CONSOLE_WRITE:
         ret = do_console(ops, x[1], x[2]);
+        break;
+    case WEL2_REPORT_EXC:
+        ret = do_report_exc(ops, x);
         break;
     default:
         ret = WEL2_HVC_NOT_SUPPORTED;

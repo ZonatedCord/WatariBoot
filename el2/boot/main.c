@@ -14,6 +14,7 @@
 #include "wel2_maps.h"
 #include "wel2_v2m.h"
 #include "wel2_hvc_vendor.h"
+#include "wel2_sysreg_catch.h"
 #include "wel2_guest_info.h"
 #include "wel2_guest_place.h"
 #include "wel2_fdt_build.h"
@@ -25,6 +26,7 @@
 #define HCR_AMO  (1ULL << 5)
 #define HCR_TID3 (1ULL << 18)   /* trap EL1 reads of the ID group 3 registers (EC 0x18), idreg.c */
 #define HCR_TSC  (1ULL << 19)   /* trap EL1 SMC to EL2 (EC 0x17) */
+/* catch mode: HCR_EL2.TIDCP (20) / TACR (21), and the MDCR_EL2 bits, are WEL2_HCR_CATCH / WEL2_MDCR_CATCH (wel2_sysreg_catch.h) */
 #define HCR_RW   (1ULL << 31)
 #define HCR_E2H  (1ULL << 34)   /* VHE: EL2 hosts (Arm ARM D8.13); TGE stays 0, the guest runs at EL1 */
 #define HCR_APK  (1ULL << 40)   /* EL1 may use the pointer-authentication keys without a trap */
@@ -36,6 +38,7 @@
 #define EC_SMC64 0x17
 
 #define EC_DABT_LOWER 0x24
+#define EC_IMPDEF     0x3f   /* IMPLEMENTATION DEFINED exception class (Arm ARM D24.2): the M1 routes HACR_EL2[56] accesses here [hypothesis] */
 #define EC_SYSREG     0x18   /* trapped MSR/MRS/system instruction (Arm ARM D24.2) */
 
 #ifndef WEL2_CHAIN
@@ -133,6 +136,12 @@ static void __attribute__((noreturn)) fatal(struct frame *f, unsigned idx)
     puts_("\n");
     put_kv("  ESR_EL2  = ", f->esr);
     put_kv("  ELR_EL2  = ", f->elr);
+    {
+        uint64_t afsr1;
+
+        __asm__ volatile("mrs %0, afsr1_el2" : "=r"(afsr1));      /* architectural; an EC 0x3F carries its ISS here [hypothesis] */
+        put_kv("  AFSR1_EL2 = ", afsr1);
+    }
     put_kv("  FAR_EL2  = ", f->far);
     put_kv("  SPSR_EL2 = ", f->spsr);
     for (unsigned i = 0; i < 31; i++) {            /* guest registers at the fault */
@@ -261,10 +270,39 @@ static void hvc_console_write(void *ctx, const uint8_t *bytes, unsigned len)
 
 static struct wel2_hvc_counters g_hvc_cnt;      /* WEL2_CONSOLE_WRITE counts (handle_hvc holds the big lock) */
 
+uint64_t hvc_guest_exc_count(void)
+{
+    return g_hvc_cnt.guest_exc;
+}
+
 static void hvc_stats_fill(void *ctx, struct wel2_stats *out)
 {
     (void)ctx;
     cpuif_stats_fill(out);
+    catch_stats_fill(out);
+}
+
+/* WEL2_REPORT_EXC (the first WEL2_EXC_REPORT_MAX only, hvc_vendor.c): the line to every console sink, the registers on the panel.
+ * With the catch area on, the area shows them and LAST ERROR is left alone; without it they go to LAST ERROR as an automatic text
+ * (kind 1), which a later fatal() always replaces: a guest exception must never hide the reason of the layer's own death. */
+static void hvc_guest_exc(void *ctx, const struct wel2_guest_exc *e, const char *line, unsigned n)
+{
+    char row[WEL2_EXC_PANEL_MAX];
+
+    (void)ctx;
+    (void)n;
+    puts_(line);
+    puts_("\n");
+    wel2_hvc_exc_panel(e, row, sizeof(row));
+    wel2_fb_catch_guest_exc(&g_fb, row);
+    if (!g_fb.catch_on)
+        wel2_fb_set_error_auto(&g_fb, row);
+}
+
+static unsigned hvc_core_id(void *ctx)
+{
+    (void)ctx;
+    return this_cpu();
 }
 
 static const struct wel2_hvc_ops g_hvc_ops = {
@@ -277,6 +315,8 @@ static const struct wel2_hvc_ops g_hvc_ops = {
     .console_write = hvc_console_write,
     .counters = &g_hvc_cnt,
     .stats_fill = hvc_stats_fill,
+    .guest_exc = hvc_guest_exc,
+    .core_id = hvc_core_id,
 };
 
 static unsigned g_hvc_log_budget = 8;
@@ -694,6 +734,11 @@ void el2_exception(struct frame *f, unsigned idx)
         handle_smc(f);
     } else if (idx == 8 && ec == EC_DABT_LOWER) {
         handle_dabt(f, idx);
+    } else if (idx == 8 && ec == EC_SYSREG && (g_catch || g_hacr) && catch_trap(f)) {
+        /* catch mode: a PMU / debug / IMPLEMENTATION DEFINED / ACTLR_EL1 access, answered RAZ/WI and logged (catch.c); the
+         * encodings it does not own fall through to the paths below, unchanged */
+    } else if (idx == 8 && ec == EC_IMPDEF && catch_trap_ec3f(f)) {
+        /* HACR_EL2[56]: a PMUv3 access of the guest that the M1 reports as EC 0x3F, answered by the catch path, or reflected to the guest as an EL1 UNDEF when it is not a catch (catch.c); fatal only if neither works */
     } else if (idx == 8 && ec == EC_SYSREG && idreg_trap(f)) {
         /* T6g: a read of the ID group 3 (HCR_EL2.TID3), decoded first: it is cheap and touches no ICH register */
     } else if (idx == 8 && ec == EC_SYSREG && cpuif_sysreg_trap(f)) {
@@ -1120,6 +1165,10 @@ static void __attribute__((noreturn)) chain_to_edk2(uint64_t fdt)
  *                        QEMU's Aff0 0..7 (start.S stack slot = Aff0). No-op on the M1. Default native.
  *   wel2.hold=1          do not reset at the end of a step or of the guest (wel2.step=2, the guest's SYSTEM_RESET): paint the final
  *                        state, print the HOLD message and park, so the screen can be photographed (not wel2.step=1)
+ *   wel2.hacr=<hex mask>   HACR_EL2 |= mask on every core (default on the M1: 0x100000000000000 = bit 56, routes the PMUv3 accesses to EL2; 0 = off; ignored off the M1)
+ *   wel2.vpmu=percore|global[,nouser][,frq1][,n6][,src=pmc0|src=timer][,nosync][,hiwater][,run]   virtual PMU of catch mode (default global; PMCCNTR source: the M1's own cycle counter PMC0 on the M1, CNTPCT scaled to 1 GHz elsewhere; sync = every core starts at the boot core's value)
+ *   wel2.catch=0|1|0x<mask>|pmu,dbg,impdef,actlr   catch mode (1 = all groups; mask bit0 PMU, bit1 debug, bit2 IMPDEF, bit3 ACTLR; default on the M1: pmu): trap PMU / debug / IMPLEMENTATION DEFINED registers and ACTLR_EL1 (HCR_EL2.TIDCP|TACR, MDCR_EL2.TPM|TPMCR|TDA|TDOSA|TDRA),
+ *                        answer them RAZ/WI and log the first access of each distinct encoding (default: on on the M1, off on QEMU)
  *   wel2.tid3=1|0        HCR_EL2.TID3: emulate the ID register group, GIC forced to 1 (default: on on the M1, off on QEMU)
  *   wel2.step=N          hardware ladder rung (DESIGN 9), read by stage1.c; 1 resets after the relocation, 2 after checkpoint 5 (CPU_INIT),
  *                        3..5 select the guest's checks
@@ -1156,6 +1205,32 @@ static void parse_bootargs(uint64_t fdt)
             g_tid3 = true;
         } else if (arg_is(p, "wel2.tid3=0")) {
             g_tid3 = false;
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'c' && p[6] == 'a' && p[7] == 't' &&
+                   p[8] == 'c' && p[9] == 'h' && p[10] == '=') {
+            uint32_t m;
+
+            if (wel2_catch_parse(p + 11, &m, 0)) {
+                g_catch_mask = m;
+                g_catch = m != 0;
+            } else {
+                puts_("Watari EL2: WARNING: bad wel2.catch value (0|1|0x<mask>|pmu,dbg,impdef,actlr), keeping the default\n");
+            }
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'v' && p[6] == 'p' && p[7] == 'm' &&
+                   p[8] == 'u' && p[9] == '=') {
+            uint32_t v;
+
+            if (wel2_vpmu_parse(p + 10, &v, 0))
+                g_vpmu = v;
+            else
+                puts_("Watari EL2: WARNING: bad wel2.vpmu value (percore|global[,nouser][,frq1][,n6][,src=pmc0|timer][,nosync][,hiwater][,run]), keeping the default\n");
+        } else if (p[0] == 'w' && p[1] == 'e' && p[2] == 'l' && p[3] == '2' && p[4] == '.' && p[5] == 'h' && p[6] == 'a' && p[7] == 'c' &&
+                   p[8] == 'r' && p[9] == '=') {
+            uint64_t hm;
+
+            if (wel2_hacr_parse(p + 10, &hm, 0))
+                g_hacr = hm;
+            else
+                puts_("Watari EL2: WARNING: bad wel2.hacr value (hex mask, 0 = off), keeping the default\n");
         } else if (arg_is(p, "wel2.test=tcoff")) {
             g_test_tc = -1;
         } else if (arg_is(p, "wel2.test=tcon")) {
@@ -1366,6 +1441,10 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
         if (!g_e2h)
             fatal_msg("M1 platform without HCR_EL2.E2H: the layer cannot run here");
         g_cpuif_trap = true;
+        g_catch = true;                         /* M3a: bootmgr's UNDEF at EL1 was invisible; wel2.catch=0 overrides */
+        g_hacr = WEL2_HACR_PMU;                 /* HACR_EL2[56]: the PMUv3 accesses trap to EL2 instead of UNDEF at EL1 [hypothesis]; wel2.hacr=0 overrides */
+        g_catch_mask = WEL2_CATCH_G_PMU;        /* real M1: debug / ACTLR / IMPDEF registers exist and must reach the hardware (RAZ/WI broke Windows) */
+        g_vpmu_m1 = true;                       /* wel2.vpmu src default = pmc0 (docs/design/watari-el2/pmc0-vpmu.md); QEMU keeps the timer source and never touches the Apple registers */
         g_tid3 = true;                          /* DESIGN 5.4: EDK2's GIC code and Windows read ID_AA64PFR0_EL1.GIC; wel2.tid3=0 overrides */
     }
     parse_bootargs(fdt);
@@ -1403,6 +1482,20 @@ void __attribute__((noreturn)) el2_main(uint64_t fdt)
     if (g_tid3) {
         g_hcr |= HCR_TID3;
         puts_("Watari EL2: HCR_EL2.TID3 set: ID registers emulated, ID_AA64PFR0_EL1.GIC presented as 1\n");
+    }
+    if (g_hacr && !g_plat->m1_memory) {
+        puts_("Watari EL2: WARNING: wel2.hacr ignored: HACR_EL2 is only programmed on the M1 (QEMU has none)\n");
+        g_hacr = 0;
+    }
+    if (g_hacr && !g_catch) {
+        wel2_fb_catch_enable(&g_fb);
+        catch_cpu_init(true);                   /* HACR only (wel2.catch=0): no trap bits, the PMU group is answered when it arrives */
+    }
+    if (g_catch) {
+        g_hcr |= wel2_catch_hcr_bits(g_catch_mask);
+        wel2_fb_catch_enable(&g_fb);            /* no-op when stage1.c already decided (it may have declined: then no area, logging stays) */
+        puts_("Watari EL2: catch mode on: the enabled groups are caught (RAZ/WI), HCR_EL2.TIDCP|TACR as the mask says\n");
+        catch_cpu_init(true);
     }
     vgic_setup(fdt);
     pirq_vcpu_on(&g_pirq, this_cpu());          /* the cold-boot core can take SPIs */
@@ -1456,6 +1549,8 @@ void __attribute__((noreturn)) el2_secondary_main(void)
     if (g_plat->init_cpu(me))
         fatal_msg("AIC: WHOAMI of a secondary core differs from its index");
     cpuif_init_cpu();
+    if (g_catch || g_hacr)
+        catch_cpu_init(false);
 
     big_lock();
 #ifdef WEL2_CHAIN

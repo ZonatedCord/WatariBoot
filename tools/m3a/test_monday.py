@@ -324,6 +324,30 @@ check("### D0 auto" in rec and "- result: PASS" in rec and "- command: wl D0 --r
 check(not os.path.exists(os.path.join(out, "results.md")), "dry-run records go to results-dryrun.md only")
 logs = [f for f in os.listdir(out) if f.endswith("-D0.log")]
 check(len(logs) == 1 and "BLOCK CHECK: PASS" in open(os.path.join(out, logs[0])).read(), "the full output is tee'd to <timestamp>-D0.log")
+import shutil
+shutil.copy(os.path.join(HERE, "idregs.py"), os.path.join(b3, "idregs.py"))
+idr = mo.RUNGS["ID0"]
+check(idr["kind"] == "idregs" and not idr["jump"] and idr["minutes"] == "2 min" and idr["gate"] == [mo.G_BACKUP] and "ID0" in mo.ORDER,
+      "ID0 is a read-only rung: no jump, 2 min, gated only on the backup confirmation")
+check("sola lettura" in idr["intro"] and "senza saltare" in idr["intro"], "ID0 intro (Italian) says read-only and no jump")
+code, txt = R("ID0", "D0")
+check(code == 0 and "RESULT ID0: PASS" in txt and "idregs.py --dry-run" in txt, "ID0 dry-run runs idregs.py --dry-run from the bundle and passes")
+check("PHOTO CHECKLIST ID0" in txt and "--ramdisk-reuse" not in txt, "ID0 prints its checklist and never adds --ramdisk-reuse")
+check(mo.run_checks(idr, "Traceback (most recent call last)", 0, False)[0] == "FAIL", "ID0: a traceback fails the automatic check")
+check(mo.run_checks(idr, "== x\nno verdict here", 0, False)[0] == "FAIL", "ID0 (real run): output without the verdict block fails")
+check(mo.run_checks(idr, "== Windows-relevant verdict ==\n", 0, False)[0] == "PASS", "ID0 (real run): output with the verdict block passes")
+shutil.copy(os.path.join(HERE, "hacr_probe.py"), os.path.join(b3, "hacr_probe.py"))
+hr = mo.RUNGS["HACR0"]
+check(hr["kind"] == "hacr" and not hr["jump"] and hr["minutes"] == "2 min" and hr["gate"] == [mo.G_BACKUP] and "HACR0" in mo.ORDER and "--el1" not in hr["args"],
+      "HACR0 is a no-jump rung gated only on the backup confirmation, readback only (no --el1)")
+code, txt = R("HACR0", "D0")
+check(code == 0 and "RESULT HACR0: PASS" in txt and "hacr_probe.py --dry-run" in txt, "HACR0 dry-run runs hacr_probe.py --dry-run from the bundle and passes")
+check(mo.run_checks(hr, "Traceback (most recent call last)", 0, False)[0] == "FAIL", "HACR0: a traceback fails the automatic check")
+check(mo.run_checks(hr, "== HACR_EL2[56] probe (mode: readback-only), boot core only\nnot at EL2 -> stop, nothing written\n", 0, False)[0] == "FAIL",
+      "HACR0 (real run): the header and an early stop (no STICKS line) fail")
+check(mo.run_checks(hr, "HACR_EL2[56] DOES NOT STICK (reads back 0)\n", 0, False)[0] == "PASS", "HACR0 (real run): the does-not-stick line passes (the probe ran to the end)")
+check(mo.run_checks(hr, "HACR_EL2[56] STICKS (reads back 1)\n", 0, False)[0] == "PASS", "HACR0 (real run): the sticks line passes")
+check(mo.run_checks(hr, "something else\n", 0, False)[0] == "FAIL", "HACR0 (real run): output without the sticks line fails")
 code, txt = R("D2", "D2")
 check(code == mo.EX_GATE and "D1 is NONE" in txt, "D2 refused before D1")
 code, txt = R("D1", "D1")
@@ -559,6 +583,8 @@ for cand in (os.environ.get("MONDAY_TEST_BUNDLE"),):
 bld = open(os.path.join(HERE, "build-m1-payload.sh")).read()
 check('cp "$HERE/monday.py" "$OUT/"' in bld, "build-m1-payload.sh copies monday.py into the bundle (so it is in SHA256SUMS)")
 check('monday.py' in open(os.path.join(HERE, "README-m1-payload.md")).read(), "README-m1-payload.md lists monday.py")
+check('cp "$HERE/idregs.py" "$OUT/"' in bld and "idregs.py" in open(os.path.join(HERE, "README-m1-payload.md")).read(), "the bundle build copies idregs.py and the README lists it")
+check('cp "$HERE/hacr_probe.py" "$OUT/"' in bld and "hacr_probe.py" in open(os.path.join(HERE, "README-m1-payload.md")).read(), "the bundle build copies hacr_probe.py and the README lists it")
 
 print("== the module itself ==")
 src = open(os.path.join(HERE, "monday.py")).read()

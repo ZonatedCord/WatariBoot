@@ -71,6 +71,8 @@ BAND_FINAL = ('band 1 "%s- STEP -", band 2 "%s8 OK %s" (green), band 3 "%s0 FAIL
               % (BAND1, BAND2, HOLD_LABEL, BAND3, LASTERR, HOLD_TICKER))
 PHOTOS = {
     "E": [("a fine comando", "no photo: the report file ehw2-out.txt is the evidence; Claude reads it (no serials/MACs are in it, still read before committing)")],
+    "ID0": [("a fine comando", "no photo: idregs-out.txt and idregs-out.json are the evidence (ID/feature registers only, no serials/MACs); Claude reads the 'Windows-relevant verdict' block")],
+    "HACR0": [("a fine comando", "no photo: hacr-out.txt and hacr-out.json are the evidence (HACR_EL2 before/after, which bits stick; no serials/MACs); Claude reads whether bit 56 sticks and that the old value was restored")],
     "none": [("nessuna foto per questo rung", "loader text only (checked by monday.py); no photo needed")],
     "D1": [
         ("VIDEO: avviarlo prima del comando, fermarlo dopo la schermata fissa", "whole panel in frame, sharp; the squares 0-8 then 17-29 turn green"),
@@ -120,6 +122,7 @@ PHOTOS = {
 # ---------------------------------------------------------------------------------------------------------------------
 # The rung table. `args` is what follows "wl <name> " in the procedures; `verbatim` False = derived (see `note`).
 # ---------------------------------------------------------------------------------------------------------------------
+PROBE_KINDS = ("ehw2", "idregs", "hacr")      # read-only probe scripts run from the bundle folder (not the loader)
 HOLD = "--args wel2.hold=1"
 D2A = "--rung D2 --edk2 WATARI_M1_EFI.fd"
 RDI = "--ramdisk winram/winram.img"
@@ -255,6 +258,29 @@ rung("PM0", 3, "PM0", "--postmortem", "PM0: did the post-mortem log survive the 
      intro="PM0 (controllo): dopo D2 il Mac e' stato spento e riavviato in m1n1. Leggiamo (sola lettura) il registro che il layer ha scritto in RAM: "
            "se c'e', dopo ogni prova fallita leggiamo prima quello e poi le foto. Non scrive niente sul Mac.")
 
+# ID0 (T16m): read-only dump and decode of the feature/ID registers of the boot core (tools/m3a/idregs.py). Not a gate, no verdict.
+rung("ID0", 4, "ID0", 'python3 idregs.py --out "$HOSTDIR/work/photos/idregs-out.txt"', "ID0: read-only ID/feature register dump (PMUv3? RNDR? FGT? ECV?), boot core, no jump",
+     kind="idregs", gate=[G_BACKUP], minutes="2 min", bundle="any", verbatim=False, photos="ID0",
+     note="derived: not a loader command; monday.py runs idregs.py from the bundle folder (docs/procedures/m3a-monday-runbook.md)",
+     abort="the proxy stops answering: power-cycle, nothing was written",
+     intro="Rung ID0 (sola lettura): legge i registri ID del processore del Mac (ID_AA64PFR0, DFR0, ISAR, MMFR, MIDR...) sul core di avvio, "
+           "senza scrivere nulla, senza saltare e senza spegnere. Serve a decidere come il layer deve trattare i registri che bootmgr tocca "
+           "(PMU, RNDR, FGT...). Serve il Mac di Marco in modalita' proxy m1n1 (sezione 4 della procedura).")
+
+RUNGS["ID0"]["doc"] = "docs/procedures/m3a-monday-runbook.md"
+
+# HACR0: does HACR_EL2[56] stick on this M1 (tools/m3a/hacr_probe.py, readback only: the EL1 PMU access is the opt-in --el1 of the script, not the rung).
+# Writes HACR_EL2 on the boot core and always restores it; no jump, no power-off. Not a gate, no verdict.
+rung("HACR0", 4, "HACR0", 'python3 hacr_probe.py --out "$HOSTDIR/work/photos/hacr-out.txt"', "HACR0: does HACR_EL2[56] stick (PMUv3 routing to EL2), boot core, restored, no jump",
+     kind="hacr", gate=[G_BACKUP], minutes="2 min", bundle="any", verbatim=False, photos="HACR0",
+     note="derived: not a loader command; monday.py runs hacr_probe.py from the bundle folder (docs/procedures/m3a-monday-runbook.md)",
+     abort="the proxy stops answering: power-cycle, nothing else was written (HACR_EL2 is lost on a power cycle anyway)",
+     intro="Rung HACR0 (quasi sola lettura): prova a scrivere un solo bit del registro HACR_EL2 del core di avvio (bit 56), lo rilegge e rimette "
+           "il valore di prima. Serve a sapere se il Mac fa arrivare al layer gli accessi alla PMU di Windows. Niente salto, niente spegnimento, "
+           "non tocca memoria. Serve il Mac di Marco in modalita' proxy m1n1 (sezione 4 della procedura).")
+
+RUNGS["HACR0"]["doc"] = "docs/procedures/m3a-monday-runbook.md"
+
 # which rung owns which verdict id; groups for the "unresolved FAIL" rule
 VERDICT_OWNER = {}
 for _r in RUNGS.values():
@@ -262,7 +288,7 @@ for _r in RUNGS.values():
         VERDICT_OWNER[_v] = _r["id"]
 VERDICT_OWNER["W1c"] = "W1c"
 GROUP = {"D3": "D2", "D4a": "D4", "D4b": "D4", "D5b": "D5", "W2g": "W2", "W2-e4": "W2", "W2-e1": "W2", "W3": "W2"}
-ORDER = ["E", "D0", "D1", "D2", "PM0", "D3b", "D4-0", "D4", "D4a", "D4b", "D5-0", "D5", "D5b", "W1a", "W1a2", "W1b", "W1c", "W2", "W2g", "W2-e4", "W2-e1"]
+ORDER = ["E", "ID0", "HACR0", "D0", "D1", "D2", "PM0", "D3b", "D4-0", "D4", "D4a", "D4b", "D5-0", "D5", "D5b", "W1a", "W1a2", "W1b", "W1c", "W2", "W2g", "W2-e4", "W2-e1"]
 EXIT_MEANING = {
     5: "(--postmortem) no valid log header at the base: DRAM did not keep the ring, or the wrong base (a rung's own exit 5 does not exist)",
     6: "(--postmortem) header CRC bad or fields inconsistent: the text is UNVERIFIED",
@@ -638,9 +664,13 @@ def run_checks(r, text, exit_code, dry, interrupted=False, ramdisk_size=None, ra
     res = []
     res += check_exit(c)
     i = c.info
-    if r["kind"] == "ehw2":
-        res.append(chk("Traceback" not in text, "no traceback", "ehw2 ran to the end"))
+    if r["kind"] in PROBE_KINDS:
+        res.append(chk("Traceback" not in text, "no traceback", "%s ran to the end" % r["kind"]))
         res.append(chk(len(text.strip()) > 0, "output", "%d bytes of output" % len(text)))
+        if r["kind"] == "hacr" and not dry:
+            res.append(chk(("STICKS" in text or "DOES NOT STICK" in text), "hacr verdict", "the HACR_EL2[56] STICKS / DOES NOT STICK line is in the output (an early stop has neither)"))
+        if r["kind"] == "idregs" and not dry:
+            res.append(chk("Windows-relevant verdict" in text, "verdict block", "the decoded verdict block is in the output"))
     elif i["test"] is not None:
         res += check_bundle(c) + check_ratetest(c)
     else:
@@ -936,7 +966,7 @@ def cmd_list(a, bundle, outdir):
     for rid in ORDER:
         r = RUNGS[rid]
         say("%-6s day%d %-4s %-60s %s" % (rid, r["day"], "JUMP" if r["jump"] else "", r["title"][:60], r["minutes"]))
-        if r["kind"] == "ehw2":
+        if r["kind"] in PROBE_KINDS:
             say("       %s" % r["args"])
         else:
             say("       %s%s" % (rung_command_text(r), "" if r["verbatim"] else "    [derived: %s]" % r["note"]))
@@ -953,7 +983,7 @@ def cmd_preflight(a, bundle, outdir):
     kind = bundle_kind(bundle)
     add(None, "bundle folder", "%s (kind: %s)" % (bundle, kind))
     need = ["SHA256SUMS", "watari-load.py", "monday.py", "wel2-chain.bin", "m1guest.bin", "j293-minimal.dtb", "WATARI_M1_EFI.fd",
-            "WATARI_M1_EFI.fd.build.txt", "gfdt_dump", "fdt_m1_dump", "ehw2.py"]
+            "WATARI_M1_EFI.fd.build.txt", "gfdt_dump", "fdt_m1_dump", "ehw2.py", "idregs.py", "hacr_probe.py"]
     missing = [n for n in need if not os.path.exists(os.path.join(bundle, n))]
     add(not missing, "bundle files", "all present" if not missing else "missing: %s" % ", ".join(missing))
     if os.path.exists(os.path.join(bundle, "SHA256SUMS")):
@@ -1129,7 +1159,21 @@ def cmd_rung(a, bundle, outdir):
     say("COMANDO (tabella, identico alla procedura %s): %s" % (r["doc"], cmdtxt))
     t_start = hhmmss()
     log_path = os.path.join(outdir, "%s-%s.log" % (datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), rid))
-    if r["kind"] == "ehw2":
+    if r["kind"] == "idregs":
+        out_report = os.path.join(host or outdir, "work/photos/idregs-out.txt") if host else os.path.join(outdir, "idregs-out.txt")
+        os.makedirs(os.path.dirname(out_report), exist_ok=True)
+        argv = [py, "-I" if dry else "-u", os.path.join(bundle, "idregs.py")] + (["--dry-run"] if dry else ["--out", out_report])
+        if not dry:
+            m1 = a.m1n1 or os.environ.get("M1N1_DIR") or (os.path.join(host, "work", "m1n1-main") if host else "")
+            env["PYTHONPATH"] = os.path.join(m1, "proxyclient")
+    elif r["kind"] == "hacr":
+        out_report = os.path.join(host or outdir, "work/photos/hacr-out.txt") if host else os.path.join(outdir, "hacr-out.txt")
+        os.makedirs(os.path.dirname(out_report), exist_ok=True)
+        argv = [py, "-I" if dry else "-u", os.path.join(bundle, "hacr_probe.py")] + (["--dry-run"] if dry else ["--out", out_report])
+        if not dry:
+            m1 = a.m1n1 or os.environ.get("M1N1_DIR") or (os.path.join(host, "work", "m1n1-main") if host else "")
+            env["PYTHONPATH"] = os.path.join(m1, "proxyclient")
+    elif r["kind"] == "ehw2":
         out_report = os.path.join(host or outdir, "work/photos/ehw2-out.txt") if host else os.path.join(outdir, "ehw2-out.txt")
         os.makedirs(os.path.dirname(out_report), exist_ok=True)
         argv = [py, "-I" if dry else "-u", os.path.join(bundle, "ehw2.py")] + (["--dry-run"] if dry else ["--out", out_report])
@@ -1169,7 +1213,7 @@ def cmd_rung(a, bundle, outdir):
         say("STOP: non passare al rung successivo. Dire a Marco cosa e' successo e consultare la tabella FAIL di %s." % r["doc"])
     say("-" * 100)
     print_photos(rid)
-    if r["kind"] != "ehw2" and "--ramdisk-reuse" in argv:
+    if r["kind"] not in PROBE_KINDS and "--ramdisk-reuse" in argv:
         facts.setdefault("ramdisk_reuse", "requested, no decision line")
     fields = [("result", overall), ("dry-run", "yes" if dry else "no"), ("command", cmdtxt), ("loader-exit", code),
               ("started", t_start), ("log", log_path), ("photos", "pending" if r["jump"] else "none")]

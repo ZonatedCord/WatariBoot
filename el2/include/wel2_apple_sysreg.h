@@ -12,6 +12,8 @@
  *   IPI_RR_GLOBAL_EL1   3,5,15,0,1  [7:0] core, [23:16] cluster, [29:28] type  [verified: irq-apple-aic.c:168-176]
  *   IPI_SR_EL1          3,5,15,1,1  bit0 pending, write 1 clears  [verified: irq-apple-aic.c:179-180]
  *   PMCR0_EL1           3,1,15,0,0  IMODE [10:8], IACT bit 11  [verified: Linux v6.12 arch/arm64/include/asm/apple_m1_pmu.h:22-30]
+ *   PMCR1_EL1           3,1,15,1,0  per-counter EL0/EL1 count enables: bit 8+n (A64 EL0), bit 16+n (A64 EL1) [hypothesis: task brief; no copy in our notes, measured by the layer's own init read-back]
+ *   PMC0_EL1            3,2,15,0,0  IMPLEMENTATION DEFINED cycle counter of this core ("PMC0") [hypothesis: task brief; liveness is measured at run time, docs/design/watari-el2/pmc0-vpmu.md]
  *   UPMCR0_EL1          3,7,15,0,4  IMODE [18:16], 4 = FIQ  [verified: irq-apple-aic.c:191-196]
  *   UPMSR_EL1           3,7,15,6,4  bit0 IACT  [verified: irq-apple-aic.c:199-200]
  *   CNTV_CTL_EL02       3,5,14,3,1  [verified: Linux v6.12 arch/arm64/include/asm/sysreg.h:653; R:el2/boot/README.md]
@@ -21,6 +23,8 @@
  *                       [verified: llvm-mc encodes 'mrs x0, cnthp_ctl_el2' / 'cnthv_ctl_el2' (+vh) as these; Arm ARM D8.13.2]
  *   ICH_HCR_EL2         3,4,12,11,0  [verified: Linux v6.12 sysreg.h:576]
  *   ICH_MISR_EL2        3,4,12,11,2  [verified: Linux v6.12 sysreg.h:578]
+ *   HACR_EL2            3,4,1,1,7    [verified: llvm-mc encodes 'mrs x0, hacr_el2' as S3_4_C1_C1_7 = 0xd53c11e0; Arm ARM D24.2 HACR_EL2]. NOT
+ *                       S3_4_C15_C1_7 (that one is another IMPLEMENTATION DEFINED register); the IMPLEMENTATION DEFINED part is the bit meaning.
  * The independent copy of this table that the build check compares the object code against is in
  * boot/check-apple-enc.sh (it does not include this header on purpose).
  */
@@ -42,6 +46,9 @@ enum apple_sr {
 	APPLE_SR_UPMSR,            /* rd only */
 	APPLE_SR_ICH_HCR,
 	APPLE_SR_ICH_MISR,         /* rd only */
+	APPLE_SR_PMCR1,            /* PMCR1_EL1: per-counter EL0/EL1 enables */
+	APPLE_SR_PMC0,             /* PMC0: the core's cycle counter (the layer never writes it) */
+	APPLE_SR_HACR_EL2,         /* HACR_EL2 (architectural encoding, Apple-defined bits: bit 56 routes the PMUv3 accesses to EL2) */
 	APPLE_SR_COUNT
 };
 
@@ -60,6 +67,9 @@ enum apple_sr {
 #define PMCR0_IMODE_MASK  (7ull << PMCR0_IMODE_SHIFT)
 #define PMCR0_IMODE_FIQ   4ull
 #define PMCR0_IACT        (1ull << 11)
+#define PMCR0_CTR0_EN     (1ull << 0)                 /* counter 0 (cycles) enable [hypothesis] */
+#define PMCR1_CTR0_EL0    (1ull << 8)                 /* counter 0 counts at EL0 (AArch64) [hypothesis] */
+#define PMCR1_CTR0_EL1    (1ull << 16)                /* counter 0 counts at EL1 (AArch64) [hypothesis] */
 #define UPMCR0_IMODE_SHIFT 16
 #define UPMCR0_IMODE_MASK (7ull << UPMCR0_IMODE_SHIFT)
 #define UPMCR0_IMODE_FIQ  4ull

@@ -1,0 +1,50 @@
+## @file
+#  CpuExceptionHandlerLib for the Watari M1 platform: the stock AArch64 DXE instance of UefiCpuPkg
+#  (edk2-stable202608) plus one addition: before the register dump is printed, the synchronous
+#  (or other) exception is reported to Watari EL2 with the vendor hypercall WEL2_REPORT_EXC, so
+#  the layer holds ESR/ELR/FAR/SPSR even if printing hangs or the screen output is unreadable.
+#
+#  Copyright (c) 2013 - 2018, Intel Corporation. All rights reserved.<BR>
+#  Copyright (c) 2026, the Watari Boot authors. All rights reserved.<BR>
+#  SPDX-License-Identifier: BSD-2-Clause-Patent
+##
+
+[Defines]
+  INF_VERSION                    = 0x0001001A
+  BASE_NAME                      = WatariCpuExceptionHandlerLib
+  FILE_GUID                      = 8d2c61a7-5b3e-4f90-a1d4-7e6c0b92f358
+  MODULE_TYPE                    = DXE_DRIVER
+  VERSION_STRING                 = 1.0
+  LIBRARY_CLASS                  = CpuExceptionHandlerLib|DXE_CORE DXE_DRIVER UEFI_APPLICATION
+
+[Sources]
+  WatariCpuExceptionHandlerLib.c
+  ExceptionSupport.S | GCC
+  ExceptionSupport.h
+  CpuExceptionHelpers.h
+  WatariSysregEmu.h
+  DxeCpuExceptionHelpers.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  UefiCpuPkg/UefiCpuPkg.dec
+  WatariM1Pkg/WatariM1Pkg.dec
+
+[LibraryClasses]
+  ArmLib
+  BaseLib
+  DebugLib
+  MemoryAllocationLib
+  PcdLib
+  PeCoffGetEntryPointLib
+  PrintLib
+  SerialPortLib
+  SynchronizationLib
+  UefiLib
+
+[Pcd]
+  gWatariM1TokenSpaceGuid.PcdWatariEl1SysregEmulation  ## CONSUMES
+
+[Guids]
+  gEfiDebugImageInfoTableGuid

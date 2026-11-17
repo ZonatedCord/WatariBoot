@@ -886,6 +886,9 @@ void cpuif_stats(void)
     }
     if (g_tid3)
         put_kv("Watari EL2: stats: TID3 ID-register reads emulated = ", g_idreg_n);
+    catch_stats();
+    if (hvc_guest_exc_count())
+        put_kv("Watari EL2: stats: guest exception reports (WEL2_REPORT_EXC; only the first 8 were printed) = ", hvc_guest_exc_count());
     if (g_plat->stats)
         g_plat->stats();
 }

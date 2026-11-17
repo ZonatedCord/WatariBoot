@@ -87,7 +87,7 @@ static void reset(void)
 static int64_t call(uint64_t fid, uint64_t a1, uint64_t a2, uint64_t a3, bool *handled)
 {
     struct wel2_hvc_ops o = ops();
-    uint64_t x[4] = { fid, a1, a2, a3 };
+    uint64_t x[6] = { fid, a1, a2, a3 };
 
     *handled = wel2_hvc_vendor(&o, x);
     if (*handled)
@@ -117,12 +117,12 @@ static void t_range_of_ids(void)
     CHECK(wel2_hvc_is_vendor(0xFFFFFFFF00000000ull | WEL2_LOG));   /* only the low 32 bits count */
     /* not ours: untouched and reported as not handled */
     struct wel2_hvc_ops o = ops();
-    uint64_t x[4] = { 0xC4000003u, 1, 2, 3 };
+    uint64_t x[6] = { 0xC4000003u, 1, 2, 3 };
     CHECK(!wel2_hvc_vendor(&o, x));
     CHECK_EQ(x[0], 0xC4000003u); CHECK_EQ(x[1], 1); CHECK_EQ(x[3], 3);
     /* in the range, not implemented */
     reset();
-    CHECK_EQ(call(0xC6000005u, 0, 0, 0, &h), WEL2_HVC_NOT_SUPPORTED); CHECK(h);
+    CHECK_EQ(call(0xC6000006u, 0, 0, 0, &h), WEL2_HVC_NOT_SUPPORTED); CHECK(h);
     CHECK_EQ(call(0xC600FEFFu, 0, 0, 0, &h), WEL2_HVC_NOT_SUPPORTED); CHECK(h);
     CHECK_EQ(g_nlines, 0);
 }
@@ -338,12 +338,12 @@ static void t_console_all_bytes(void)
     /* no counters wired: still works, WEL2_STATS reports 0 */
     struct wel2_hvc_ops o = ops();
     struct wel2_stats st;
-    uint64_t x[4] = { WEL2_CONSOLE_WRITE, RAM_BASE + 0x300, 4, 0 };
+    uint64_t x[6] = { WEL2_CONSOLE_WRITE, RAM_BASE + 0x300, 4, 0 };
 
     o.counters = NULL;
     CHECK(wel2_hvc_vendor(&o, x));
     CHECK_EQ(x[0], 0);
-    uint64_t y[4] = { WEL2_STATS, RAM_BASE + 0x400, sizeof(st), 0 };
+    uint64_t y[6] = { WEL2_STATS, RAM_BASE + 0x400, sizeof(st), 0 };
     CHECK(wel2_hvc_vendor(&o, y));
     CHECK_EQ(y[0], 0);
     memcpy(&st, &g_ram[0x400], sizeof(st));
@@ -353,19 +353,135 @@ static void t_console_all_bytes(void)
 static void t_missing_sinks(void)
 {
     struct wel2_hvc_ops o = { 0 };
-    uint64_t x[4] = { WEL2_LOG, RAM_BASE, 8, 0 };
+    uint64_t x[6] = { WEL2_LOG, RAM_BASE, 8, 0 };
 
     reset();
     CHECK(wel2_hvc_vendor(&o, x));                         /* no callbacks at all: NOT_SUPPORTED, no crash */
     CHECK_EQ(x[0], (uint64_t)WEL2_HVC_NOT_SUPPORTED);
-    uint64_t y[4] = { WEL2_CHECKPOINT, 1, 1, 0 };
+    uint64_t y[6] = { WEL2_CHECKPOINT, 1, 1, 0 };
     CHECK(wel2_hvc_vendor(&o, y));
     CHECK_EQ(y[0], (uint64_t)WEL2_HVC_NOT_SUPPORTED);
     o.log_line = f_log;                                    /* checkpoint callback is optional */
-    uint64_t z[4] = { WEL2_CHECKPOINT, 1, 1, 0 };
+    uint64_t z[6] = { WEL2_CHECKPOINT, 1, 1, 0 };
     CHECK(wel2_hvc_vendor(&o, z));
     CHECK_EQ(z[0], 0);
     CHECK_EQ(g_nlines, 1);
+}
+
+/* WEL2_REPORT_EXC: the formatted line, the panel rows, the counter, the fall-back to log_line, NOT_SUPPORTED without sinks. */
+static struct wel2_guest_exc g_exc;
+static char g_exc_line[WEL2_EXC_LINE_MAX];
+static unsigned g_exc_calls, g_exc_len;
+static void f_exc(void *c, const struct wel2_guest_exc *e, const char *line, unsigned n)
+{
+    (void)c;
+    g_exc_calls++;
+    g_exc = *e;
+    g_exc_len = n;
+    memcpy(g_exc_line, line, n);
+    g_exc_line[n] = 0;
+}
+static unsigned f_core(void *c) { (void)c; return 3; }
+
+static void t_report_exc(void)
+{
+    struct wel2_hvc_ops o = ops();
+    uint64_t x[6] = { WEL2_REPORT_EXC, 0x02000000u, 0xfffff800012345ull, 0xdeadbeef00ull, 0x600003c5u, WEL2_EXC_SYNC };
+    char l1[WEL2_EXC_PANEL_MAX];
+
+    reset();
+    memset(&g_cnt, 0, sizeof(g_cnt));
+    g_exc_calls = 0;
+    o.guest_exc = f_exc;
+    o.core_id = f_core;
+    CHECK(wel2_hvc_is_vendor(WEL2_REPORT_EXC));
+    CHECK(wel2_hvc_vendor(&o, x));
+    CHECK_EQ(x[0], WEL2_HVC_SUCCESS);
+    CHECK(x[1] == 0 && x[2] == 0 && x[3] == 0);
+    CHECK_EQ(g_exc_calls, 1);
+    CHECK_EQ(g_exc.esr, 0x02000000u); CHECK_EQ(g_exc.elr, 0xfffff800012345ull); CHECK_EQ(g_exc.far, 0xdeadbeef00ull);
+    CHECK_EQ(g_exc.spsr, 0x600003c5u); CHECK_EQ(g_exc.type, 0); CHECK_EQ(g_exc.core, 3);
+    CHECK(!strcmp(g_exc_line, "GUEST EXC type=0 ESR=0x02000000 EC=0x0 ELR=0xfffff800012345 FAR=0xdeadbeef00 SPSR=0x600003c5 core=3"));
+    CHECK_EQ(g_exc_len, strlen(g_exc_line));
+    CHECK_EQ(g_cnt.guest_exc, 1);
+    CHECK_EQ(g_nlines, 0);                                  /* the callback replaces log_line */
+    /* an ESR with a real EC, an unknown type is printed as its number */
+    {
+        uint64_t y[6] = { WEL2_REPORT_EXC, 0x96000045u, 0x1000, 0x2000, 0x3000, 7 };
+
+        CHECK(wel2_hvc_vendor(&o, y));
+        CHECK_EQ(y[0], WEL2_HVC_SUCCESS);
+        CHECK(!strcmp(g_exc_line, "GUEST EXC type=7 ESR=0x96000045 EC=0x25 ELR=0x1000 FAR=0x2000 SPSR=0x00003000 core=3"));
+        CHECK_EQ(g_cnt.guest_exc, 2);
+    }
+    /* the panel rows */
+    wel2_hvc_exc_panel(&g_exc, l1, sizeof(l1));
+    CHECK(!strcmp(l1, "GUEST EXCEPTION ESR 0x96000045 ELR 0x0000000000001000 FAR 0x0000000000002000"));
+    CHECK(strlen(l1) < WEL2_EXC_PANEL_MAX);
+    wel2_hvc_exc_panel(&g_exc, l1, 20);                     /* cut and terminated */
+    CHECK_EQ(strlen(l1), 19);
+    /* WEL2_STATS carries the counter */
+    {
+        struct wel2_stats st;
+        uint64_t y[6] = { WEL2_STATS, RAM_BASE + 0x400, sizeof(st), 0 };
+
+        CHECK(wel2_hvc_vendor(&o, y));
+        CHECK_EQ(y[0], 0);
+        memcpy(&st, &g_ram[0x400], sizeof(st));
+        CHECK_EQ(st.guest_exc, 2);
+    }
+}
+
+/* A guest that faults in a loop: every call is counted, only the first WEL2_EXC_REPORT_MAX reach the sinks. */
+static void t_report_exc_rate_limit(void)
+{
+    struct wel2_hvc_ops o = ops();
+
+    reset();
+    memset(&g_cnt, 0, sizeof(g_cnt));
+    g_exc_calls = 0;
+    o.guest_exc = f_exc;
+    for (unsigned i = 0; i < 100; i++) {
+        uint64_t x[6] = { WEL2_REPORT_EXC, 0x02000000u, 0x1000 + i, 0, 0, WEL2_EXC_SYNC };
+
+        CHECK(wel2_hvc_vendor(&o, x));
+        CHECK_EQ(x[0], WEL2_HVC_SUCCESS);                    /* the guest never sees a difference */
+    }
+    CHECK_EQ(g_exc_calls, WEL2_EXC_REPORT_MAX);
+    CHECK_EQ(g_exc.elr, 0x1000 + WEL2_EXC_REPORT_MAX - 1);   /* the last one that was printed */
+    CHECK_EQ(g_cnt.guest_exc, 100);                          /* all counted */
+    {
+        struct wel2_stats st;
+        uint64_t y[6] = { WEL2_STATS, RAM_BASE + 0x400, sizeof(st), 0 };
+
+        CHECK(wel2_hvc_vendor(&o, y));
+        memcpy(&st, &g_ram[0x400], sizeof(st));
+        CHECK_EQ(st.guest_exc, 100);                         /* ... and reported in WEL2_STATS */
+    }
+}
+
+static void t_report_exc_fallback(void)
+{
+    struct wel2_hvc_ops o = ops();
+    uint64_t x[6] = { WEL2_REPORT_EXC, 0x1, 0x2, 0x3, 0x4, WEL2_EXC_SERROR };
+    struct wel2_hvc_ops none = { 0 };
+    uint64_t y[6] = { WEL2_REPORT_EXC, 1, 2, 3, 4, 0 };
+    char b[WEL2_EXC_LINE_MAX];
+    struct wel2_guest_exc e = { .esr = 0xffffffffffffffffull, .elr = ~0ull, .far = ~0ull, .spsr = ~0ull, .type = 3, .core = 7 };
+
+    reset();
+    CHECK(wel2_hvc_vendor(&o, x));                          /* no guest_exc callback: log_line gets the line */
+    CHECK_EQ(x[0], WEL2_HVC_SUCCESS);
+    CHECK_EQ(g_nlines, 1);
+    CHECK(!strcmp(g_lines[0], "GUEST EXC type=3 ESR=0x00000001 EC=0x0 ELR=0x2 FAR=0x3 SPSR=0x00000004 core=0"));
+    CHECK(wel2_hvc_vendor(&none, y));                       /* no sinks at all */
+    CHECK_EQ(y[0], (uint64_t)WEL2_HVC_NOT_SUPPORTED);
+    /* the longest line fits its buffer, and a tiny buffer is cut and terminated */
+    CHECK(wel2_hvc_format_exc(b, sizeof(b), &e) < sizeof(b));
+    CHECK(strstr(b, "ESR=0xffffffffffffffff EC=0x3f ELR=0xffffffffffffffff FAR=0xffffffffffffffff SPSR=0xffffffffffffffff core=7") != NULL);
+    CHECK_EQ(wel2_hvc_format_exc(b, 10, &e), 9);
+    CHECK(!strcmp(b, "GUEST EXC"));
+    CHECK_EQ(wel2_hvc_format_exc(b, 0, &e), 0);
 }
 
 int main(void)
@@ -382,5 +498,8 @@ int main(void)
     RUN(t_console_rejects);
     RUN(t_console_all_bytes);
     RUN(t_missing_sinks);
+    RUN(t_report_exc);
+    RUN(t_report_exc_rate_limit);
+    RUN(t_report_exc_fallback);
     TESTS_DONE();
 }
