@@ -52,6 +52,17 @@
         }
       }
     },
+    "768da6a41f7b": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 9100001,
+          "cache_write_1h": 143184,
+          "cache_write_5m": 0,
+          "input": 126,
+          "output": 32547
+        }
+      }
+    },
     "7d8c52c0a532": {
       "models": {
         "claude-opus-5-5": {
@@ -60,6 +71,17 @@
           "cache_write_5m": 0,
           "input": 178,
           "output": 46573
+        }
+      }
+    },
+    "bc9c9b1381a8": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 12163067,
+          "cache_write_1h": 169530,
+          "cache_write_5m": 0,
+          "input": 156,
+          "output": 46095
         }
       }
     },
@@ -99,11 +121,11 @@
     "eda6a6f2988c": {
       "models": {
         "claude-opus-5-5": {
-          "cache_read": 16802279,
-          "cache_write_1h": 182500,
+          "cache_read": 18554228,
+          "cache_write_1h": 191009,
           "cache_write_5m": 0,
-          "input": 212,
-          "output": 79275
+          "input": 226,
+          "output": 84980
         }
       }
     },
