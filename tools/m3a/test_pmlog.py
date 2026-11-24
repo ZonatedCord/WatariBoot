@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """Tests of the post-mortem log side of watari-load.py (T16j): the region parser, --pmlog at the jump (order, zeroing, boot
-arguments, record file, BLOCK CHECK), --postmortem (reads only, valid / absent / torn / wrapped logs). Fake proxy, no device.
+arguments, BLOCK CHECK). The loader has no --postmortem and writes no record: RAM is volatile on the M1, nothing is read back. Fake proxy, no device.
 The C writer (el2/vgic/pmlog.c) is checked against this parser by el2/boot/run-pmlog.sh. Run: python3 -I tools/m3a/test_pmlog.py"""
 import contextlib
 import hashlib
@@ -131,19 +131,29 @@ with tempfile.TemporaryDirectory() as tmp:
     ba = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
     check("wel2.pmlog=0x%x,0x200000" % pm[0][1] in ba.split(), "boot arguments carry wel2.pmlog=0x<base>,0x200000: %r" % ba)
     check(any(c[0] == "dc_cvac" and c[1] == pm[0][1] and c[2] == 2048 * 1024 for c in t.calls), "the region is cleaned to the point of coherency")
-    rec = json.load(open(os.path.join(tmp, "out", wl.PM_RECORD)))
-    check(int(rec["base"], 0) == pm[0][1] and rec["size"] == 2048 * 1024 and rec["rung"] == "D2", "the base is recorded in out/pmlog-base.json")
+    check(not os.path.exists(os.path.join(tmp, "out", "pmlog-base.json")), "no base record is written (nothing is read back)")
     check("--pmlog 0x%x,0x200000" % pm[0][1] in open(os.path.join(tmp, "gfdt-args.txt")).read(), "gfdt_dump gets --pmlog 0x<base>,0x200000")
     check("BLOCK CHECK: PASS" in out and "pmlog" in out, "BLOCK CHECK covers the pmlog region")
     check(n[-1] == "kboot_boot", "kboot_boot is still the last call")
 
-    # without --pmlog nothing changes: no region, no argument, no record
-    os.remove(os.path.join(tmp, "out", wl.PM_RECORD))
+    # without --pmlog nothing changes: no region, no argument
     t = Fake()
     rc, out = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--fdt-dump", FD, "--gfdt-dump", GD, "--go"], t, tmp)
     ba = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
-    check(rc == 0 and "pmlog" not in ba and t.calls.count(("memalign", wl.BLOCK, wl.BLOCK)) == 3 and not os.path.exists(os.path.join(tmp, "out", wl.PM_RECORD)),
-          "no --pmlog: no pmlog argument, three blocks, no record")
+    check(rc == 0 and "pmlog" not in ba and t.calls.count(("memalign", wl.BLOCK, wl.BLOCK)) == 3,
+          "no --pmlog: no pmlog argument, three blocks")
+    # address invariance: D2 without --pmlog (what every rung does now) vs D0 and vs D2 --pmlog: the same layer / spacer / EDK2 addresses
+    t = Fake()
+    rc, out_np = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--fdt-dump", FD, "--gfdt-dump", GD, "--go"], t, tmp)
+    t = Fake()
+    rc2, out_d0 = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
+    t = Fake()
+    rc3, out_pm = run(["--rung", "D2", "--edk2", "WATARI_M1_EFI.fd", "--pmlog", "--fdt-dump", FD, "--gfdt-dump", GD, "--go"], t, tmp)
+    addr = lambda o: [re.search(r"^LAYER  .* at (0x[0-9a-f]+)", o, re.M).group(1), re.search(r"^SPACER .* at (0x[0-9a-f]+)", o, re.M).group(1),
+                      re.search(r"^EDK2   .* at (0x[0-9a-f]+)", o, re.M).group(1)]
+    d0b = dict(re.findall(r"^BLOCK  (layer|guest|edk2) .*at (0x[0-9a-f]+)", out_d0, re.M))
+    check(rc == 0 and addr(out_np) == addr(out_pm) == [d0b["layer"], d0b["guest"], d0b["edk2"]],
+          "layer / spacer / EDK2 addresses of D2 are the same with and without --pmlog, and equal D0's: %s" % addr(out_np))
     t = Fake()
     rc, out = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
     d0_blocks = re.findall(r"^BLOCK  (layer|guest|edk2) .*at (0x[0-9a-f]+)", out, re.M)
@@ -157,7 +167,7 @@ with tempfile.TemporaryDirectory() as tmp:
     t = Fake()
     rc, out = run(["--rung", "D0", "--edk2", "WATARI_M1_EFI.fd", "--pmlog", "--pmlog-size", "2048", "--fdt-dump", FD, "--gfdt-dump", GD], t, tmp)
     check(rc == 0 and "kboot_set_chosen" not in names(t) and "kboot_boot" not in names(t) and "not written" in out
-          and "BLOCK CHECK: PASS" in out and not os.path.exists(os.path.join(tmp, "out", wl.PM_RECORD)), "D0 --pmlog: previewed, nothing written or recorded")
+          and "BLOCK CHECK: PASS" in out, "D0 --pmlog: previewed, nothing written")
 
     # fixed base: no extra allocation; the check fails when the base is outside usable RAM
     t = Fake()
@@ -181,48 +191,6 @@ with tempfile.TemporaryDirectory() as tmp:
     rc, out = run(["--rung", "L3", "--pmlog", "--pmlog-size", "512", "--go"], t, tmp)
     ba = [c for c in t.calls if c[0] == "kboot_set_chosen"][0][2]
     check(rc == 0 and "wel2.pmlog=0x" in ba and ",0x80000" in ba, "L3 --pmlog 512: %r" % ba)
-
-    # dry run: nothing recorded
-    if os.path.exists(os.path.join(tmp, "out", wl.PM_RECORD)):
-        os.remove(os.path.join(tmp, "out", wl.PM_RECORD))
-    rc, out = run(["--rung", "L3", "--pmlog", "--dry-run"], None, tmp)
-    check(rc == 0 and "not recorded" in out and not os.path.exists(os.path.join(tmp, "out", wl.PM_RECORD)), "--dry-run does not record a base")
-
-    # ---- --postmortem ----------------------------------------------------------------------------------------------
-    outd = os.path.join(tmp, "out")
-    region = build_region(0x100000, [b"Watari EL2: hello from EL2\n", b"Watari EL2: PSCI CPU_ON cpu 1 accepted\n", b"Watari EL2: FATAL: x\n"], boots=1)
-    base = 0x9e0000000
-    wl.write_pmlog_record(outd, base, 0x100000, "D2", "x")
-    t = Fake()
-    t.mem[base] = region
-    rc, out = run(["--postmortem"], t, tmp)
-    check(rc == 0 and open(os.path.join(outd, "pmlog.txt"), "rb").read().endswith(b"FATAL: x\n") and os.path.getsize(os.path.join(outd, "pmlog.bin")) == 0x100000,
-          "--postmortem: base from the record, header validated, text and raw region saved")
-    check("CPU_ON cpu 1 accepted" in out and "CRC ok" in out, "--postmortem prints the last lines and the header")
-    check(all(c[0] in ("readmem", "timeout") for c in t.calls) and not any(c[0] in ("writemem", "malloc", "memalign") for c in t.calls),
-          "--postmortem only reads (no write, no allocation): %s" % sorted(set(names(t))))
-    t = Fake()
-    t.mem[0x900000000] = region
-    rc, out = run(["--postmortem", "--pmlog-base", "0x900000000"], t, tmp)
-    check(rc == 0 and "base from --pmlog-base" in out, "--postmortem --pmlog-base overrides the record")
-    t = Fake()                                       # DRAM did not keep it: zeros
-    rc, out = run(["--postmortem"], t, tmp)
-    check(rc == 5 and "no log header" in out and "hypothesis" in out, "zeros at the base: exit 5 with the explanation")
-    t = Fake()
-    t.mem[base] = build_region(0x100000, [b"torn line\n"], seal=False)
-    rc, out = run(["--postmortem"], t, tmp)
-    check(rc == 6 and "UNVERIFIED" in out and "torn line" in out and open(os.path.join(outd, "pmlog.txt"), "rb").read() == b"torn line\n",
-          "a torn header: exit 6, text saved and flagged UNVERIFIED")
-    t = Fake()
-    t.mem[base] = build_region(0x100000, [b"z" * 5000 for _ in range(300)])
-    rc, out = run(["--postmortem"], t, tmp)
-    check(rc == 0 and "wrapped" in out, "a wrapped ring is reported")
-    os.remove(wl.pmlog_record_path(outd))
-    t = Fake()
-    rc, out = run(["--postmortem"], t, tmp)
-    check(rc == 2 and t.calls == [], "no record and no --pmlog-base: refused before any proxy call")
-    rc, out = run(["--postmortem", "--rung", "L3"], Fake(), tmp)
-    check(rc == 2, "--postmortem excludes --rung")
 
 print("\n%s" % ("ALL PASSED" if not FAILED else "%d FAILED" % len(FAILED)))
 sys.exit(1 if FAILED else 0)

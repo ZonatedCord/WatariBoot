@@ -7,7 +7,7 @@
 > **Watari Boot: Native Windows on Apple Silicon**: an open research project to dual-boot Windows 11 ARM64 on Apple Silicon Macs, starting from the M1.
 
 > [!WARNING]
-> **Not usable yet.** Watari Boot is an early-stage research project. On a real M1, Windows now starts on top of our layer and reaches its boot logo and kernel, then stops with a bugcheck (2026-11-17). Those runs need a second Mac connected over USB as a debug host, and they write nothing to the M1's disk. Everything you can try yourself runs in **QEMU** on a Mac and never touches your Mac's disk or boot configuration. Do not expect a usable Windows install on Apple Silicon from this repository today.
+> **Not usable yet.** Watari Boot is an early-stage research project. On a real M1, Windows now starts on top of our layer and reaches the first page of Windows Setup, with wrong colours and no keyboard or storage yet (2026-11-24). Those runs need a second Mac connected over USB as a debug host, and they write nothing to the M1's disk. Everything you can try yourself runs in **QEMU** on a Mac and never touches your Mac's disk or boot configuration. Do not expect a usable Windows install on Apple Silicon from this repository today.
 
 ## What we are trying to do
 
@@ -55,8 +55,9 @@ Everything else stays native: cores, memory, and real peripherals (which still n
 | Watari EL2: **M3a** on the real M1 (tethered from a second Mac through m1n1's USB proxy, RAM only) | 🔄 in progress |
 | · day 2: the layer runs on the M1 at EL2 and hands over to a guest | ✅ 2026-11-13 |
 | · our EDK2 runs on the layer on the M1; Windows' boot manager starts from a 713 MiB RAM disk | ✅ 2026-11-16 |
-| · the M1 has no standard Arm PMU: `HACR_EL2[56]` routes those accesses to the layer, which emulates them; **Windows reaches its boot logo and the kernel**, then stops with `INTERNAL_POWER_ERROR` (0xA0, F-43). Colours are wrong (F-44) | ⚠️ 2026-11-17 |
-| Watari EL2: **M3b**: Windows Setup on the real M1, then storage | ⏭️ next |
+| · the M1 has no standard Arm PMU: `HACR_EL2[56]` routes those accesses to the layer, which emulates them; **Windows reaches its boot logo and the kernel**, then stops with `INTERNAL_POWER_ERROR` (0xA0, F-43, fixed on 2026-11-24) | ✅ 2026-11-17 |
+| · **Windows Setup's first page on the real M1**, with one core and with eight. Colours are wrong (F-44), no input or storage | ✅ 2026-11-24 |
+| Watari EL2: **M3b**: past Setup's driver page on the real M1, then USB input and storage | ⏭️ next |
 
 Current state and next steps: [docs/STATUS.md](docs/STATUS.md). Estimated time to a usable Windows on a real M1 (desktop, storage, keyboard, USB): months, not weeks.
 
@@ -103,14 +104,14 @@ Watari Boot is developed by **Marco** ([@ZonatedCord](https://github.com/Zonated
 
 ## Tokens and costs
 <!-- TOKEN-COUNTER:START -->
-**Total tokens: 2,897,137,841 · Estimated cost: $1172.88** (updated 2026-11-24; ciani: 14 sessions, $90.97, marco: 18 sessions, $1081.91)
+**Total tokens: 2,981,754,422 · Estimated cost: $1208.46** (updated 2026-11-24; ciani: 14 sessions, $90.97, marco: 23 sessions, $1117.49)
 
 | Model | Input | Output | Cache written | Cache read | Estimated cost |
 |---|---:|---:|---:|---:|---:|
 | `claude-fable-5-2` | 492 | 445,448 | 3,182,474 | 36,831,998 | $80.26 |
-| `claude-haiku-5-5` | 334 | 194,842 | 1,582,032 | 14,062,933 | $0.44 |
-| `claude-opus-5-5` | 9,478 | 3,009,306 | 33,787,561 | 1,343,062,665 | $599.14 |
-| `claude-sonnet-5-5` | 19,296 | 6,990,996 | 57,335,253 | 1,396,622,733 | $493.05 |
+| `claude-haiku-5-5` | 426 | 257,384 | 1,993,634 | 18,320,227 | $0.56 |
+| `claude-opus-5-5` | 10,132 | 3,258,524 | 35,091,299 | 1,389,987,062 | $623.94 |
+| `claude-sonnet-5-5` | 19,686 | 7,195,479 | 58,363,129 | 1,426,797,028 | $503.70 |
 
 <sub>Estimate at Anthropic API prices, computed from local Claude Code transcripts with `tools/token-usage.py`. With a subscription (Pro/Max) the real cost is the subscription fee: this is the equivalent pay-as-you-go cost. Subagent output may be under-reported in the logs.</sub>
 <!-- TOKEN-COUNTER:END -->
