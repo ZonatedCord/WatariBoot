@@ -80,6 +80,31 @@
         }
       }
     },
+    "45cdfb21638f": {
+      "models": {
+        "claude-haiku-5-5": {
+          "cache_read": 11602693,
+          "cache_write_1h": 0,
+          "cache_write_5m": 824431,
+          "input": 230,
+          "output": 179659
+        },
+        "claude-opus-5-5": {
+          "cache_read": 54301109,
+          "cache_write_1h": 1153136,
+          "cache_write_5m": 0,
+          "input": 618,
+          "output": 166005
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 51650216,
+          "cache_write_1h": 0,
+          "cache_write_5m": 2253092,
+          "input": 832,
+          "output": 511380
+        }
+      }
+    },
     "5c750aeeed9f": {
       "models": {
         "claude-fable-5-2": {
@@ -155,18 +180,18 @@
           "output": 4016
         },
         "claude-opus-5-5": {
-          "cache_read": 64787886,
-          "cache_write_1h": 1136000,
+          "cache_read": 77616667,
+          "cache_write_1h": 1592158,
           "cache_write_5m": 0,
-          "input": 644,
-          "output": 147131
+          "input": 720,
+          "output": 165190
         },
         "claude-sonnet-5-5": {
-          "cache_read": 281458765,
+          "cache_read": 291855639,
           "cache_write_1h": 0,
-          "cache_write_5m": 6505316,
-          "input": 3812,
-          "output": 1470489
+          "cache_write_5m": 6900723,
+          "input": 4006,
+          "output": 1523968
         }
       }
     },
@@ -247,6 +272,24 @@
           "cache_write_5m": 0,
           "input": 12,
           "output": 3339
+        }
+      }
+    },
+    "c2f814d2e579": {
+      "models": {
+        "claude-haiku-5-5": {
+          "cache_read": 0,
+          "cache_write_1h": 0,
+          "cache_write_5m": 40226,
+          "input": 2,
+          "output": 1122
+        },
+        "claude-opus-5-5": {
+          "cache_read": 3496755,
+          "cache_write_1h": 93967,
+          "cache_write_5m": 0,
+          "input": 68,
+          "output": 22260
         }
       }
     },
