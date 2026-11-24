@@ -11,15 +11,14 @@ nothing is installed, nothing is downloaded, nothing is written outside <bundle>
                                            pre-jump line (PASS/FAIL), print the PHOTO CHECKLIST, append a record
   monday.py photos <ID>                    print the PHOTO CHECKLIST again
   monday.py verdict <ID> PASS|FAIL|ABORT|UNREADABLE --note TEXT     Claude's verdict after reading the photos
-  monday.py confirm <key> --by NAME        record a confirmation from the chat (backup, image-ok, rate-ok, fallback-e4, fallback-e1, skip-pm0, proceed:<ID>)
-  monday.py postmortem [--rung ID]         read the layer's post-mortem log ring back over the proxy (T16j) after the Mac is in m1n1 again;
-                                           the first one, after D2, is rung PM0: did DRAM survive the reset?
+  monday.py confirm <key> --by NAME        record a confirmation from the chat (backup, image-ok, rate-ok, fallback-e4, fallback-e1, proceed:<ID>)
   monday.py next [--all]                   which rung comes next given the recorded results (gates, abort criteria)
 
 The command of each rung is the one in docs/procedures/m3a-day3-hardware.md or m3a-day4-windows-ramdisk.md; the table
 RUNGS below is checked against those texts by tools/m3a/test_monday.py (every command must appear verbatim).
 It never writes to the target by itself: the loader does, with exactly the arguments of the procedures. Jump rungs on a
 real device need the backup confirmation (never bypassable), the gate (bypass: --force-gate REASON) and --marco-go.
+RAM is volatile: nothing is read back after a restart; evidence = screen photos/video.
 """
 import argparse
 import datetime
@@ -159,12 +158,12 @@ rung("D1", 3, "D1", "--rung L5 --go --fb band --args wel2.hold=1", "D1: framebuf
      abort="60 s without a new checkpoint/picture, a red square, FATAL/unexpected text",
      intro="D1 SALTA nel layer con il guest di prova (gia' passato nel giorno 2): disegna le quattro barre sul pannello. "
            "Avviate il video PRIMA del comando. Dopo, schermo fermo per la foto, poi tasto di accensione ~10 s.", photos="D1")
-rung("D2", 3, "D2", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --pmlog --args wel2.hold=1", "D2+D3: EDK2 to PrePi, BDS, self-test (one run)",
+rung("D2", 3, "D2", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --args wel2.hold=1", "D2+D3: EDK2 to PrePi, BDS, self-test (one run)",
      jump=True, verdicts=["D2", "D3"], gate=[G_BACKUP, ("D1", PASS)], minutes="20 min", fresh=True,
      abort="no EDK2 ticker text within 10 s of square 8; 60 s with no new checkpoint/ticker/picture; red square; layer panic text",
      intro="D2+D3 SALTA nel layer e fa partire EDK2: dopo pochi secondi deve comparire il testo di EDK2 nella riga sotto la fascia; "
            "poi le quattro barre, i dieci riquadri che si accendono uno al secondo e la riga HOLD. Video acceso PRIMA del comando.", photos="D2")
-rung("D3b", 3, "D3b", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --pmlog", "D3b (optional): the same run without the hold",
+rung("D3b", 3, "D3b", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go", "D3b (optional): the same run without the hold",
      jump=True, verdicts=["D3b"], gate=[G_BACKUP, ("D3", PASS)], minutes="10 min", fresh=True, verbatim=False,
      note="derived from D2 minus '--args wel2.hold=1' (day 3, section 'D3b': 'the same without the hold')",
      abort="30 s after the tenth box with no restart",
@@ -172,28 +171,28 @@ rung("D3b", 3, "D3b", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --pmlog"
 rung("D4-0", 3, "D4-0", "--rung D0 --edk2 WATARI_M1_EFI.fd --fb band --smp", "D4 preview: D0 with --smp (8 cpu nodes)",
      gate=[G_BACKUP, ("D3", PASS)], minutes="5 min", abort="any error",
      intro="Anteprima di D4: come D0 ma con i core secondari; la guest FDT deve elencare 8 cpu. Non salta.")
-rung("D4", 3, "D4", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --cpuif trap-notc --smp --pmlog --args wel2.hold=1",
+rung("D4", 3, "D4", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --cpuif trap-notc --smp --args wel2.hold=1",
      "D4: trap-notc and all cores started by the host", jump=True, verdicts=["D4"], gate=[G_BACKUP, ("D3", PASS)],
      minutes="20 min (+20 if split)", fresh=True, abort="as D3",
      intro="D4 SALTA come D2 ma con l'altra configurazione (trap-notc) e con tutti gli 8 core avviati dal loader. "
            "Marco e Ciani devono essere d'accordo in chat. Video acceso PRIMA.", photos="D4")
-rung("D4a", 3, "D4a", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --cpuif trap-notc --pmlog --args wel2.hold=1",
+rung("D4a", 3, "D4a", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --cpuif trap-notc --args wel2.hold=1",
      "D4a (split): trap-notc without --smp", jump=True, verdicts=["D4a"], gate=[G_BACKUP, ("D3", PASS)], minutes="20 min",
      fresh=True, verbatim=False, note="derived from D4: 'D4a = --cpuif trap-notc without --smp'", abort="as D3",
      intro="D4a (solo se D4 e' fallito): trap-notc senza i core secondari.", photos="D4")
-rung("D4b", 3, "D4b", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --smp --pmlog --args wel2.hold=1",
+rung("D4b", 3, "D4b", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb band --go --smp --args wel2.hold=1",
      "D4b (split): --smp with trap", jump=True, verdicts=["D4b"], gate=[G_BACKUP, ("D3", PASS)], minutes="20 min",
      fresh=True, verbatim=False, note="derived from D4: 'D4b = --smp with trap'", abort="as D3",
      intro="D4b (solo se D4 e' fallito): core secondari con la configurazione trap.", photos="D4")
 rung("D5-0", 3, "D5-0", "--rung D0 --edk2 WATARI_M1_EFI.fd --fb guest --no-smp", "D5 preview: D0 with --fb guest",
      gate=[G_BACKUP, ("D3", PASS)], minutes="5 min", abort="any error",
      intro="Anteprima di D5: il piano del framebuffer deve dire mode guest, 1600 righe. Non salta.")
-rung("D5", 3, "D5", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb guest --go --pmlog --args wel2.hold=1", "D5: full panel, wel2.fb=guest",
+rung("D5", 3, "D5", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb guest --go --args wel2.hold=1", "D5: full panel, wel2.fb=guest",
      jump=True, verdicts=["D5"], gate=[G_BACKUP, ("D3", PASS)], minutes="20 min", fresh=True,
      abort="60 s without a new box/picture", photos="D5",
      intro="D5 SALTA: tutto il pannello 2560x1600 e' di EDK2, niente fascia e niente ticker. Solo l'immagine fa da prova. "
            "Opzionale per Windows (che parte in modalita' band).")
-rung("D5b", 3, "D5", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb guest --go --pmlog --args wel2.hold=1",
+rung("D5b", 3, "D5", "--rung D2 --edk2 WATARI_M1_EFI.fd --fb guest --go --args wel2.hold=1",
      "D5 BGR8 (optional): D5 from the second (BGR8) bundle", jump=True, verdicts=["D5b"], gate=[G_BACKUP, ("D5", PASS)],
      minutes="20 min", fresh=True, bundle="bgr8", abort="as D5", photos="D5",
      note="same command as D5, run from the second bundle (EDK2 built with --bgr8, no winram folder)",
@@ -209,14 +208,14 @@ rung("W1b", 4, "W1b-d0", "--rung D0 --edk2 WATARI_M1_EFI.fd --ramdisk winram/win
      minutes="transfer time + 3 min", abort="exit 2 or 4, checksum error twice", bundle="day4",
      intro="Anteprima con l'immagine vera: trasferisce tutta l'immagine in RAM e controlla i blocchi, ma non salta. "
            "Conviene solo se il trasferimento e' sotto circa 3 minuti.")
-rung("W1c", 4, "W1c-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --pmlog --args wel2.hold=1",
+rung("W1c", 4, "W1c-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --args wel2.hold=1",
      "W1 (c): transfer, jump, EDK2 with the RAM disk, bootmgr (S1-S2)", jump=True, verdicts=["W1c"],
      gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("rate", {"OK"})], minutes="transfer + up to 5 min from the jump", fresh=True,
      abort="no bootmgr screen 5 min after the jump; 60 s without change (except the CRC pause up to 120 s); red square; layer panic text",
      photos="W1c", bundle="day4",
      intro="W1c: trasferisce l'immagine di Windows in RAM (minuti) e poi SALTA nel layer: EDK2 registra il RAM disk e deve partire bootmgr. "
            "Il cronometro parte quando il Mac passa al layer. Video acceso PRIMA, cronometro nell'inquadratura.")
-rung("W2", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --pmlog --args wel2.hold=1",
+rung("W2", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --args wel2.hold=1",
      "W2+W3: kernel, HAL, WinPE, Setup first screen (one run, D4 flags)", jump=True, verdicts=["W2", "W3"],
      gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("D4", PASS), ("W1c", {"PASS", "NONE"}), ("rate", {"OK"})],
      minutes="transfer + 20-40 min from the jump", fresh=True,
@@ -224,7 +223,7 @@ rung("W2", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/win
      photos="W2", bundle="day4",
      intro="W2+W3 e' UNA sola corsa: trasferimento, salto, bootmgr, logo di Windows, kernel, e se va bene la prima schermata di Setup ('Attendere' poi 'Installa il driver...'). "
            "Puo' durare 40 minuti dopo il salto: telefono su un supporto e in carica, cronometro in vista, una foto ogni 2 minuti.")
-rung("W2g", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb guest --go --cpuif trap-notc --smp --pmlog --args wel2.hold=1",
+rung("W2g", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb guest --go --cpuif trap-notc --smp --args wel2.hold=1",
      "W2 repeat with --fb guest (optional)", jump=True, verdicts=["W2g"],
      gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("D4", PASS), ("rate", {"OK"})], minutes="transfer + 20-40 min", fresh=True, verbatim=False,
      note="derived from W2: 'Optional: --fb guest repeat: the same command with --fb guest'", photos="W2", bundle="day4",
@@ -233,14 +232,14 @@ rung("W2g", 4, "W2-jump", "--rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/wi
 # Declared fallbacks (T16g, day-4 section 6.3 and Q-4D-8). Commands are the procedure's `wl W2-e4` / `wl W2-e1` lines verbatim.
 # Marco's "go e4" / "go e1" in chat is recorded as `confirm fallback-e4|fallback-e1`; that confirmation is never bypassable.
 FALLBACKS = {"e4": ("--cpuif trap-notc --smp", "j293-e4"), "e1": ("--cpuif trap-notc --no-smp", "j293-e1")}
-rung("W2-e4", 4, "W2-e4", "--rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go %s --pmlog --args wel2.hold=1" % FALLBACKS["e4"][0],
+rung("W2-e4", 4, "W2-e4", "--rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go %s --args wel2.hold=1" % FALLBACKS["e4"][0],
      "W2 fallback j293-e4 (four E cores in the tables; section 6.3)", jump=True, verdicts=["W2-e4", "W3-e4"],
      gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e4", {"CONFIRMED"})],
      minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4", fallback="e4",
      abort="as W2",
      intro="Fallback W2 con il firmware j293-e4 (Windows vede solo i quattro core efficienti): si usa solo dopo un sintomo di W2 che la tabella 6.3 "
            "assegna a e4 e solo se Marco dice 'go e4' in chat. Nuovo avvio di m1n1 e nuovo trasferimento dell'immagine.")
-rung("W2-e1", 4, "W2-e1", "--rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go %s --pmlog --args wel2.hold=1" % FALLBACKS["e1"][0],
+rung("W2-e1", 4, "W2-e1", "--rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go %s --args wel2.hold=1" % FALLBACKS["e1"][0],
      "W2 fallback j293-e1 (boot core only; section 6.3)", jump=True, verdicts=["W2-e1", "W3-e1"],
      gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("W2-e4", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e1", {"CONFIRMED"})],
      minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4", fallback="e1",
@@ -257,22 +256,12 @@ rung("W1c-e1", 4, "W1c-e1", RUNGS["W1c"]["args"].replace("WATARI_M1_EFI.fd", "WA
      "W1c with the j293-e1 firmware (boot core only in the tables; one change from W1c)", jump=True, verdicts=["W1c-e1"],
      gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("rate", {"OK"}), ("confirm:fallback-e1", {"CONFIRMED"})],
      minutes="transfer + 20-40 min from the jump", fresh=True, photos="W2", bundle="day4", fallback="e1", verbatim=False,
-     note="derived from W1c: the same command with `--edk2 WATARI_M1_EFI-e1.fd` (the only change; trap, --no-smp, same --pmlog and wel2.hold=1)",
+     note="derived from W1c: the same command with `--edk2 WATARI_M1_EFI-e1.fd` (the only change; trap, --no-smp, same wel2.hold=1)",
      abort="as W2 (10 min with NO change at all; 20 min to a changed screen); bugcheck 0xA0 again = FAIL; red square; heat",
      intro="W1c-e1: IDENTICO a W1c (stesso trasferimento, trap, un solo core avviato) con UNA sola differenza: il firmware j293-e1, le cui tabelle ACPI descrivono "
            "soltanto il core di avvio. Il 17 novembre W1c e' finito con il bugcheck 0xA0 con tabelle da 8 CPU e un core: qui cambiano solo le tabelle. "
            "Serve il 'go e1' di Marco in chat (confirm fallback-e1). PASS = Windows supera il punto dello 0xA0 (spinner per minuti, o Setup). "
            "Video acceso PRIMA, cronometro nell'inquadratura, una foto ogni 2 minuti.")
-
-# PM0 (T16j): the first [check] of Monday. After D2 (the first EDK2 jump with --pmlog) the Mac is brought back to m1n1 and the layer's
-# post-mortem ring is read: exit 0 = DRAM survived the reset/power-off and the log is recovered (then use it after every later failure);
-# exit 5 = no header (DRAM not kept: photos only). Not a gate. `postmortem` (below) is the command; `rung PM0` is an alias of it.
-rung("PM0", 3, "PM0", "--postmortem", "PM0: did the post-mortem log survive the way back to m1n1? (read-only, [check])",
-     kind="postmortem", minutes="5 min (+5 min m1n1 boot)", bundle="any", verbatim=False,
-     note="derived: the loader's --postmortem, run by monday.py with the base recorded at the D2 jump (--pmlog-base 0x<base>)",
-     abort="a proxy that does not answer: nothing was written; photos only",
-     intro="PM0 (controllo): dopo D2 il Mac e' stato spento e riavviato in m1n1. Leggiamo (sola lettura) il registro che il layer ha scritto in RAM: "
-           "se c'e', dopo ogni prova fallita leggiamo prima quello e poi le foto. Non scrive niente sul Mac.")
 
 # ID0 (T16m): read-only dump and decode of the feature/ID registers of the boot core (tools/m3a/idregs.py). Not a gate, no verdict.
 rung("ID0", 4, "ID0", 'python3 idregs.py --out "$HOSTDIR/work/photos/idregs-out.txt"', "ID0: read-only ID/feature register dump (PMUv3? RNDR? FGT? ECV?), boot core, no jump",
@@ -304,10 +293,8 @@ for _r in RUNGS.values():
         VERDICT_OWNER[_v] = _r["id"]
 VERDICT_OWNER["W1c"] = "W1c"
 GROUP = {"W1c-e1": "W1c", "D3": "D2", "D4a": "D4", "D4b": "D4", "D5b": "D5", "W2g": "W2", "W2-e4": "W2", "W2-e1": "W2", "W3": "W2"}
-ORDER = ["E", "ID0", "HACR0", "D0", "D1", "D2", "PM0", "D3b", "D4-0", "D4", "D4a", "D4b", "D5-0", "D5", "D5b", "W1a", "W1a2", "W1b", "W1c", "W1c-e1", "W2", "W2g", "W2-e4", "W2-e1"]
+ORDER = ["E", "ID0", "HACR0", "D0", "D1", "D2", "D3b", "D4-0", "D4", "D4a", "D4b", "D5-0", "D5", "D5b", "W1a", "W1a2", "W1b", "W1c", "W1c-e1", "W2", "W2g", "W2-e4", "W2-e1"]
 EXIT_MEANING = {
-    5: "(--postmortem) no valid log header at the base: DRAM did not keep the ring, or the wrong base (a rung's own exit 5 does not exist)",
-    6: "(--postmortem) header CRC bad or fields inconsistent: the text is UNVERIFIED",
     0: "ok / handed over",
     1: "error (gfdt_dump/fdt_m1_dump failed for a reason other than placement, Gatekeeper -9: see day 3 section 2.2)",
     2: "usage or bundle problem, hash mismatch, sidecar/size mismatch: re-copy the bundle",
@@ -330,7 +317,7 @@ def hhmmss():
 def args_info(args):
     """What a rung's loader arguments imply: rung name, fb, smp, cpuif, ramdisk, hold."""
     t = shlex.split(args)
-    info = dict(rung=None, fb="layer", smp=None, cpuif="trap", ramdisk=None, edk2=None, hold=False, test=None, extra="", pmlog=False, postmortem=False)
+    info = dict(rung=None, fb="layer", smp=None, cpuif="trap", ramdisk=None, edk2=None, hold=False, test=None, extra="")
     i = 0
     while i < len(t):
         a = t[i]
@@ -348,10 +335,6 @@ def args_info(args):
             info["ramdisk"] = t[i + 1]; i += 1
         elif a == "--edk2":
             info["edk2"] = t[i + 1]; i += 1
-        elif a == "--pmlog":
-            info["pmlog"] = True
-        elif a == "--postmortem":
-            info["postmortem"] = True
         elif a == "--ramdisk-test":
             info["test"] = int(t[i + 1]); i += 1
         elif a == "--args":
@@ -438,8 +421,6 @@ def expected_blocks(ctx):
         names.add("guest")
     if ctx.info["ramdisk"]:
         names.add("ramdisk")
-    if ctx.info["pmlog"] and ctx.r["jump"]:
-        names.add("pmlog")               # the ring region (T16j), checked apart from the other blocks
     return names
 
 
@@ -540,9 +521,8 @@ def bootargs_regex(ctx):
         return (r"wel2\.step=5 wel2\.cpuif=%s wel2\.guest=0x[0-9a-f]+ wel2\.fb=%s%s" %
                 (re.escape(i["cpuif"]), i["fb"], r" wel2\.hold=1" if i["hold"] else ""))
     rd = r" wel2\.ramdisk=0x([0-9a-f]+),0x([0-9a-f]+)" if i["ramdisk"] else ""
-    pm = r" wel2\.pmlog=0x(?P<pmbase>[0-9a-f]+),0x(?P<pmsize>[0-9a-f]+)" if i["pmlog"] else ""
-    return (r"wel2\.cpuif=%s wel2\.guest=0x([0-9a-f]+)%s%s wel2\.abi=fdt wel2\.gfdt=build wel2\.fb=%s%s" %
-            (re.escape(i["cpuif"]), rd, pm, i["fb"], r" wel2\.hold=1" if i["hold"] else ""))
+    return (r"wel2\.cpuif=%s wel2\.guest=0x([0-9a-f]+)%s wel2\.abi=fdt wel2\.gfdt=build wel2\.fb=%s%s" %
+            (re.escape(i["cpuif"]), rd, i["fb"], r" wel2\.hold=1" if i["hold"] else ""))
 
 
 def check_bootargs(ctx):
@@ -557,32 +537,6 @@ def check_bootargs(ctx):
         base, size = int(mm.group(2), 16), int(mm.group(3), 16)
         ctx.facts["ramdisk_arg"] = "0x%x,0x%x" % (base, size)
         res.append(chk(base % (32 * MIB) == 0, "wel2.ramdisk base 32 MB aligned", "0x%x" % base))
-    if mm and ctx.info["pmlog"]:
-        pb, ps = int(mm.group("pmbase"), 16), int(mm.group("pmsize"), 16)
-        ctx.facts["pmlog_arg"] = "0x%x,0x%x" % (pb, ps)
-        res.append(chk(pb % (32 * MIB) == 0 and 0x4000 <= ps <= 0x4000000 and ps % 0x4000 == 0, "wel2.pmlog base 32 MB aligned, size 16 KB multiple",
-                       "0x%x,0x%x" % (pb, ps)))
-    return res
-
-
-def check_pmlog(ctx):
-    """T16j: the loader's own PMLOG / POSTMORTEM lines against the boot arguments (the ring is allocated LAST, so D0's addresses stay)."""
-    m = find(ctx, r"^PMLOG  region 0x([0-9a-f]+)\.\.0x([0-9a-f]+) \((\d+) KiB, zeroed, ([^)]*)\)")
-    res = [chk(bool(m), "PMLOG region", m.group(0) if m else "no 'PMLOG  region 0x..' line: the post-mortem ring was not set up")]
-    p = find(ctx, r"^POSTMORTEM base 0x([0-9a-f]+) (\(dry run: not recorded|recorded in )")
-    res.append(chk(bool(p), "POSTMORTEM base recorded", ("base 0x%s %s" % (p.group(1), "(dry run)" if p.group(2).startswith("(") else "in pmlog-base.json")) if p
-                   else "no 'POSTMORTEM base 0x.. recorded in ...' line: the base was not written down, --postmortem would need --pmlog-base by hand"))
-    a = ctx.facts.get("pmlog_arg")
-    if m and p and a:
-        base = int(m.group(1), 16)
-        ctx.facts["pmlog_base"] = "0x%x" % base
-        ctx.facts["pmlog_size"] = int(m.group(3)) * 1024
-        res.append(chk(a == "0x%x,0x%x" % (base, int(m.group(3)) * 1024) and int(p.group(1), 16) == base, "pmlog base agrees everywhere",
-                       "region = boot argument = recorded base = 0x%x" % base))
-    elif m:
-        ctx.facts["pmlog_base"] = "0x%x" % int(m.group(1), 16)
-    if "fixed --pmlog-base" not in (m.group(4) if m else "") and m:
-        res.append(chk(int(m.group(1), 16) % (32 * MIB) == 0, "pmlog block 32 MB aligned", "0x%x" % int(m.group(1), 16)))
     return res
 
 
@@ -614,17 +568,8 @@ def check_ramdisk_plan(ctx):
     if rb and ctx.facts.get("ramdisk_arg"):
         res.append(chk(ctx.facts["ramdisk_arg"] == "0x%x,0x%x" % (int(rb.group(1), 16), blk), "wel2.ramdisk equals the block",
                        "boot argument %s vs block 0x%s,0x%x" % (ctx.facts["ramdisk_arg"], rb.group(1), blk)))
-    ru = find(ctx, r"^RAMDISK reused: (\d+) bytes already at 0x([0-9a-f]+), trailer at 0x([0-9a-f]+) \(crc32 (0x[0-9a-f]{8})\), no transfer")
-    rf = find(ctx, r"^RAMDISK REUSE refused: (.*) -> transferring the image normally")
-    if ru or rf:
-        ctx.facts["ramdisk_reuse"] = "REUSED (not transferred; EDK2's CRC-32 verifies)" if ru else ("requested, refused: %s" % rf.group(1) if rf else "requested, no decision line")
     w = find(ctx, r"^RAMDISK written: (\d+) bytes in ((?:(\d+) min )?(\d+) s) \(([\d.]+) MB/s\), trailer at 0x([0-9a-f]+) \(crc32 (0x[0-9a-f]{8})\)")   # fmt_eta: "45 s" or "1 min 07 s"
-    if ru:
-        okr = int(ru.group(1)) == size and ru.group(4) == crc and rb is not None and int(ru.group(2), 16) == int(rb.group(1), 16) \
-            and int(ru.group(3), 16) == int(rb.group(1), 16) + blk - 4096 and find(ctx, r"^REUSING image in DRAM, not verified by the loader; EDK2's CRC-32 check will verify it") is not None
-        res.append(chk(okr, "RAMDISK reused", "%s bytes kept in DRAM at 0x%s, trailer 0x%s, crc32 %s equals the plan's; NOT verified by the loader: EDK2's CRC-32 line on the screen is the check" %
-                       (ru.group(1), ru.group(2), ru.group(3), ru.group(4))))
-    elif not w:
+    if not w:
         res.append(("FAIL", "RAMDISK written", "no 'RAMDISK written: ... crc32 ...' line"))
     else:
         rate = float(w.group(5))
@@ -731,8 +676,6 @@ def run_checks(r, text, exit_code, dry, interrupted=False, ramdisk_size=None, ra
             res += check_bootargs(c)
         if i["ramdisk"]:
             res += check_ramdisk_plan(c)
-        if i["pmlog"] and r["jump"]:
-            res += check_pmlog(c)
         res += check_handover(c)
     ident = hygiene_hit(text)
     res.append(chk(not ident, "log hygiene", "no serial-number/mac-address value in the log (property NAMES in ehw2's names-only line are fine)" if not ident else "identifying text %r in the log: do not share it" % ident))
@@ -962,28 +905,9 @@ def host_env():
     return host, py, env
 
 
-REUSE_SRC = ("W1b", "W1c", "W1c-e1", "W2", "W2g", "W2-e4", "W2-e1")
-
-
-def reuse_wanted(recs, r, a):
-    """T16l: --ramdisk-reuse is added only on attempts AFTER the first transfer of the image in this session (the results file):
-    a jump rung that carries the RAM disk, once an earlier rung (W1b preview or any W jump) recorded a completed transfer.
-    Never on the first attempt (nothing is in DRAM to reuse), never with --no-reuse. Returns (bool, why)."""
-    if getattr(a, "no_reuse", False):
-        return False, "--no-reuse given"
-    if not (r["jump"] and "--ramdisk " in r["args"]):
-        return False, "not a jump rung with the RAM disk"
-    prior = [x for x in recs if x["kind"] == "auto" and x["id"] in REUSE_SRC and "transfer-seconds" in x["f"] and x["f"].get("dry-run") != "yes"]
-    if not prior:
-        return False, "first attempt of the session: no earlier transfer recorded in the results file"
-    return True, "an earlier transfer is recorded (%s, %s s)" % (prior[-1]["id"], prior[-1]["f"]["transfer-seconds"])
-
-
-def build_loader_argv(r, a, bundle, py, reuse=False):
+def build_loader_argv(r, a, bundle, py):
     args = r["args"]
     argv = [py, "-u", a.loader or os.path.join(bundle, "watari-load.py")] + shlex.split(args)
-    if reuse:
-        argv.append("--ramdisk-reuse")
     m1n1 = a.m1n1 or os.environ.get("M1N1_DIR") or (os.path.join(os.environ["HOSTDIR"], "work", "m1n1-main") if os.environ.get("HOSTDIR") else None)
     if m1n1:
         argv += ["--m1n1", m1n1]
@@ -1158,9 +1082,6 @@ def cmd_rung(a, bundle, outdir):
         say("unknown rung %s; known: %s" % (rid, ", ".join(ORDER)))
         return EX_USAGE
     r = RUNGS[rid]
-    if r["kind"] == "postmortem":
-        a.rung, a.pmlog_base = None, None
-        return cmd_postmortem(a, bundle, outdir)
     dry = a.dry_run
     recs = parse_results(results_path(outdir, dry))
     ok, hard, soft = gate_check(recs, r)
@@ -1234,13 +1155,7 @@ def cmd_rung(a, bundle, outdir):
             m1 = a.m1n1 or os.environ.get("M1N1_DIR") or (os.path.join(host, "work", "m1n1-main") if host else "")
             env["PYTHONPATH"] = os.path.join(m1, "proxyclient")
     else:
-        reuse, why = reuse_wanted(recs, r, a)
-        argv = build_loader_argv(r, a, bundle, py, reuse)
-        if reuse:
-            say("RIUSO DELL'IMMAGINE: aggiungo --ramdisk-reuse (%s). Se l'immagine e' ancora nella RAM dopo il reset, il caricamento di ~700 MB viene saltato "
-                "(risparmio: i minuti del trasferimento); altrimenti il loader la ricarica da solo. La verifica vera la fa EDK2 con il CRC-32 (riga sullo schermo)." % why)
-        elif r["jump"] and "--ramdisk " in r["args"]:
-            say("RIUSO DELL'IMMAGINE: no (%s)." % why)
+        argv = build_loader_argv(r, a, bundle, py)
     say("ESEGUO: %s" % " ".join(shlex.quote(x) for x in argv))
     say("")
     text, code, interrupted, timeline = run_loader(argv, bundle, env, log_path, r["jump"] and not dry, a.boot_timeout, True, a.quiet)
@@ -1266,8 +1181,6 @@ def cmd_rung(a, bundle, outdir):
         say("STOP: non passare al rung successivo. Dire a Marco cosa e' successo e consultare la tabella FAIL di %s." % r["doc"])
     say("-" * 100)
     print_photos(rid)
-    if r["kind"] not in PROBE_KINDS and "--ramdisk-reuse" in argv:
-        facts.setdefault("ramdisk_reuse", "requested, no decision line")
     fields = [("result", overall), ("dry-run", "yes" if dry else "no"), ("command", cmdtxt), ("loader-exit", code),
               ("started", t_start), ("log", log_path), ("photos", "pending" if r["jump"] else "none")]
     if interrupted:
@@ -1275,7 +1188,7 @@ def cmd_rung(a, bundle, outdir):
     if a.force_gate:
         fields.append(("force-gate", a.force_gate))
     for k in ("boot_arguments", "ramdisk_arg", "fb_plan", "panel", "cores", "mem0", "image_bytes", "image_sha16", "image_crc32",
-              "transfer_seconds", "transfer_mbs", "slice_retries", "rate_write", "rate_read", "projected_seconds", "pmlog_base", "pmlog_size", "ramdisk_reuse"):
+              "transfer_seconds", "transfer_mbs", "slice_retries", "rate_write", "rate_read", "projected_seconds"):
         if k in facts and facts[k] is not None:
             fields.append((k.replace("_", "-"), facts[k]))
     if decision:
@@ -1289,150 +1202,6 @@ def cmd_rung(a, bundle, outdir):
             "(15 novembre): lo registro in automatico (%s) e si procede, con W2 e W3 in una sola corsa. Oltre 15 minuti ci fermiamo e chiediamo a Marco." %
             (human_eta(facts.get("projected_seconds") or 0), RATE_NOTE))
     return EX_OK if overall == "PASS" else EX_FAIL
-
-
-# ---------------------------------------------------------------------------------------------------------------------
-# Post-mortem log (T16j): reading the layer's ring back and summarising it
-# ---------------------------------------------------------------------------------------------------------------------
-PM_RESULT = {0: "RECOVERED", 5: "NOLOG", 6: "UNVERIFIED"}
-FATAL_RE = re.compile(r"FATAL|UNEXPECTED EXCEPTION|unhandled guest|halted")
-
-
-def pm_summary(text):
-    """Pure: what the ring text says. Returns a dict (last checkpoint, FATAL lines, CPU_ON accepted / failed, stats lines, hold, resets)."""
-    lines = text.splitlines()
-    chk_lines = [l for l in lines if re.search(r"Watari EL2: checkpoint \d+ ", l)]
-    cpus = []
-    for l in lines:
-        m = re.search(r"PSCI CPU_ON cpu (\d+) accepted", l)
-        if m and int(m.group(1)) not in cpus:
-            cpus.append(int(m.group(1)))
-    stats = [l for l in lines if "Watari EL2: stats:" in l]
-    sgi = [l for l in stats if "ICC_SGI*R writes trapped" in l]
-    return dict(
-        lines=len(lines),
-        last_line=lines[-1].strip() if lines else "",
-        last_checkpoint=re.sub(r"^.*Watari EL2: checkpoint ", "", chk_lines[-1]).strip() if chk_lines else None,
-        fatal=[l.strip() for l in lines if FATAL_RE.search(l)],
-        cpu_on_ok=sorted(cpus),
-        cpu_on_failed=[l.strip() for l in lines if re.search(r"CPU_ON failed", l)],
-        stats=len(stats),
-        sgi_line=sgi[-1].strip() if sgi else None,
-        hold=any("HOLD: take the photo" in l for l in lines),
-        resets=[l.strip() for l in lines if re.search(r"PSCI SYSTEM_(RESET|OFF)", l)][-2:],
-    )
-
-
-def pm_summary_lines(sm):
-    out = ["last checkpoint : %s" % (sm["last_checkpoint"] or "none in the ring"),
-           "FATAL / halted  : %d line(s)%s" % (len(sm["fatal"]), "".join("\n                    > " + l[:110] for l in sm["fatal"][-3:])),
-           "PSCI CPU_ON     : %d accepted %s%s" % (len(sm["cpu_on_ok"]), sm["cpu_on_ok"], ", %d FAILED" % len(sm["cpu_on_failed"]) if sm["cpu_on_failed"] else ""),
-           "stats lines     : %d%s" % (sm["stats"], " (%s)" % sm["sgi_line"][:90] if sm["sgi_line"] else ""),
-           "HOLD line seen  : %s" % ("yes" if sm["hold"] else "no"),
-           "last line       : %s" % sm["last_line"][:110]]
-    if sm["resets"]:
-        out.insert(5, "SYSTEM_RESET/OFF : " + " | ".join(r[:60] for r in sm["resets"]))
-    return out
-
-
-def pm_sources(recs, rid=None):
-    """Recorded runs of jump rungs that set up a ring (their auto record has a pmlog-base fact), oldest first."""
-    return [r for r in recs if r["kind"] == "auto" and "pmlog-base" in r["f"] and r["id"] in RUNGS and RUNGS[r["id"]]["jump"] and (rid is None or r["id"] == rid)]
-
-
-def pm_pending(recs):
-    """The latest ring-carrying jump run that nobody read back yet (D2: unless waived with `confirm skip-pm0`). None if nothing pends."""
-    src = pm_sources(recs)
-    if not src:
-        return None
-    s = src[-1]
-    done = [r for r in recs if r["kind"] == "auto" and r["id"].startswith("PM") and r["f"].get("source") == s["id"] and r["ts"] >= s["ts"]]
-    if done:
-        return None
-    if s["id"] == "D2" and confirm_state(recs, "skip-pm0") == "CONFIRMED":
-        return None
-    return s
-
-
-def pm_record_id(sid):
-    return "PM0" if sid == "D2" else "PM-" + sid
-
-
-def cmd_postmortem(a, bundle, outdir):
-    dry = a.dry_run
-    recs = parse_results(results_path(outdir, dry))
-    src = pm_sources(recs, getattr(a, "rung", None))
-    base = getattr(a, "pmlog_base", None)
-    if base is None:
-        if not src:
-            say("postmortem: no recorded jump run set up a ring (no 'pmlog-base' in %s). Run a rung with --pmlog first, or pass --pmlog-base 0x<addr> "
-                "(the jump run printed 'POSTMORTEM base 0x...')." % results_path(outdir, dry))
-            return EX_PRECOND
-        base = int(src[-1]["f"]["pmlog-base"], 0)
-    sid = src[-1]["id"] if src else (getattr(a, "rung", None) or "manual")
-    pid = pm_record_id(sid)
-    host, py, env = host_env()
-    dev = os.environ.get("M1N1DEVICE")
-    if not dry and (not dev or not os.path.exists(dev)):
-        say("M1N1DEVICE missing or not a device (%s): the Mac must be in m1n1 proxy mode again (day 3 section 4), then ls /dev/cu.usbmodem*, export M1N1DEVICE=..." % dev)
-        return EX_PRECOND
-    say("=" * 100)
-    say("%s - post-mortem log of the %s run (ring at 0x%x)%s" % (pid, sid, base, "   [DRY RUN]" if dry else ""))
-    say("=" * 100)
-    say("Il Mac deve essere tornato in modalita' proxy m1n1 (avvio fresco). Questo comando LEGGE soltanto la RAM: non scrive niente sul Mac.")
-    r = dict(RUNGS["PM0"], args="--postmortem --pmlog-base 0x%x" % base)
-    argv = build_loader_argv(r, a, bundle, py)
-    say("ESEGUO: %s" % " ".join(shlex.quote(x) for x in argv))
-    say("")
-    log_path = os.path.join(outdir, "%s-%s.log" % (datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), pid))
-    text, code, interrupted, _ = run_loader(argv, bundle, env, log_path, False, a.boot_timeout, True, False)
-    result = PM_RESULT.get(code, "ERROR")
-    kept = {"RECOVERED": "yes", "UNVERIFIED": "unverified", "NOLOG": "no", "ERROR": "unknown"}[result]
-    wrote = re.search(r"^POSTMORTEM: \d+ bytes of log \(\d+ lines\) written to (.+?);", text, re.M)       # only a file THIS run wrote (a stale one is never read)
-    pm_txt = wrote.group(1) if wrote else None
-    saved, sm = "-", None
-    if code in (0, 6) and pm_txt and os.path.exists(pm_txt):
-        body = open(pm_txt, "rb").read().decode("utf-8", "replace")
-        sm = pm_summary(body)
-        os.makedirs(outdir, exist_ok=True)
-        saved = os.path.join(outdir, "pmlog.txt")
-        stamped = os.path.join(outdir, "%s-%s-pmlog.txt" % (datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), pid))
-        for dst in (saved, stamped):
-            if os.path.abspath(dst) != os.path.abspath(pm_txt):
-                shutil.copyfile(pm_txt, dst)
-        say("")
-        say("-" * 100)
-        say("POST-MORTEM LOG, last 40 lines of %d (full text: %s, stamped copy %s):" % (sm["lines"], saved, os.path.basename(stamped)))
-        for l in body.splitlines()[-40:]:
-            say("  | " + l)
-        say("-" * 100)
-        say("SUMMARY (%s):" % ("verified" if result == "RECOVERED" else "UNVERIFIED: header CRC bad, the newest line may be missing"))
-        for l in pm_summary_lines(sm):
-            say("  " + l)
-    say("")
-    if result == "RECOVERED":
-        say("RESULT %s: RECOVERED - la DRAM ha mantenuto il log fino al ritorno in m1n1: da ora, dopo OGNI prova fallita, prima `monday.py postmortem`, poi le foto." % pid)
-    elif result == "UNVERIFIED":
-        say("RESULT %s: UNVERIFIED - il log c'e' ma l'intestazione e' danneggiata: e' un indizio, non una prova; le foto restano la fonte." % pid)
-    elif result == "NOLOG":
-        say("RESULT %s: NOLOG - nessun log: la DRAM non l'ha tenuto (o base sbagliata). Da ora solo foto/video, come previsto. Non e' un errore del giorno." % pid)
-    else:
-        say("RESULT %s: ERROR - loader exit %s: %s. Nothing was written on the target; photos only, tell Marco." % (pid, code, EXIT_MEANING.get(code, "unknown")))
-    fields = [("result", result), ("dram-kept", kept), ("source", sid), ("dry-run", "yes" if dry else "no"), ("loader-exit", code),
-              ("pmlog-base", "0x%x" % base), ("log", log_path), ("pmlog-file", saved)]
-    for l in text.splitlines():
-        if l.startswith("POSTMORTEM: header:"):
-            fields.append(("header", l[len("POSTMORTEM: header: "):]))
-    if sm:
-        fields += [("lines", sm["lines"]), ("last-checkpoint", sm["last_checkpoint"] or "none"), ("fatal-lines", len(sm["fatal"])),
-                   ("cpu-on-accepted", "%d %s" % (len(sm["cpu_on_ok"]), sm["cpu_on_ok"])), ("cpu-on-failed", len(sm["cpu_on_failed"])),
-                   ("stats-lines", sm["stats"]), ("hold-line", "yes" if sm["hold"] else "no")]
-        if sm["fatal"]:
-            fields.append(("fatal-last", sm["fatal"][-1][:140]))
-        if sm["sgi_line"]:
-            fields.append(("sgi-stats", sm["sgi_line"][:140]))
-    append_record(results_path(outdir, dry), pid, "auto", fields)
-    return EX_OK if result in ("RECOVERED", "NOLOG", "UNVERIFIED") else EX_FAIL
 
 
 def cmd_verdict(a, bundle, outdir):
@@ -1460,8 +1229,8 @@ PREAPPROVED = ("image-ok", "fallback-e4", "fallback-e1")      # decisions 2 and 
 
 def cmd_confirm(a, bundle, outdir):
     key = a.key
-    if key not in ("backup", "image-ok", "rate-ok", "fallback-e4", "fallback-e1", "skip-pm0") and not key.startswith("proceed:"):
-        say("known keys: backup, image-ok, rate-ok, fallback-e4, fallback-e1, skip-pm0, proceed:<ID>")
+    if key not in ("backup", "image-ok", "rate-ok", "fallback-e4", "fallback-e1") and not key.startswith("proceed:"):
+        say("known keys: backup, image-ok, rate-ok, fallback-e4, fallback-e1, proceed:<ID>")
         return EX_USAGE
     if key == "proceed:E" and a.by.strip().lower() != "marco":
         say("proceed:E (waiving a rung E FAIL/ABORT) is Marco's decision only: confirm proceed:E --by Marco, after he said so in chat")
@@ -1489,15 +1258,11 @@ def next_step(recs, kind):
     if confirm_state(recs, "backup") != "CONFIRMED":
         return None, ["Marco's Time Machine backup of today is not confirmed. Ask him; record with: monday.py confirm backup --by Marco"], \
             "Marco, il backup Time Machine di oggi e' finito e verificato? Senza il tuo si', non parte niente."
-    pm = pm_pending(recs)
     un = unresolved(recs)
     if un:
         hint = ""
-        if pm:
-            hint += (" FIRST the post-mortem log, THEN the photos: if the Mac is back in m1n1 (fresh boot), `python3 monday.py postmortem` reads the layer's ring of the %s run "
-                     "(read-only) and prints the last 40 lines + a summary; if PM0 said NOLOG the ring is gone: photos only." % pm["id"])
         if "E" in un:
-            hint += (" Rung E (read-only coprocessor buffer probe, audit H4) found a problem: it BLOCKS day 4 (an overlap with the RAM-disk/ring/layer/EDK2 plan). "
+            hint += (" Rung E (read-only coprocessor buffer probe, audit H4) found a problem: it BLOCKS day 4 (an overlap with the RAM-disk/layer/EDK2 plan). "
                      "Only Marco's explicit word allows going on: `confirm proceed:E --by Marco` (no --force-gate).")
         if "W2" in un:
             hint += (" For a W2 failure that points at the core description or IPIs, day 4 section 6.3 maps the symptom to the declared fallback (W2-e4, then W2-e1); "
@@ -1510,9 +1275,6 @@ def next_step(recs, kind):
     path = [("D0", "D0"), ("D1", "D1"), ("D2", "D2"), ("D4", "D4")]
     for rid, vid in path:
         st = effective(recs, vid)
-        if rid == "D2" and st == "PASS" and effective(recs, "D3") in ("PASS", "FAIL", "ABORT") and pm and pm["id"] == "D2":
-            return "PM0", ["next: PM0 (the post-mortem check, read-only): the Mac must be back in m1n1 proxy mode (power off ~10 s, fresh m1n1 boot, day 3 section 4); "
-                           "then `python3 monday.py postmortem` says whether DRAM kept the ring (RECOVERED) or not (NOLOG). Waive: `confirm skip-pm0 --by Marco`."], RUNGS["PM0"]["intro"].split(". ")[0] + "."
         if rid == "D2" and st == "PASS":
             st3 = effective(recs, "D3")
             if st3 == "NONE":
@@ -1520,19 +1282,18 @@ def next_step(recs, kind):
                     "Aspetto la foto finale con le barre e i dieci riquadri."
             st = st3
         if st == "PENDING":
-            return None, ["%s ran with an automatic PASS: read the photos/video and record the verdict(s): %s%s" % (rid, " ".join("verdict %s ..." % v for v in RUNGS[rid]["verdicts"]),
-                                                                                                        ("; then PM0: bring the Mac back to m1n1 and `monday.py postmortem`" if pm and pm["id"] == rid == "D2" else ""))], \
+            return None, ["%s ran with an automatic PASS: read the photos/video and record the verdict(s): %s" % (rid, " ".join("verdict %s ..." % v for v in RUNGS[rid]["verdicts"]))], \
                 "Aspetto le foto: mandatemi il video e la foto finale."
         if st != "PASS":
             return rid, ["next: %s (%s)" % (rid, RUNGS[rid]["title"])], RUNGS[rid]["intro"].split(". ")[0] + "."
     # rung E (read-only buffer probe, audit H4) is mandatory before any W rung (Marco, 2026-11-15, decision 6)
     es = e_state(recs)
     if es == "PENDING":
-        return None, ["Rung E ran: read the report (ehw2-out.txt; audit H4: do any SART/coprocessor buffer ranges overlap the RAM-disk, ring, layer or EDK2 blocks? 'OVERLAPS guest RAM' marks) "
+        return None, ["Rung E ran: read the report (ehw2-out.txt; audit H4: do any SART/coprocessor buffer ranges overlap the RAM-disk, layer or EDK2 blocks? 'OVERLAPS guest RAM' marks) "
                       "and record: monday.py verdict E PASS|FAIL --note \"...\". An overlap is a FAIL: stop and tell Marco."], "Aspetto che legga il rapporto del rung E."
     if es not in ("PASS", "PROCEEDED"):
         return "E", ["next: E (read-only coprocessor buffer probe, ehw2): MANDATORY before W1a / any W rung (Marco, 2026-11-15). Needs the Mac in m1n1 proxy mode, writes nothing. "
-                     "If it finds an overlap with the RAM-disk/ring/layer/EDK2 plan: stop."], RUNGS["E"]["intro"]
+                     "If it finds an overlap with the RAM-disk/layer/EDK2 plan: stop."], RUNGS["E"]["intro"]
     # day 3 gate passed (D0-D4): day 4 only with the image OK from Marco
     if kind != "day4":
         return None, ["D0-D4 are PASS: the day-3 gate for Windows is open. Switch to the day-4 bundle folder (the one with winram/), `confirm image-ok` (WG-2), then `next` again. "
@@ -1577,9 +1338,7 @@ def cmd_next(a, bundle, outdir):
         say("backup=%s image-ok=%s rate=%s E=%s" % (confirm_state(recs, "backup"), confirm_state(recs, "image-ok"), rate_state(recs), e_state(recs)))
     for l in lines:
         say("NEXT: " + l)
-    if rid == "PM0":
-        say("RUN:  python3 monday.py postmortem")
-    elif rid:
+    if rid:
         say("RUN:  python3 monday.py rung %s%s" % (rid, " --marco-go" if RUNGS[rid]["jump"] else ""))
     say("SAY (Italiano): %s" % it)
     return EX_OK
@@ -1603,15 +1362,11 @@ def build_parser():
     p.add_argument("--no-record", action="store_true")
     sub.add_parser("list")
     p = sub.add_parser("rung", parents=[common]); p.add_argument("rung_id")
-    p.add_argument("--no-reuse", action="store_true", help="never add --ramdisk-reuse (T16l), even after an earlier transfer")
     p.add_argument("--marco-go", action="store_true", help="Marco said go in chat for THIS jump (needed on a real device)")
     p.add_argument("--force-gate", metavar="REASON", help="bypass a failed gate (recorded); never bypasses the backup/image confirmations")
     p.add_argument("--force-bundle", action="store_true"); p.add_argument("--m1n1")
     p.add_argument("--loader", help=argparse.SUPPRESS)
     p.add_argument("--boot-timeout", type=int, default=40); p.add_argument("--quiet", action="store_true", help="print only the important loader lines (the full output is in the log)")
-    p = sub.add_parser("postmortem", parents=[common]); p.add_argument("--rung", help="the jump rung whose ring to read (default: the latest run with a ring)")
-    p.add_argument("--pmlog-base", type=lambda x: int(x, 0), help="read this base instead of the one recorded in the results")
-    p.add_argument("--m1n1"); p.add_argument("--loader", help=argparse.SUPPRESS); p.add_argument("--boot-timeout", type=int, default=40)
     p = sub.add_parser("photos"); p.add_argument("rung_id")
     p = sub.add_parser("verdict", parents=[common]); p.add_argument("id"); p.add_argument("result", choices=["PASS", "FAIL", "ABORT", "UNREADABLE"])
     p.add_argument("--note"); p.add_argument("--by", default="Claude")
@@ -1625,7 +1380,7 @@ def main(argv=None):
     bundle = os.path.abspath(a.bundle)
     outdir = os.path.abspath(a.out or os.environ.get("MONDAY_OUT") or os.path.join(bundle, "out", "monday"))
     fn = {"preflight": cmd_preflight, "list": cmd_list, "rung": cmd_rung, "photos": cmd_photos, "verdict": cmd_verdict,
-          "confirm": cmd_confirm, "next": cmd_next, "postmortem": cmd_postmortem}[a.cmd]
+          "confirm": cmd_confirm, "next": cmd_next}[a.cmd]
     return fn(a, bundle, outdir)
 
 

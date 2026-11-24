@@ -176,25 +176,24 @@ M1=(--m1n1 "$HOSTDIR/work/m1n1-main")
 python3 watari-load.py --ramdisk-test 64 --dry-run "${M1[@]}"                      # W1 (a)
 python3 watari-load.py --ramdisk-test 64 --no-data-csums --dry-run "${M1[@]}"      # W1 (a), second measurement
 python3 watari-load.py --rung D0 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --no-smp --dry-run "${M1[@]}"          # optional preview
-python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --dry-run --pmlog --args wel2.hold=1 "${M1[@]}"    # W1 (c)
-python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --cpuif trap-notc --smp --go --dry-run --pmlog --args wel2.hold=1 "${M1[@]}"   # W2/W3 with day 3's D4 flags
-python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb guest --go --dry-run --pmlog --args wel2.hold=1 "${M1[@]}"   # optional: full panel
+python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --dry-run --args wel2.hold=1 "${M1[@]}"    # W1 (c)
+python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --cpuif trap-notc --smp --go --dry-run --args wel2.hold=1 "${M1[@]}"   # W2/W3 with day 3's D4 flags
+python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb guest --go --dry-run --args wel2.hold=1 "${M1[@]}"   # optional: full panel
 # only if the bundle carries the declared fallbacks (section 6.3), same shape as W2; "bundle OK: 56 files match SHA256SUMS" then:
-python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go --dry-run --cpuif trap-notc --smp --pmlog --args wel2.hold=1 "${M1[@]}"      # fallback e4 (secondaries=True)
-python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go --dry-run --cpuif trap-notc --no-smp --pmlog --args wel2.hold=1 "${M1[@]}"   # fallback e1 (secondaries=False)
+python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go --dry-run --cpuif trap-notc --smp --args wel2.hold=1 "${M1[@]}"      # fallback e4 (secondaries=True)
+python3 watari-load.py --rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go --dry-run --cpuif trap-notc --no-smp --args wel2.hold=1 "${M1[@]}"   # fallback e1 (secondaries=False)
 ```
 
-The two fallback lines were run with `--dry-run` on 2026-11-15 against the rehearsal bundle `$WATARI_DATA/rehearsal-n5/day4-fb/bundle` (56 files in `SHA256SUMS` with `monday.py` and the T16j header, all OK), both exit 0 with `BLOCK CHECK: PASS`, `edk2=WATARI_M1_EFI-e4.fd` / `-e1.fd`, `secondaries=True` / `False`, and the boot arguments of W2 unchanged (`wel2.cpuif=trap-notc wel2.guest=0x874000000 wel2.ramdisk=0x842000000,0x2ca00000 wel2.pmlog=0x872000000,0x200000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1`) **[verified: dry run]**; a name that is not in the bundle (`WATARI_M1_EFI-e9.fd`) exits 2 with "not listed in SHA256SUMS" **[verified]**.
+The two fallback lines were run with `--dry-run` on 2026-11-15 against the rehearsal bundle `$WATARI_DATA/rehearsal-n5/day4-fb/bundle` (56 files in `SHA256SUMS` with `monday.py` and the T16j header, all OK), both exit 0 with `BLOCK CHECK: PASS`, `edk2=WATARI_M1_EFI-e4.fd` / `-e1.fd`, `secondaries=True` / `False`, and the boot arguments of W2 unchanged (`wel2.cpuif=trap-notc wel2.guest=0x874000000 wel2.ramdisk=0x842000000,0x2ca00000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1`) **[verified: dry run]**; a name that is not in the bundle (`WATARI_M1_EFI-e9.fd`) exits 2 with "not listed in SHA256SUMS" **[verified]**.
 
 Claude checks, in each output (all **[verified: dry run, image 747 634 688 bytes]**):
 - `bundle OK: 52 files match SHA256SUMS (<folder>)` (a day-4 bundle without fallbacks; **56** with `--fallback-efi e4=... e1=...`: the two firmware files and their two manifests; 51 and 55 before the T16j header `wel2_pmlog.h` joined `fdt-dump-src/`, 50 and 54 before `monday.py` joined the bundle. Counted on the rehearsal bundles of 2026-11-15 **[verified]**; any later change may move it, what matters is OK).
 - `RAMDISK PLAN: winram.img: 747634688 bytes (713.0 MiB), sha256 09e0e9c6be125a55 (matches its sidecar), crc32 0xe3eb84c7`, then `block 748683264 bytes (714.0 MiB: image + 4 KiB trailer at the end, rounded to 1 MiB), 32 MB aligned, allocated first`, `45 slices of 16 MiB (sample read-back each); heap need <= 864 MiB of the proxy heap's 1024 MiB` and `transfer time at 1 / 3 / 10 MB/s: 12 min 28 s / 4 min 09 s / 1 min 15 s [hypothesis: the rate is unmeasured, run --ramdisk-test first]`. A different image gives different numbers; a SHA/size mismatch with the sidecar is an exit 2 before anything else.
 - The `boot arguments:` line of the W1/W2 jumps, with `wel2.ramdisk=` right after `wel2.guest=` (the addresses of a dry run are fake; on hardware they come from m1n1's heap, but the **size is fixed**):
-  - W1 (c): `"wel2.cpuif=trap wel2.guest=0x874000000 wel2.ramdisk=0x842000000,0x2ca00000 wel2.pmlog=0x872000000,0x200000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1"`
-  - W2/W3: `"wel2.cpuif=trap-notc wel2.guest=... wel2.ramdisk=...,0x2ca00000 wel2.pmlog=0x<ring>,0x200000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1"`
+  - W1 (c): `"wel2.cpuif=trap wel2.guest=0x874000000 wel2.ramdisk=0x842000000,0x2ca00000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1"`
+  - W2/W3: `"wel2.cpuif=trap-notc wel2.guest=... wel2.ramdisk=...,0x2ca00000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1"`
   - `--fb guest` variant: the same with `wel2.fb=guest`.
   `0x2ca00000` = 748 683 264 bytes = the block (image + trailer), not the image size **[verified: dry run, loader code]**.
-  `wel2.pmlog=0x<ring>,0x200000` (T16j): the ring sits at the start of the unwritten spacer block (between the layer and EDK2 blocks, 32 MB aligned), printed as `PMLOG  region 0x...` and `POSTMORTEM base 0x...`; `BLOCK CHECK` lists it as `pmlog block`. **Not** right after the EDK2 block: the layer's placement rule needs 64 MB of the entry's range above the FDT, and a ring there fails `GUEST FDT CHECK` with `wel2_gfdt_place code 5` (found by this rehearsal; fixed in the loader).
 - `RAMDISK written: 747634688 bytes in <t> s (<rate> MB/s), trailer at 0x... (crc32 0xe3eb84c7)`, `BLOCK CHECK: PASS`, `GUEST FDT CHECK: PASS (placement rule of the layer, builder accepted)`, `kboot_boot(0x...) ... (USB goes away now; a timeout is expected)`, `handed over. Watch the screen (README-m1-payload.md); L1: the Mac restarts within about a second.` (the last sentence is the loader's generic text and does **not** apply to the EDK2 rungs: with `wel2.hold=1` the Mac does not restart).
 - **The preview of the carve**: with the day-4 bundle's `gfdt_dump` the loader runs `gfdt_dump ... --ramdisk 0x<base>,0x<size>` and a placement the layer would refuse fails the check. In an older bundle (before T21a) the line `NOTE: this gfdt_dump has no --ramdisk option (T21a adds it): the carve of the ramdisk out of /memory is NOT previewed here` appeared **[verified: dry run]**; if it appears on the day, the bundle is wrong (WG-5): stop.
 - In a dry run `framebuffer none`, `mode none` and `wel2.fb=band: the layer's plan fails (no framebuffer, ...)` are normal (the dry run uses the unmodified DTB); on the target the plan must read `mode band, band rows 360, guest rows 1240` as in day 3 D0.
@@ -256,9 +255,7 @@ Exactly day 3 section 4 (backup confirmation once per day, cable, tethered volum
 
 In this document `wl <name> <loader arguments>` is day 3's function, run from `$HOSTDIR/work/m3a-payload-w1`.
 
-**Post-mortem log (T16j).** Every day-4 jump rung (W1c, W2, W2g, W2-e4, W2-e1) carries `--pmlog` (decision and reasons: day 3, section 5, "PM0"): the layer keeps its console text in a 2 MiB ring in RAM (so EDK2 range after it stays 2 MB aligned) (at the start of the unwritten spacer block between the layer and EDK2 blocks: no extra block, so the heap need and every address are the ones `RAMDISK PLAN`/`BLOCK CHECK` printed). Whether the ring survives the way back to m1n1 is measured by day 3's PM0; if PM0 said `NOLOG`, ignore this paragraph.
-
-**After a failure: postmortem first, then photos.** A W1c/W2 run that ends FAIL, ABORT, frozen or restarted: (1) the abort photo of the held/frozen screen first (P-f; the only evidence if PM0 was NOLOG), (2) power off (~10 s), boot the tethered volume (this section), (3) **before sending any image again**: `python3 monday.py postmortem` (by hand `wl PM-<rung> --postmortem`, base from `out/pmlog-base.json`): it only reads RAM, prints the last 40 lines and a summary (last checkpoint, `FATAL`/halted lines, `PSCI CPU_ON cpu <n> accepted` count, `ICC_SGI1R` stats), and records `PM-W2` in `results.md`; (4) only then transcribe the photos, with the ring's last checkpoint and last line next to them: they tell which row of 6.1 and 6.3 applies (for instance the last `CPU_ON cpu <n> accepted` before a freeze). A new `--pmlog` jump overwrites the ring. **Say to Ciani (Italian):** "Prima di rifare qualsiasi prova leggiamo il registro in memoria: spegni tenendo premuto il tasto circa 10 secondi, riavvia da 'Tethered boot', e poi lo leggo io (e' solo lettura, non scrive niente sul Mac)." 
+RAM is volatile: nothing is read back after a restart; evidence = screen photos/video. After a failed W1c/W2 run: the photo of the held/frozen screen first (P-f), then power off (~10 s), boot the tethered volume, and transcribe from the photos and the video: they tell which row of 6.1 and 6.3 applies.
 
 ---
 
@@ -303,7 +300,7 @@ It writes the whole image too (RAM), reads samples back, applies the whole-range
 Fresh m1n1 boot (section 4). Claude shows the command and asks Marco for "go".
 
 ```sh
-wl W1c-jump --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --pmlog --args wel2.hold=1
+wl W1c-jump --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --args wel2.hold=1
 ```
 
 `--no-smp` is the default for D2 (EDK2 uses one core). `wel2.hold=1` is **kept on every Windows rung**: if Windows bugchecks and restarts, the restart goes through PSCI `SYSTEM_RESET` and the hold keeps the last screen instead of rebooting into macOS **[hypothesis: Windows' auto-restart after a bugcheck reaches PSCI; the hold then shows `HOLD: TAKE PHOTO` in the band and `Watari EL2: HOLD: take the photo, then hold the power button` in the log; **without** the hold, the layer's `PSCI SYSTEM_RESET -> watchdog (no firmware)` resets the Mac]**.
@@ -332,20 +329,14 @@ wl W1c-jump --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb b
 **Command** (the day-3 D4 flags, which Windows needs to bring up the seven other cores: `CPU_ON` of a core m1n1 never started cannot succeed **[hypothesis]**):
 
 ```sh
-wl W2-jump --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --pmlog --args wel2.hold=1
+wl W2-jump --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --args wel2.hold=1
 ```
 
 Use the cpuif that D3/D4 settled (`trap` if only `trap` passed: `--cpuif trap` is the default, then drop the flag).
 
-**RAM-disk reuse across attempts (T16l).** After the first complete transfer of the session, every later jump with the RAM disk (a retry of W1c, W2, W2g, a fallback) can skip the ~700 MB transfer **if DRAM kept the image across the reset** (Monday's PM0/day-3 check says whether DRAM survives; if it does not, the loader finds no trailer and transfers normally, nothing is lost). Add `--ramdisk-reuse` to the same command (`monday.py` does it on its own from the second attempt, `--no-reuse` switches it off; the table commands above stay as written):
+Every attempt transfers the whole image again after a fresh m1n1 boot. RAM is volatile: nothing is read back after a restart; evidence = screen photos/video.
 
-```
-wl W2-retry --rung D2 --edk2 WATARI_M1_EFI.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --pmlog --ramdisk-reuse --args wel2.hold=1
-```
-
-The loader (fresh m1n1 boot, same heap order, so the block lands at the same address; it must equal `out/ramdisk-block.json`, written after every complete transfer) reads the 4 KiB trailer back over the proxy (magic, size, CRC-32, SHA-256 must equal the sidecar's) plus three 4 KiB samples (start, middle, end) and compares them with the file. All equal: it prints `REUSING image in DRAM, not verified by the loader; EDK2's CRC-32 check will verify it` and `RAMDISK reused: ...`, and writes nothing into the block. Any doubt (no record, another address, a trailer field, a sample): `RAMDISK REUSE refused: <reason> -> transferring the image normally`; the decision is in `out/ramdisk-reuse.json`. **The real guard is EDK2's CRC-32 over the whole image** (`WatariM1RamDiskDxe`): a bit flipped outside the samples is caught there (RAM disk not registered, bootmgr finds no disk): then retransfer **without** `--ramdisk-reuse`. A reuse run is not a speed measurement (`transfer-seconds` is absent). **Say to Ciani (Italian):** "Questa volta non rimando i 700 MB: se la memoria li ha ancora dopo il riavvio, il Mac riparte in pochi secondi invece di aspettare il trasferimento; se non li trova li rimando io."
-
-**If W2 fails in the multi-core description** (read the post-mortem ring first, section 4) (stop `0xA0`, a freeze after the `CPU_ON` of a P core, an IPI storm): section 6.3 maps the symptom to the declared fallback firmware (`e4`, then `e1`), which needs Marco's OK and a fresh transfer.
+**If W2 fails in the multi-core description** (stop `0xA0`, a freeze after the `CPU_ON` of a P core, an IPI storm): section 6.3 maps the symptom to the declared fallback firmware (`e4`, then `e1`), which needs Marco's OK and a fresh transfer.
 
 **What to watch (continuous video, a photo every 2 minutes while the logo stays, the stopwatch in frame):**
 
@@ -447,9 +438,9 @@ The bench does not show the M1's AIC/FIQ path or real timing; it proves that the
 
 ```sh
 # e4: the four E cores in the tables. m1n1 still starts all eight cores (--smp): the layer's CPU_ON path needs the secondaries in the spin table
-wl W2-e4 --rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --pmlog --args wel2.hold=1
+wl W2-e4 --rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --smp --args wel2.hold=1
 # e1: one core in the tables. No secondaries (--no-smp, the D2 default): m1n1 does not start the other seven and its tree then lists one cpu (the loader's own comment on `dt_set_cpus`) **[hypothesis on the M1]**
-wl W2-e1 --rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --no-smp --pmlog --args wel2.hold=1
+wl W2-e1 --rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go --cpuif trap-notc --no-smp --args wel2.hold=1
 ```
 
 **What changes in the photos.** With e4 the ticker shows `PSCI CPU_ON cpu 1..3 accepted` and **no** cpu 4..7 line; with e1 no `CPU_ON` line at all and `vCPU target mask = 0x...01` only; the PASS criteria of W2/W3 are the same, the time limits too (a single core under real load is slower than eight: allow the 20 minutes of W2 and stretch W3 by half **[hypothesis]**). The dry-run lines for both are in section 2.3; the loader prints which file it took (`edk2=WATARI_M1_EFI-e4.fd`), copy that line into the notes so a photo can never be confused with a main-firmware run.

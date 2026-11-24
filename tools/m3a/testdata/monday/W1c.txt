@@ -59,9 +59,7 @@ RAMDISK written: 747634688 bytes in 0 s (1782.90 MB/s), trailer at 0x86e9ff000 (
 LAYER  wel2-chain.bin          163936 bytes at 0x870000000  sha256 12133934b84ee998
 SPACER 32 MB aligned block at 0x872000000 (not written: keeps D2's addresses equal to D0's)
 EDK2   WATARI_M1_EFI.fd       3145728 bytes at 0x874000000  sha256 9029516f3e0c5cff
-PMLOG  region 0x872000000..0x872200000 (2048 KiB, zeroed, start of the spacer block: D0's addresses unchanged, EDK2's range whole)
-POSTMORTEM base 0x872000000 (dry run: not recorded in <R>/m-day4/bundle/out/pmlog-base.json)
-boot arguments: "wel2.cpuif=trap wel2.guest=0x874000000 wel2.ramdisk=0x842000000,0x2ca00000 wel2.pmlog=0x872000000,0x200000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1"
+boot arguments: "wel2.cpuif=trap wel2.guest=0x874000000 wel2.ramdisk=0x842000000,0x2ca00000 wel2.abi=fdt wel2.gfdt=build wel2.fb=band wel2.hold=1"
 kboot_prepare_dt OK
   m1n1: FDT prepared at 0x840000000
 prepared FDT: 2387 bytes at 0x840000000, saved to <R>/m-day4/bundle/out/prepared-fdt.dtb (host folder only: it holds the board serial number;
@@ -84,27 +82,25 @@ aic 0 base=0x23b100000 size=0xc000 end=0x23b10c000
 uart s5l base=0x235200000 size=0x4000 chosen_by=stdout-path/serial0
 wdt base=0x23d2b0000 size=0x4000
 framebuffer none
-== block placement check (host side): are the ramdisk/layer/edk2/pmlog blocks wholly inside usable RAM, apart from each other, the prepared FDT and the framebuffer? ==
+== block placement check (host side): are the ramdisk/layer/edk2 blocks wholly inside usable RAM, apart from each other, the prepared FDT and the framebuffer? ==
   ramdisk block 0x842000000..0x86ea00000 : PASS (inside usable range 0x800000000..0xa00000000)
   layer block 0x870000000..0x872000000 : PASS (inside usable range 0x800000000..0xa00000000)
   edk2  block 0x874000000..0x876000000 : PASS (inside usable range 0x800000000..0xa00000000)
-  pmlog block 0x872000000..0x872200000 : PASS (inside usable range 0x800000000..0xa00000000)
 (dry run: the fake addresses are not m1n1's heap; this only exercises the check)
 BLOCK CHECK: PASS
 == gfdt_dump (the guest FDT the layer would build; no serial number, MAC or seed can appear) ==
-// pmlog at 0x872000000, 0x200000 bytes (cut out of /memory)
 // ramdisk at 0x842000000, 0x2ca00000 bytes (cut out of /memory)
 // guest image at 0x874000000, image end 0x874300000, guest FDT at 0x874300000
 // wel2.fb=band: the layer's plan fails (no framebuffer, not whole 16 KB pages, or no room for the band): it keeps the panel, no node
 // framebuffer plan (16 KB granule): mode none, band rows 0, guest rows 0, guest base 0x0, guest bytes 0x0
-// guest FDT: 2304 bytes (limit 32704), 3 /memory range(s), 8 core(s), wel2.fb=band
+// guest FDT: 2208 bytes (limit 32704), 3 /memory range(s), 8 core(s), wel2.fb=band
 /:
   #address-cells = <0x2>;
   #size-cells = <0x2>;
   compatible = "watari,el2-guest";
-  memory@872100000:
+  memory@872000000:
     device_type = "memory";
-    reg = <0x8 0x72100000 0x1 0x8df00000>;
+    reg = <0x8 0x72000000 0x1 0x8e000000>;
   memory@800000000:
     device_type = "memory";
     reg = <0x8 0x0 0x0 0x42000000>;
@@ -120,10 +116,6 @@ BLOCK CHECK: PASS
       reg = <0x8 0x42000000 0x0 0x2ca00000>;
       no-map;
       watari,format = "disk-image";
-    pmlog@872000000:
-      compatible = "watari,pmlog";
-      reg = <0x8 0x72000000 0x0 0x100000>;
-      no-map;
   psci:
     compatible = "arm,psci-1.0", "arm,psci-0.2";
     method = "hvc";
@@ -199,9 +191,9 @@ BLOCK CHECK: PASS
 	#size-cells = <0x02>;
 	compatible = "watari,el2-guest";
 
-	memory@872100000 {
+	memory@872000000 {
 		device_type = "memory";
-		reg = <0x08 0x72100000 0x01 0x8df00000>;
+		reg = <0x08 0x72000000 0x01 0x8e000000>;
 	};
 
 	memory@800000000 {
@@ -224,12 +216,6 @@ BLOCK CHECK: PASS
 			reg = <0x08 0x42000000 0x00 0x2ca00000>;
 			no-map;
 			watari,format = "disk-image";
-		};
-
-		pmlog@872000000 {
-			compatible = "watari,pmlog";
-			reg = <0x08 0x72000000 0x00 0x100000>;
-			no-map;
 		};
 	};
 
