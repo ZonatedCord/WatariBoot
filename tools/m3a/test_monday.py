@@ -58,6 +58,7 @@ def hardware(text, cores=1, fb="band"):
                       "mode guest, band rows 0, guest rows 1600, guest base 0x8ff000000, guest bytes 0x3e8000")
     t = t.replace("// framebuffer plan", "// framebuffer of the prepared FDT: 2560x1600 stride=10240 (equals 4 x width) format=x2r10g10b10\n// framebuffer plan", 1)
     t = re.sub(r"8 core\(s\)", "%d core(s)" % cores, t)
+    t = t.replace("0xf 0x10000000 0x0 0x100000>", "0xf 0x10000000 0x0 0x%x>" % (0x20000 * cores))      # F-40 (2): one GICR frame of 0x20000 per core
     return t + "\n"
 
 
@@ -572,6 +573,147 @@ wf("WATARI_M1_EFI-e4.fd.build.txt", man("j293-e4", "e4")); check(mo.check_fallba
 for label, m in (("wrong model", man("j293", "e4")), ("bench", man("j293-e4", "e4", bench="1")), ("other tag", man("j293-e4", "t16be4")),
                  ("dirty", man("j293-e4", "e4", dirty="1")), ("sha mismatch", man("j293-e4", "e4", sha="0" * 64))):
     wf("WATARI_M1_EFI-e4.fd.build.txt", m); check(mo.check_fallback_fw(fb, "e4") is not None, "fallback refused: %s" % label)
+
+print("== F-40: hardware-shaped checks (one core, minute-long transfer, property names) ==")
+hw1 = fixture("W1c-hw1core")
+ov, res, f = run("W1c", hw1, dry=False)
+check(ov == "PASS" and not failing(res), "W1c hardware fixture (one core, GICR 0x20000, 'in 1 min 07 s'): PASS %s" % failing(res))
+check(f.get("transfer_seconds") == 67 and f.get("cores") == 1, "'in 1 min 07 s' is recorded as transfer-seconds 67 (the reuse logic needs it): %r" % f.get("transfer_seconds"))
+check(any(n == "GIC node" and "0x20000" in d for s, n, d in res), "the GIC check names the expected GICR size for one core")
+ov, res, f = run("W1c", fixture("W1c"))
+check(ov == "PASS" and f.get("transfer_seconds") == 0, "the short form 'in 0 s' is still accepted")
+for what, line, secs in (("in 45 s", "in 45 s", 45), ("in 12 min 28 s", "in 12 min 28 s", 748), ("in 1 min 00 s", "in 1 min 00 s", 60)):
+    ov, res, f = run("W1c", re.sub(r"bytes in [^(]+\(", "bytes in " + line.split("in ", 1)[1] + " (", hw1), dry=False)
+    check(ov == "PASS" and f.get("transfer_seconds") == secs, "RAMDISK written %s -> transfer-seconds %d" % (what, secs))
+ov, res, f = run("W1c", hw1.replace("bytes in 1 min 07 s (", "bytes in about a minute ("), dry=False)
+check(ov == "FAIL" and "RAMDISK written" in failing(res), "an unreadable transfer time still FAILs (no silent pass)")
+ov, res, f = run("W1c", hw1.replace("(crc32 0xe3eb84c7)", "(crc32 0xdeadbeef)", 1).replace("crc32 0xe3eb84c7, no", "x"), dry=False)
+check(ov == "FAIL", "a crc mismatch on the minute-long form FAILs as before")
+ov, res, f = run("W1c", hw1, dry=False)
+check(mo.reuse_wanted([dict(id="W1c", kind="auto", ts="t", f={"transfer-seconds": str(f["transfer_seconds"])})], mo.RUNGS["W2"], type("A", (), {"no_reuse": False})())[0] is True,
+      "with the recorded 67 s the RAM-disk reuse is proposed for the next jump")
+# the GIC node follows the core count
+check(failing(run("W1c", hw1.replace("0xf 0x10000000 0x0 0x20000>", "0xf 0x10000000 0x0 0x100000>", 1), dry=False)[1]) == ["GIC node"], "one core with the eight-core GICR size (0x100000) -> only 'GIC node' FAILs")
+w8 = hardware(fixture("W2"), cores=8)
+check(run("W2", w8, dry=False)[0] == "PASS" and "0x0 0x100000>" in w8, "eight cores: GICR 0x100000 still passes")
+check(failing(run("W2", w8.replace("0xf 0x10000000 0x0 0x100000>", "0xf 0x10000000 0x0 0x20000>", 1), dry=False)[1]) == ["GIC node"], "eight cores with the one-core GICR size -> only 'GIC node' FAILs")
+check(failing(run("W2", w8.replace("8 core(s)", "4 core(s)"), dry=False)[1]) != [], "a core count that is neither expected nor consistent with the GICR still FAILs")
+# log hygiene: names are fine, values are not (all values below are invented)
+E_HW = fixture("E-hw")
+check("mac-address-bluetooth0" in E_HW and "serial-number[17]" in E_HW, "E fixture carries the property NAMES line (invented lengths)")
+ov, res, _ = mo.run_checks(mo.RUNGS["E"], E_HW, 0, False)
+check(ov == "PASS" and "log hygiene" not in failing(res), "rung E: property NAMES in the names-only line do not fail log hygiene %s" % failing(res))
+for what, t in (("a dumped mac-address value", E_HW + "  mac-address = [02 00 5e 10 00 01]\n"),
+                ("a dumped serial-number value", E_HW + '  serial-number = "FAKE000SN"\n'),
+                ("a local-mac-address line", E_HW + "local-mac-address = <0x0 0x0>\n"),
+                ("a MAC-shaped value elsewhere", E_HW + "  adapter 02:00:5e:10:00:01 up\n"),
+                ("a MAC-shaped value with dashes", E_HW + "  adapter 02-00-5E-10-00-01 up\n"),
+                ("a MAC value inside the names-only line", E_HW.replace("fake-chosen[3]", "fake-chosen[3], 02:00:5e:10:00:01")),
+                ("a value glued to a name in the names-only line", E_HW.replace("serial-number[17]", "serial-number=FAKE000SN")),
+                ("a second serial-number name outside the names-only line", E_HW + "serial-number\n")):
+    ov, res, _ = mo.run_checks(mo.RUNGS["E"], t, 0, False)
+    check(ov == "FAIL" and "log hygiene" in failing(res), "rung E log hygiene still FAILs on %s" % what)
+check(mo.hygiene_hit("  /chosen property names (values NOT printed): a[1], b[int]") is None and mo.hygiene_hit("clean line\n") is None, "hygiene_hit: clean text is None")
+check(mo.hygiene_hit("a 12:34:56 clock and 1:2:3:4:5 and 00:11:22:33:44") is None, "hygiene_hit: clock times and short colon lists are not MACs")
+
+print("== W1c-e1 (W1c with the j293-e1 firmware) ==")
+r1 = mo.RUNGS["W1c-e1"]
+check(a("W1c-e1") == a("W1c").replace("WATARI_M1_EFI.fd", "WATARI_M1_EFI-e1.fd") and a("W1c-e1").count("WATARI_M1_EFI-e1.fd") == 1,
+      "W1c-e1 is W1c with the firmware file as the ONLY change: %s" % a("W1c-e1"))
+check("--cpuif" not in a("W1c-e1") and "--smp" not in a("W1c-e1") and "--pmlog --args wel2.hold=1" in a("W1c-e1") and "--ramdisk winram/winram.img" in a("W1c-e1"),
+      "W1c-e1: cpuif trap, no smp, same --pmlog and wel2.hold=1, RAM disk")
+check(r1["jump"] and r1["fallback"] == "e1" and r1["verdicts"] == ["W1c-e1"] and r1["bundle"] == "day4" and "W1c-e1" in mo.ORDER and mo.VERDICT_OWNER["W1c-e1"] == "W1c-e1"
+      and mo.GROUP["W1c-e1"] == "W1c" and "W1c-e1" in mo.REUSE_SRC and not r1["verbatim"] and r1["note"], "W1c-e1 is wired: jump, fallback e1, verdict owner, group, ORDER, REUSE_SRC, derived-with-note")
+check(r1["photos"] in mo.PHOTOS and r1["fresh"], "W1c-e1 has photos and a fresh m1n1 boot")
+gids = [g[0] for g in r1["gate"]]
+check(gids == ["confirm:backup", "confirm:image-ok", "e-gate", "W1a", "rate", "confirm:fallback-e1"], "W1c-e1 gates: backup, image-ok, E, W1a, rate, confirm:fallback-e1 (no D-gate, no W2/W2-e4 failure): %s" % gids)
+check("D3" not in gids and "D4" not in gids and "W2" not in gids and "W2-e4" not in gids and "W1c" not in gids, "W1c-e1 needs no D rung, no W1c and no recorded W2/W2-e4 failure")
+check(all(mo.RUNGS[x]["fallback"] == x[3:] for x in ("W2-e4", "W2-e1")) and all(mo.RUNGS[x]["fallback"] is None for x in ("W1c", "W2", "D2")), "only the fallback rungs carry a fallback tag")
+# gate logic on records of a NEW folder (no D0-D4 recorded)
+nf = tempfile.mkdtemp()
+NF = os.path.join(nf, "results.md")
+for fid in ("backup", "image-ok"):
+    mo.append_record(NF, fid, "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+mo.append_record(NF, "E", "auto", [("result", "PASS")]); mo.append_record(NF, "E", "verdict", [("result", "PASS")])
+mo.append_record(NF, "W1a", "auto", [("result", "PASS"), ("decision", "CONTINUE")])
+g = mo.gate_check(mo.parse_results(NF), r1)
+check(g[0] is False and g[1] == ["confirm:fallback-e1 is NONE (needs CONFIRMED)"] and g[2] == [], "new folder, no D0-D4: the only thing missing is Marco's go e1 (hard)")
+mo.append_record(NF, "fallback-e1", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+check(mo.gate_check(mo.parse_results(NF), r1)[0] is True, "go e1 opens W1c-e1 without any D0-D4, W2 or W2-e4 record")
+ngd = tempfile.mkdtemp()
+mo.append_record(os.path.join(ngd, "results.md"), "backup", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+gw = mo.gate_check(mo.parse_results(os.path.join(ngd, "results.md")), mo.RUNGS["W1a"])
+check(gw[0] is False and any(m.startswith("D3 is NONE") for m in gw[2]) and not any("D3" in m for m in gw[1]),
+      "W1a keeps its D3 gate SOFT: in a fresh folder it needs --force-gate (recorded), unchanged by this change")
+for miss in ("backup", "image-ok", "E", "W1a", "rate"):
+    f2 = tempfile.mkdtemp(); F2 = os.path.join(f2, "results.md")
+    if miss != "backup": mo.append_record(F2, "backup", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+    if miss != "image-ok": mo.append_record(F2, "image-ok", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+    if miss != "E": mo.append_record(F2, "E", "auto", [("result", "PASS")]); mo.append_record(F2, "E", "verdict", [("result", "PASS")])
+    if miss != "W1a": mo.append_record(F2, "W1a", "auto", [("result", "PASS"), ("decision", "CONTINUE" if miss != "rate" else "STOP")])
+    mo.append_record(F2, "fallback-e1", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+    gg = mo.gate_check(mo.parse_results(F2), r1)
+    check(gg[0] is False, "W1c-e1 gate closed when %s is missing" % miss)
+    if miss in ("backup", "image-ok", "E"):
+        check(len(gg[1]) >= 1, "... and the %s gate is HARD (not bypassable)" % miss)
+    else:
+        check(len(gg[2]) >= 1 and not gg[1], "... and the %s gate is SOFT (--force-gate with a reason)" % miss)
+# a go from an earlier day does not count
+sf = tempfile.mkdtemp()
+with open(os.path.join(sf, "results.md"), "w") as fh:
+    fh.write("### fallback-e1 confirm 2020-01-01T10:00:00\n- result: CONFIRMED\n- by: Marco\n\n")
+check(mo.confirm_state(mo.parse_results(os.path.join(sf, "results.md")), "fallback-e1") == "STALE", "a 'go e1' of an earlier day (a reused folder) is STALE, not a go")
+# another group's unresolved FAIL stays a soft stop for W1c-e1; a W1c failure does not block it (same family)
+mo.append_record(NF, "D4", "auto", [("result", "PASS")]); mo.append_record(NF, "D4", "verdict", [("result", "FAIL")])
+gg = mo.gate_check(mo.parse_results(NF), r1)
+check(gg[0] is False and not gg[1] and any("D4 ended FAIL/ABORT" in m for m in gg[2]), "an unresolved D4 FAIL is a soft stop for W1c-e1 (confirm proceed:D4 or --force-gate)")
+mo.append_record(NF, "proceed:D4", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+mo.append_record(NF, "W1c", "auto", [("result", "PASS")]); mo.append_record(NF, "W1c", "verdict", [("result", "FAIL"), ("note", "0xA0")])
+check(mo.gate_check(mo.parse_results(NF), r1)[0] is True, "W1c FAIL (0xA0, the reason for W1c-e1) does not block W1c-e1")
+check(mo.gate_check(mo.parse_results(NF), mo.RUNGS["W2"])[0] is False, "...but it still blocks W2 until Marco says proceed:W1c")
+# end to end through the fake loader, dry run
+b4e = tempfile.mkdtemp()
+os.makedirs(os.path.join(b4e, "winram"))
+with open(os.path.join(b4e, "winram", "winram.img"), "wb") as fh:
+    fh.truncate(SIZE)
+open(os.path.join(b4e, "winram", "winram.img.sha256"), "w").write(SHA16 + "0" * 48 + "  winram.img\n")
+import hashlib as _h2
+open(os.path.join(b4e, "WATARI_M1_EFI.fd"), "wb").write(b"main")
+open(os.path.join(b4e, "WATARI_M1_EFI.fd.build.txt"), "wb").write(b"model=j293\nbench=0\nramdisk_standin=0\nbgr8=1\nbuild_tag=\nbuild_pcd=\ndirty=0\n")
+open(os.path.join(b4e, "WATARI_M1_EFI-e1.fd"), "wb").write(b"e1fw")
+open(os.path.join(b4e, "WATARI_M1_EFI-e1.fd.build.txt"), "wb").write(("model=j293-e1\nbench=0\nramdisk_standin=0\nbgr8=1\nbuild_tag=e1\nbuild_pcd=\ndirty=0\nfd_sha256=%s\n" % _h2.sha256(b"e1fw").hexdigest()).encode())
+o2 = tempfile.mkdtemp()
+O2 = os.path.join(o2, "results-dryrun.md")
+RE1 = lambda *x, **kw: mon(b4e, o2, "rung", "W1c-e1", "--dry-run", "--quiet", "--loader", fake, *x, fixture_name="W1c", **kw)
+code, txt = RE1()
+check(code == mo.EX_GATE and "not bypassable" in txt, "W1c-e1 in a fresh folder: refused (backup)")
+mo.append_record(O2, "backup", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+mo.append_record(O2, "image-ok", "confirm", [("result", "CONFIRMED"), ("by", "Marco")])
+mo.append_record(O2, "E", "auto", [("result", "PASS")]); mo.append_record(O2, "E", "verdict", [("result", "PASS")])
+mo.append_record(O2, "W1a", "auto", [("result", "PASS"), ("decision", "CONTINUE")])
+code, txt = RE1("--force-gate", "x")
+check(code == mo.EX_GATE and "confirm:fallback-e1" in txt and "not bypassable" in txt, "W1c-e1 refused without 'go e1', also with --force-gate")
+check(mon(b4e, o2, "confirm", "fallback-e1", "--by", "Marco", "--note", "go e1 for W1c-e1", "--dry-run")[0] == 0, "confirm fallback-e1 recorded")
+code, txt = RE1()
+check(code == 0 and "RESULT W1c-e1: PASS" in txt and "WATARI_M1_EFI-e1.fd" in txt and "PHOTO CHECKLIST W1c-e1" in txt and "GATE" not in txt,
+      "W1c-e1 runs through the fake loader with no D0-D4 and no force: PASS, firmware e1 in the command, photo checklist printed")
+rec = open(O2).read()
+check("### W1c-e1 auto" in rec and "WATARI_M1_EFI-e1.fd" in rec, "the run is recorded as W1c-e1 with the e1 firmware in its command")
+rc = mo.parse_results(O2)
+check(mo.effective(rc, "W1c-e1") == "PENDING" and mo.effective(rc, "W1c") == "NONE", "automatic PASS is PENDING until the photo verdict; W1c itself is untouched")
+rid, lines, _ = mo.next_step(rc, "day4")
+check(rid is None and "W1c-e1 ran" in " ".join(lines), "next: waits for the W1c-e1 verdict (no other rung offered)")
+check(mon(b4e, o2, "verdict", "W1c-e1", "FAIL", "--note", "0xA0 again", "--dry-run")[0] == 0, "verdict W1c-e1 FAIL (note) accepted")
+check(mo.effective(mo.parse_results(O2), "W1c-e1") == "FAIL" and mo.unresolved(mo.parse_results(O2)) == ["W1c"], "a W1c-e1 FAIL is an unresolved FAIL of the W1c family (confirm proceed:W1c)")
+check(mon(b4e, o2, "verdict", "W1c-e1", "PASS", "--note", "spinner moved for 6 min", "--dry-run")[0] == 0 and mo.effective(mo.parse_results(O2), "W1c-e1") == "PASS", "verdict PASS accepted")
+check([r["id"] for r in mo.pm_sources(rc)] == ["W1c-e1"], "W1c-e1's ring (pmlog-base fact) is a post-mortem source")
+code, txt = mon(b4, o2, "rung", "W1c-e1", "--dry-run", "--quiet", "--loader", fake, "--force-bundle", fixture_name="W1c")
+check(code == mo.EX_PRECOND and "FALLBACK FIRMWARE REFUSED" in txt, "a bundle without the e1 firmware: W1c-e1 refused before the loader")
+open(os.path.join(b4e, "WATARI_M1_EFI-e1.fd"), "wb").write(b"tampered")
+code, txt = RE1()
+check(code == mo.EX_PRECOND and "FALLBACK FIRMWARE REFUSED" in txt and "SHA-256" in txt, "a tampered e1 firmware: W1c-e1 refused (check_fallback_fw)")
+code, txt = mon(b4e, o2, "preflight", "--quick", "--no-record")
+check("declared fallback firmware e1" in txt and "FAIL" in txt, "preflight re-checks the e1 firmware (same check_fallback_fw)")
 
 print("== preflight and the bundle ==")
 code, txt = mon(tempfile.mkdtemp(), out, "preflight", "--quick", "--no-record")
