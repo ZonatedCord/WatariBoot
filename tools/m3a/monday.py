@@ -130,10 +130,10 @@ RUNGS = {}
 
 
 def rung(rid, day, name, args, title, jump=False, verdicts=(), gate=(), minutes="", abort="", intro="", photos="none",
-         verbatim=True, kind="loader", note="", bundle="day3", fresh=False):
+         verbatim=True, kind="loader", note="", bundle="day3", fresh=False, fallback=None):
     RUNGS[rid] = dict(id=rid, day=day, name=name, args=args, title=title, jump=jump, verdicts=list(verdicts or ()),
                       gate=list(gate), minutes=minutes, abort=abort, intro=intro, photos=photos, verbatim=verbatim,
-                      kind=kind, note=note, bundle=bundle, fresh=fresh,
+                      kind=kind, note=note, bundle=bundle, fresh=fresh, fallback=fallback,
                       doc=PROC3 if day == 3 else PROC4)
 
 
@@ -236,17 +236,33 @@ FALLBACKS = {"e4": ("--cpuif trap-notc --smp", "j293-e4"), "e1": ("--cpuif trap-
 rung("W2-e4", 4, "W2-e4", "--rung D2 --edk2 WATARI_M1_EFI-e4.fd --ramdisk winram/winram.img --fb band --go %s --pmlog --args wel2.hold=1" % FALLBACKS["e4"][0],
      "W2 fallback j293-e4 (four E cores in the tables; section 6.3)", jump=True, verdicts=["W2-e4", "W3-e4"],
      gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e4", {"CONFIRMED"})],
-     minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4",
+     minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4", fallback="e4",
      abort="as W2",
      intro="Fallback W2 con il firmware j293-e4 (Windows vede solo i quattro core efficienti): si usa solo dopo un sintomo di W2 che la tabella 6.3 "
            "assegna a e4 e solo se Marco dice 'go e4' in chat. Nuovo avvio di m1n1 e nuovo trasferimento dell'immagine.")
 rung("W2-e1", 4, "W2-e1", "--rung D2 --edk2 WATARI_M1_EFI-e1.fd --ramdisk winram/winram.img --fb band --go %s --pmlog --args wel2.hold=1" % FALLBACKS["e1"][0],
      "W2 fallback j293-e1 (boot core only; section 6.3)", jump=True, verdicts=["W2-e1", "W3-e1"],
      gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("W2", {"FAIL", "ABORT"}), ("W2-e4", {"FAIL", "ABORT"}), ("rate", {"OK"}), ("confirm:fallback-e1", {"CONFIRMED"})],
-     minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4",
+     minutes="transfer + 20-40 min", fresh=True, photos="W2", bundle="day4", fallback="e1",
      abort="as W2",
      intro="Fallback W2 con il firmware j293-e1 (Windows vede un solo core, senza core secondari): si usa solo se e4 ha mostrato lo stesso sintomo "
            "e solo se Marco dice 'go e1' in chat. Nuovo avvio di m1n1 e nuovo trasferimento dell'immagine.")
+
+# W1c-e1 (2026-11-24): W1c's exact command line with ONE change, the firmware file: j293-e1 (ACPI tables of the boot core only). On 2026-11-17 W1c
+# (trap, --no-smp, RAM disk) ended with bugcheck 0xA0 with 8-CPU tables and one started core (F-43); this run changes only the firmware tables.
+# Gates: backup, image-ok, E, W1a PASS, rate OK (as W1c) plus Marco's `confirm fallback-e1` (hard, never bypassable). Unlike W2-e1 it does NOT need
+# a recorded W2 or W2-e4 failure, and it has no D-gate of its own (D0-D4 are not prerequisites of a firmware-tables experiment); W1a's own soft D3 gate
+# stays as it is (a fresh results folder needs `--force-gate "<reason>"` on W1a, recorded; nothing hard is bypassed).
+rung("W1c-e1", 4, "W1c-e1", RUNGS["W1c"]["args"].replace("WATARI_M1_EFI.fd", "WATARI_M1_EFI-e1.fd"),
+     "W1c with the j293-e1 firmware (boot core only in the tables; one change from W1c)", jump=True, verdicts=["W1c-e1"],
+     gate=[G_BACKUP, G_IMAGE, G_E, ("W1a", PASS), ("rate", {"OK"}), ("confirm:fallback-e1", {"CONFIRMED"})],
+     minutes="transfer + 20-40 min from the jump", fresh=True, photos="W2", bundle="day4", fallback="e1", verbatim=False,
+     note="derived from W1c: the same command with `--edk2 WATARI_M1_EFI-e1.fd` (the only change; trap, --no-smp, same --pmlog and wel2.hold=1)",
+     abort="as W2 (10 min with NO change at all; 20 min to a changed screen); bugcheck 0xA0 again = FAIL; red square; heat",
+     intro="W1c-e1: IDENTICO a W1c (stesso trasferimento, trap, un solo core avviato) con UNA sola differenza: il firmware j293-e1, le cui tabelle ACPI descrivono "
+           "soltanto il core di avvio. Il 17 novembre W1c e' finito con il bugcheck 0xA0 con tabelle da 8 CPU e un core: qui cambiano solo le tabelle. "
+           "Serve il 'go e1' di Marco in chat (confirm fallback-e1). PASS = Windows supera il punto dello 0xA0 (spinner per minuti, o Setup). "
+           "Video acceso PRIMA, cronometro nell'inquadratura, una foto ogni 2 minuti.")
 
 # PM0 (T16j): the first [check] of Monday. After D2 (the first EDK2 jump with --pmlog) the Mac is brought back to m1n1 and the layer's
 # post-mortem ring is read: exit 0 = DRAM survived the reset/power-off and the log is recovered (then use it after every later failure);
@@ -287,8 +303,8 @@ for _r in RUNGS.values():
     for _v in _r["verdicts"]:
         VERDICT_OWNER[_v] = _r["id"]
 VERDICT_OWNER["W1c"] = "W1c"
-GROUP = {"D3": "D2", "D4a": "D4", "D4b": "D4", "D5b": "D5", "W2g": "W2", "W2-e4": "W2", "W2-e1": "W2", "W3": "W2"}
-ORDER = ["E", "ID0", "HACR0", "D0", "D1", "D2", "PM0", "D3b", "D4-0", "D4", "D4a", "D4b", "D5-0", "D5", "D5b", "W1a", "W1a2", "W1b", "W1c", "W2", "W2g", "W2-e4", "W2-e1"]
+GROUP = {"W1c-e1": "W1c", "D3": "D2", "D4a": "D4", "D4b": "D4", "D5b": "D5", "W2g": "W2", "W2-e4": "W2", "W2-e1": "W2", "W3": "W2"}
+ORDER = ["E", "ID0", "HACR0", "D0", "D1", "D2", "PM0", "D3b", "D4-0", "D4", "D4a", "D4b", "D5-0", "D5", "D5b", "W1a", "W1a2", "W1b", "W1c", "W1c-e1", "W2", "W2g", "W2-e4", "W2-e1"]
 EXIT_MEANING = {
     5: "(--postmortem) no valid log header at the base: DRAM did not keep the ring, or the wrong base (a rung's own exit 5 does not exist)",
     6: "(--postmortem) header CRC bad or fields inconsistent: the text is UNVERIFIED",
@@ -486,6 +502,9 @@ def check_fb(ctx):
     return res
 
 
+GICR_FRAME = 0x20000          # one GICv3 redistributor (RD + SGI frames) per core
+
+
 def check_cpus_mem(ctx):
     res = []
     s = find(ctx, r"^// guest FDT: (\d+) bytes \(limit (\d+)\), (\d+) /memory range\(s\), (\d+) core\(s\)")
@@ -507,8 +526,10 @@ def check_cpus_mem(ctx):
                        "0x%x + 0x%x contains image 0x%x .. FDT end 0x%x; size %d MiB (need >= 128 MiB)" % (base, size, start, fend, size // MIB)))
     else:
         res.append(("FAIL", "first /memory range", "cannot read the guest image line or the first memory node"))
-    res.append(chk(re.search(r"intc@f00000000:\n(?:    .*\n)*?    reg = <0xf 0x0 0x0 0x10000 0xf 0x10000000 0x0 0x100000>", ctx.text) is not None,
-                   "GIC node", "intc@f00000000 reg <0xf 0x0 0x0 0x10000 0xf 0x10000000 0x0 0x100000>"))
+    # F-40 (2): one redistributor frame of 0x20000 per core the builder describes (el2/vgic/fdt_build.c: stride * ncores): 0x20000 with --no-smp, 0x100000 with eight
+    gicr = GICR_FRAME * cores
+    res.append(chk(re.search(r"intc@f00000000:\n(?:    .*\n)*?    reg = <0xf 0x0 0x0 0x10000 0xf 0x10000000 0x0 0x%x>" % gicr, ctx.text) is not None,
+                   "GIC node", "intc@f00000000 reg <0xf 0x0 0x0 0x10000 0xf 0x10000000 0x0 0x%x> (GICD 0x10000; GICR 0x%x x %d core(s))" % (gicr, GICR_FRAME, cores)))
     res.append(chk(re.search(r'psci:\n(?:    .*\n)*?    method = "hvc"', ctx.text) is not None, "PSCI method", "hvc"))
     return res
 
@@ -597,7 +618,7 @@ def check_ramdisk_plan(ctx):
     rf = find(ctx, r"^RAMDISK REUSE refused: (.*) -> transferring the image normally")
     if ru or rf:
         ctx.facts["ramdisk_reuse"] = "REUSED (not transferred; EDK2's CRC-32 verifies)" if ru else ("requested, refused: %s" % rf.group(1) if rf else "requested, no decision line")
-    w = find(ctx, r"^RAMDISK written: (\d+) bytes in (\d+) s \(([\d.]+) MB/s\), trailer at 0x([0-9a-f]+) \(crc32 (0x[0-9a-f]{8})\)")
+    w = find(ctx, r"^RAMDISK written: (\d+) bytes in ((?:(\d+) min )?(\d+) s) \(([\d.]+) MB/s\), trailer at 0x([0-9a-f]+) \(crc32 (0x[0-9a-f]{8})\)")   # fmt_eta: "45 s" or "1 min 07 s"
     if ru:
         okr = int(ru.group(1)) == size and ru.group(4) == crc and rb is not None and int(ru.group(2), 16) == int(rb.group(1), 16) \
             and int(ru.group(3), 16) == int(rb.group(1), 16) + blk - 4096 and find(ctx, r"^REUSING image in DRAM, not verified by the loader; EDK2's CRC-32 check will verify it") is not None
@@ -606,12 +627,13 @@ def check_ramdisk_plan(ctx):
     elif not w:
         res.append(("FAIL", "RAMDISK written", "no 'RAMDISK written: ... crc32 ...' line"))
     else:
-        rate = float(w.group(3))
-        ctx.facts.update(transfer_seconds=int(w.group(2)), transfer_mbs=rate)
-        res.append(chk(int(w.group(1)) == size and w.group(5) == crc, "RAMDISK written",
-                       "%s bytes in %s s (%s MB/s), crc32 %s equals the plan's %s" % (w.group(1), w.group(2), w.group(3), w.group(5), crc)))
-        if rb and int(w.group(4), 16) != int(rb.group(1), 16) + blk - 4096:
-            res.append(("FAIL", "trailer address", "trailer at 0x%s is not block end - 4 KiB" % w.group(4)))
+        rate = float(w.group(5))
+        secs = int(w.group(3) or 0) * 60 + int(w.group(4))
+        ctx.facts.update(transfer_seconds=secs, transfer_mbs=rate)
+        res.append(chk(int(w.group(1)) == size and w.group(7) == crc, "RAMDISK written",
+                       "%s bytes in %s = %d s (%s MB/s), crc32 %s equals the plan's %s" % (w.group(1), w.group(2), secs, w.group(5), w.group(7), crc)))
+        if rb and int(w.group(6), 16) != int(rb.group(1), 16) + blk - 4096:
+            res.append(("FAIL", "trailer address", "trailer at 0x%s is not block end - 4 KiB" % w.group(6)))
     retries = len(re.findall(r"checksum error, retrying this slice once", ctx.text))
     ctx.facts["slice_retries"] = retries
     twice = "checksum error twice" in ctx.text
@@ -658,6 +680,34 @@ def check_handover(ctx):
     return res
 
 
+NAMES_LINE = "property names (values NOT printed): "
+NAME_ENTRY = re.compile(r"^[\w,.#@+-]+\[(?:\d+|int)\]$")                  # ehw2.py:367 prints "<name>[<length>]" per property
+MAC_VALUE = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{2}([:-])[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}(?![0-9A-Fa-f])")
+IDENT_NAME = re.compile(r"serial-number|mac-address|local-mac")
+
+
+def hygiene_hit(text):
+    """F-40 (1): the identifying text found in a log, or None. Property NAMES (mac-address-bluetooth0, serial-number) are not identifying and ehw2 prints
+    them on purpose in its names-only line; a VALUE is: any identifying name outside that line (a dump such as `mac-address = ...`), any MAC-shaped
+    string anywhere, and any entry of the names-only line that is not exactly `<name>[<length>]` (something else was printed there)."""
+    rest = []
+    for line in text.splitlines():
+        if NAMES_LINE in line:
+            for ent in (e.strip() for e in line.split(NAMES_LINE, 1)[1].split(", ")):
+                if ent and not NAME_ENTRY.match(ent):
+                    return "names-only line entry %r is not <name>[<length>]" % ent[:20]
+            continue
+        rest.append(line)
+    body = "\n".join(rest)
+    m = IDENT_NAME.search(body)
+    if m:
+        return m.group(0)
+    m = MAC_VALUE.search(text)
+    if m:
+        return "MAC-shaped value"
+    return None
+
+
 def run_checks(r, text, exit_code, dry, interrupted=False, ramdisk_size=None, ramdisk_sha16=None):
     """All automatic checks of one rung. Returns (overall, results, facts)."""
     c = Ctx(r, text, exit_code, dry, interrupted, ramdisk_size, ramdisk_sha16)
@@ -684,8 +734,8 @@ def run_checks(r, text, exit_code, dry, interrupted=False, ramdisk_size=None, ra
         if i["pmlog"] and r["jump"]:
             res += check_pmlog(c)
         res += check_handover(c)
-    ident = re.search(r"serial-number|mac-address|local-mac", text)
-    res.append(chk(not ident, "log hygiene", "no serial-number/mac-address text in the log" if not ident else "identifying text %r in the log: do not share it" % ident.group(0)))
+    ident = hygiene_hit(text)
+    res.append(chk(not ident, "log hygiene", "no serial-number/mac-address value in the log (property NAMES in ehw2's names-only line are fine)" if not ident else "identifying text %r in the log: do not share it" % ident))
     overall = "FAIL" if any(s == "FAIL" for s, _, _ in res) else "PASS"
     return overall, res, c.facts
 
@@ -755,8 +805,8 @@ def effective(recs, vid):
 
 def confirm_state(recs, key):
     c = [r for r in recs if r["kind"] == "confirm" and r["id"] == key]
-    if c and key == "backup" and c[-1]["ts"][:10] != datetime.date.today().isoformat():
-        return "STALE"            # "the backup of TODAY": a record of an earlier day (a reused results folder) does not count
+    if c and key in ("backup", "fallback-e1", "fallback-e4") and c[-1]["ts"][:10] != datetime.date.today().isoformat():
+        return "STALE"            # "the backup of TODAY" and "Marco's go of TODAY": a record of an earlier day (a reused results folder) does not count
     return c[-1]["f"].get("result", "NONE") if c else "NONE"
 
 
@@ -805,6 +855,9 @@ def unresolved(recs):
     return out
 
 
+HARD_GATES = ("confirm:backup", "confirm:image-ok", "confirm:fallback-e4", "confirm:fallback-e1", "e-gate")
+
+
 def gate_check(recs, r):
     """Returns (ok, [reasons], [bypassable reasons]). Backup/image confirmations are never bypassable."""
     hard, soft = [], []
@@ -813,7 +866,7 @@ def gate_check(recs, r):
         if st in allowed or ("NONE" in allowed and st == "NONE"):
             continue
         msg = "%s is %s (needs %s)" % (sid, st, "/".join(sorted(allowed)))
-        (hard if sid in ("confirm:backup", "confirm:image-ok", "confirm:fallback-e4", "confirm:fallback-e1", "e-gate") else soft).append(msg)
+        (hard if sid in HARD_GATES else soft).append(msg)
     if r["jump"]:
         mine = GROUP.get(r["id"], r["id"])
         fam = {mine, r["id"]}
@@ -909,7 +962,7 @@ def host_env():
     return host, py, env
 
 
-REUSE_SRC = ("W1b", "W1c", "W2", "W2g", "W2-e4", "W2-e1")
+REUSE_SRC = ("W1b", "W1c", "W1c-e1", "W2", "W2g", "W2-e4", "W2-e1")
 
 
 def reuse_wanted(recs, r, a):
@@ -1128,7 +1181,7 @@ def cmd_rung(a, bundle, outdir):
     if want != "any" and kind != want and not a.force_bundle:
         say("BUNDLE: this folder is a '%s' bundle but %s belongs to the '%s' bundle (day %d). Run it from the right folder, or --force-bundle." % (kind, rid, want, r["day"]))
         return EX_PRECOND
-    fbv = r["id"][3:] if r["id"] in ("W2-e4", "W2-e1") else None
+    fbv = r.get("fallback")
     if fbv:
         bad = check_fallback_fw(bundle, fbv)
         if bad:
@@ -1419,6 +1472,9 @@ def cmd_confirm(a, bundle, outdir):
             say("PRE-APPROVED by Marco on 2026-11-15 (%s). Recorded as such; the other gate conditions still apply." % PREAPPROVED_DOC)
         else:
             say("note: Marco pre-approved %s on 2026-11-15; record it with --by Marco --note \"%s\" (or ask him again today)." % (key, PREAPPROVED_NOTE))
+    if key == "fallback-e1":
+        say("note: this confirmation also opens W1c-e1 (W1c with the j293-e1 firmware, no W2 failure needed). The 2026-11-15 pre-approval covers the W2 fallback "
+            "ladder only: for W1c-e1 record Marco's 'go e1' of THIS session (--note \"go e1 for W1c-e1, <date>\").")
     if key == "backup" and PREAPPROVED_DOC in note:
         say("the backup is NOT pre-approved: it must be confirmed by Marco in chat TODAY. Not recorded.")
         return EX_USAGE
@@ -1448,6 +1504,9 @@ def next_step(recs, kind):
                     "it needs Marco's 'go e4' / 'go e1' in chat (`confirm fallback-e4|fallback-e1`). Stops not about cores (0x5C, 0x7B, 0x1A, black panel, bootmgr errors): no fallback.")
         return None, ["%s ended FAIL/ABORT: STOP, tell Marco what happened and what the table says (%s / %s), then either a fix round or `confirm proceed:%s`.%s" %
                       (",".join(un), PROC3, PROC4, un[0], hint)], "Ci fermiamo qui: Marco, decidiamo insieme cosa fare."
+    if effective(recs, "W1c-e1") == "PENDING":       # a W1c-e1 run waiting for its photos is not part of the old flow below
+        return None, ["W1c-e1 ran with an automatic PASS: read the photos/video and record the verdict (PASS = Windows went past the 0xA0 point of 2026-11-17: "
+                      "spinner for minutes or Setup; FAIL with the stop code and all four parameters in --note)"], "Aspetto le foto di W1c-e1."
     path = [("D0", "D0"), ("D1", "D1"), ("D2", "D2"), ("D4", "D4")]
     for rid, vid in path:
         st = effective(recs, vid)

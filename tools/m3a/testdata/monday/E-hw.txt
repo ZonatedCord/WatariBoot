@@ -1,0 +1,6 @@
+== ehw2 read-only inventory (fixture shaped like the real report; every value below is invented)
+  /options property names (values NOT printed): boot-args[1], auto-boot[5], fake-option[4]
+  /chosen property names (values NOT printed): name[7], mac-address-bluetooth0[6], mac-address-wifi0[6], serial-number[17], random-seed[64], fake-chosen[3]
+  /arm-io/fake-ans reg=['0x200000000+0x1000'] clock-gates=None compatible=None
+overlap check: no overlap with the RAM-disk, ring, layer or EDK2 blocks
+exit=0
