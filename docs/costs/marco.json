@@ -26,6 +26,17 @@
         }
       }
     },
+    "19d54409770d": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 2204006,
+          "cache_write_1h": 136849,
+          "cache_write_5m": 0,
+          "input": 64,
+          "output": 25968
+        }
+      }
+    },
     "1b338f0e0a9a": {
       "models": {
         "claude-haiku-5-5": {
@@ -77,6 +88,24 @@
           "cache_write_5m": 0,
           "input": 12,
           "output": 4000
+        }
+      }
+    },
+    "323832969b87": {
+      "models": {
+        "claude-haiku-5-5": {
+          "cache_read": 231614,
+          "cache_write_1h": 0,
+          "cache_write_5m": 100245,
+          "input": 14,
+          "output": 12432
+        },
+        "claude-opus-5-5": {
+          "cache_read": 824292,
+          "cache_write_1h": 55342,
+          "cache_write_5m": 0,
+          "input": 30,
+          "output": 11688
         }
       }
     },
@@ -206,6 +235,53 @@
         }
       }
     },
+    "872ff1883f8a": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 1989463,
+          "cache_write_1h": 218248,
+          "cache_write_5m": 0,
+          "input": 64,
+          "output": 25841
+        }
+      }
+    },
+    "9387848b6798": {
+      "models": {
+        "claude-haiku-5-5": {
+          "cache_read": 4025680,
+          "cache_write_1h": 0,
+          "cache_write_5m": 311357,
+          "input": 78,
+          "output": 50110
+        },
+        "claude-opus-5-5": {
+          "cache_read": 6809204,
+          "cache_write_1h": 187393,
+          "cache_write_5m": 0,
+          "input": 102,
+          "output": 42923
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 20770462,
+          "cache_write_1h": 0,
+          "cache_write_5m": 646940,
+          "input": 256,
+          "output": 122958
+        }
+      }
+    },
+    "93b38c1e384a": {
+      "models": {
+        "claude-opus-5-5": {
+          "cache_read": 3531058,
+          "cache_write_1h": 235497,
+          "cache_write_5m": 0,
+          "input": 98,
+          "output": 39016
+        }
+      }
+    },
     "958f4062ef1f": {
       "models": {
         "claude-haiku-5-5": {
@@ -285,11 +361,18 @@
           "output": 1122
         },
         "claude-opus-5-5": {
-          "cache_read": 3496755,
-          "cache_write_1h": 93967,
+          "cache_read": 35063129,
+          "cache_write_1h": 564376,
           "cache_write_5m": 0,
-          "input": 68,
-          "output": 22260
+          "input": 364,
+          "output": 126042
+        },
+        "claude-sonnet-5-5": {
+          "cache_read": 9403833,
+          "cache_write_1h": 0,
+          "cache_write_5m": 380936,
+          "input": 134,
+          "output": 81525
         }
       }
     },
